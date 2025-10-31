@@ -1,0 +1,6 @@
+comment = 'Stop guessing. Start knowing. pg_expecto : statistical and correlation analysis of PostgreSQL database waitings.'
+default_version = '3.0'
+relocatable = true
+directory = 'extension'
+superuser=false
+requires = 'pg_stat_statements , pg_wait_sampling'

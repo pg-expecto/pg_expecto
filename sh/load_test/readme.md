@@ -1,16 +1,16 @@
 # Cкрипты для выполнения нагрузочного тестирования
 ## SQL Тестовые сценарии
-- scenario1.sql Сценарий-1 "Select only"
-- scenario2.sql Сценарий-2 "Select + Update"
-- scenario3.sql Сценарий-3 "Insert only"
+- **scenario1.sql** - Сценарий-1 "Select only"
+- **scenario2.sql** - Сценарий-2 "Select + Update"
+- **scenario3.sql** - Сценарий-3 "Insert only"
 ## SQL Скрипты для выполенения тестовых сценарией с помощью pgbench
-- do_scenario1.sql Сценарий-1 "Select only"
-- do_scenario2.sql Сценарий-2 "Select + Update"
-- do_scenario3.sql Сценарий-3 "Insert only"
+- **do_scenario1.sql** - Сценарий-1 "Select only"
+- **do_scenario2.sql** - Сценарий-2 "Select + Update"
+- **do_scenario3.sql** - Сценарий-3 "Insert only"
 ## Сервисные скрипты для запуска , выполнения и остановки нагрузочного тестирования
-- load_test_start.sqh Старт нагрузочного тестирования
-- load_test.sqh Выполнение итераций  нагрузочного тестирования (запускается по cron)
-- load_test_stop.sqh Остановка нагрузочного тестирования
+- **load_test_start.sh** - Старт нагрузочного тестирования
+- **load_test.sh** - Выполнение итераций  нагрузочного тестирования (запускается по cron)
+- **load_test_stop.sh** - Остановка нагрузочного тестирования
 ## Настройка нагрузочного тестирования
-- param.conf Конфигурационный файт
-- get_conf_param.sh Получить значение конфигурационного параметра из файла
+- **param.conf** - Конфигурационный файт
+- **get_conf_param.sh** - Получить значение конфигурационного параметра из файла

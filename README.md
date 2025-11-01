@@ -22,11 +22,11 @@
 
 ## Установка (Installation)
 ### ВАЖНО
-Для работы расширения **pg_expecto** требуются установленные библиотеки расширений **pg_stat_statments** и **pg_wait_sampling**
+Для работы расширения **pg_expecto** требуются установленные библиотеки расширений **pg_stat_statements** и **pg_wait_sampling**
 
 Значение параметра **shared_preload_libraries** должно быть:
 
-shared_preload_libraries=‘pg_stat_statments , pg_wait_sampling’
+shared_preload_libraries=‘pg_stat_statements , pg_wait_sampling’
 
 **Порядок библиотек ВАЖЕН**
 ### Инсталляция

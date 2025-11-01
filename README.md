@@ -21,7 +21,39 @@
 ## Статус проекта
 Текущая версия: 3
 
-# Использование расширения pg_expecto
+## Установка (Installation)
+1. Распаковать zip-архив проекта : в результате будет подготовлена папка **pg_expecto-main**
+2. Скопировать содержимое на целевой сервер СУБД в папку **/tmp/pg_expecto**
+3. Используя учетную запист *postgres*, cоздать целевую папку на сервере СУБД **mkdir /postgres/pg_expecto**
+4. Скопировать инсталлятор **cp /tmp/pg_expecto/pg_expecto_install.sh /postgres/pg_expecto/**
+5. Перейти в папку для начала инсталляции **cd /postgres/pg_expecto**
+6. Подготовить скрипт инсталлятора **chmod 750 pg_expecto_install.sh**
+7. Запустить инсталлятор **./pg_expecto_install.sh**
+
+### Мониторинг работоспособности pg_expecto
+**tail -f /postgres/pg_expecto/sh/pg_expecto.log
+TIMESTAMP : 01-11-2025 10:48:02  : OK : START
+TIMESTAMP : 01-11-2025 10:48:02  : OK : СБОР ИСХОДНЫХ ДАННЫХ ПО SQL ВЫРАЖЕНИЯМ - НАЧАТ
+TIMESTAMP : 01-11-2025 10:48:02  : OK : СБОР ИСХОДНЫХ ДАННЫХ ПО SQL ВЫРАЖЕНИЯМ - ЗАКОНЧЕН
+TIMESTAMP : 01-11-2025 10:48:02  : OK : РАСЧЕТ СТАТИСТИКИ ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЙ СУБД - НАЧАТ
+0
+TIMESTAMP : 01-11-2025 10:48:02  : OK :  0.00|0.00|0|
+TIMESTAMP : 01-11-2025 10:48:02  : OK : РАСЧЕТ СТАТИСТИКИ ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЙ СУБД - ЗАКОНЧЕН
+TIMESTAMP : 01-11-2025 10:48:02  : OK : СБРОС СТАТИСТИКИ
+2025-11-01 10:48:02.638164+03
+TIMESTAMP : 01-11-2025 10:48:02  OK :  pg_stat_statements_reset
+TIMESTAMP : 01-11-2025 10:48:02  OK :  pg_wait_sampling_reset_profile
+TIMESTAMP : 01-11-2025 10:48:02  : OK : РАСЧЕТ СТАТИСТИКИ VMSTAT - НАЧАТ
+0
+TIMESTAMP : 01-11-2025 10:48:02  : OK : РАСЧЕТ СТАТИСТИКИ VMSTAT - ЗАКОНЧЕН
+TIMESTAMP : 01-11-2025 10:48:02  : OK : РАСЧЕТ СТАТИСТИКИ IOSTAT - НАЧАТ
+TIMESTAMP : 01-11-2025 10:48:02  : OK : РАСЧЕТ СТАТИСТИКИ IOSTAT - ЗАКОНЧЕН
+TIMESTAMP : 01-11-2025 10:48:02  : OK : ОЧИСТКА СТАРЫХ ДАННЫХ - НАЧАТА
+0
+TIMESTAMP : 01-11-2025 10:48:02  : OK : ОЧИСТКА СТАРЫХ ДАННЫХ - ЗАКОНЧЕНА
+TIMESTAMP : 01-11-2025 10:48:02  : OK : FINISH
+
+# Использование pg_expecto
 
 - [PG_EXPECTO: Нагрузочное тестирование СУБД PostgreSQL](https://dzen.ru/a/aO90kwEztw-GQVba)
 - [PG_EXPECTO: Аудит производительности инфраструктуры при нагрузочном тестировании СУБД PostgreSQL](https://dzen.ru/a/aPmymHYePCkukP3p)

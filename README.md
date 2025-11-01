@@ -22,6 +22,14 @@
 Текущая версия: 3
 
 ## Установка (Installation)
+### ВАЖНО
+Для работы расширения pg_expecto требуются установленные библиотеки расширений **pg_stat_statments** и **pg_wait_sampling**
+
+Значение параметра **shared_preload_libraries** должно быть:
+
+shared_preload_libraries=‘pg_stat_statments , pg_wait_sampling’
+
+**Порядок библиотек ВАЖЕН**
 1. Распаковать zip-архив проекта : в результате будет подготовлена папка: **pg_expecto-main**
 2. Скопировать содержимое на целевой сервер СУБД в папку: **/tmp/pg_expecto**
 3. Используя учетную запись *postgres*, на целевом сервере СУБД cоздать сервисную папку: **mkdir /postgres/pg_expecto**

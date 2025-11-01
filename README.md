@@ -22,13 +22,13 @@
 Текущая версия: 3
 
 ## Установка (Installation)
-1. Распаковать zip-архив проекта : в результате будет подготовлена папка **pg_expecto-main**
-2. Скопировать содержимое на целевой сервер СУБД в папку **/tmp/pg_expecto**
-3. Используя учетную запись *postgres*, на целевом сервере СУБД cоздать сервисную папку **mkdir /postgres/pg_expecto**
-4. Скопировать инсталлятор **cp /tmp/pg_expecto/pg_expecto_install.sh /postgres/pg_expecto/**
-5. Перейти в папку для начала инсталляции **cd /postgres/pg_expecto**
-6. Подготовить скрипт инсталлятора **chmod 750 pg_expecto_install.sh**
-7. Запустить инсталлятор **./pg_expecto_install.sh**
+1. Распаковать zip-архив проекта : в результате будет подготовлена папка: **pg_expecto-main**
+2. Скопировать содержимое на целевой сервер СУБД в папку: **/tmp/pg_expecto**
+3. Используя учетную запись *postgres*, на целевом сервере СУБД cоздать сервисную папку: **mkdir /postgres/pg_expecto**
+4. Скопировать инсталлятор: **cp /tmp/pg_expecto/pg_expecto_install.sh /postgres/pg_expecto/**
+5. Перейти в папку для начала инсталляции: **cd /postgres/pg_expecto**
+6. Подготовить скрипт инсталлятора: **chmod 750 pg_expecto_install.sh**
+7. Запустить инсталлятор: **./pg_expecto_install.sh**
 
 ### Мониторинг работоспособности pg_expecto
 **tail -f /postgres/pg_expecto/sh/pg_expecto.log**

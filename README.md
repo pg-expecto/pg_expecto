@@ -48,3 +48,4 @@ shared_preload_libraries=‘pg_stat_statements , pg_wait_sampling’
 - [Типовой шаблон расследования инцидентов PostgreSQL с помощью pg_expecto. Часть 1: Анализ на уровне СУБД](https://dzen.ru/a/aPyyCU9YvyBsSWJh)
 - [Типовой шаблон расследования инцидентов PostgreSQL с помощью pg_expecto. Часть 2: Детальный разбор инфраструктуры сервера](https://dzen.ru/a/aPzDp3M5O3zp2aZ1)
 - [Использование PG_EXPECTO для выявления проблемных SQL запросов при анализе инцидента производительности СУБД PostgreSQL](https://dzen.ru/a/aQX74beixXl2XCfR?share_to=link)
+- [PG_EXPECTO : Настройка сценариев нагрузочного тестирования СУБД PostgreSQL](https://dzen.ru/a/aQsuqvClBDUYiIA6?share_to=link)

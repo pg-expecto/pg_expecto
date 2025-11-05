@@ -1,7 +1,7 @@
 #!/bin/sh
 #####################################################################################
 # load_test_start.sh
-# version 1.0
+# version 3.1
 #####################################################################################
 # Старт нагрузочного тестирования
 #####################################################################################
@@ -77,6 +77,16 @@ then
 		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ИНИЦИАЛИЗАЦИЯ ТЕСТОВОЙ БД - ЗАКОНЧЕНА' >> $LOG_FILE
 		#Параметры инициализации	
 		#########################################################################################################
+		
+		#########################################################################################################
+		# before_start.sql - Изменения/добавления тестовых таблиц
+		  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : BEFORE_START.SQL'
+		  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : BEFORE_START.SQL' >> $LOG_FILE
+		  psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f $current_path'/before_start.sql' >> $LOG_FILE 2>>$ERR_FILE
+		  exit_code $? $LOG_FILE $ERR_FILE
+		# before_start.sql - Изменения/добавления тестовых таблиц
+		#########################################################################################################
+		
 
 		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-1'
 		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-1' >> $LOG_FILE
@@ -124,9 +134,33 @@ else
 	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : max_parallel_maintenance_workers =  '$max_parallel_maintenance_workers
 	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : max_parallel_maintenance_workers =  '$max_parallel_maintenance_workers >> $LOG_FILE
 
+	#########################################################################################################
+	# before_start.sql - Изменения/добавления тестовых таблиц
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : BEFORE_START.SQL'
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : BEFORE_START.SQL' >> $LOG_FILE
+	  psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f $current_path'/before_start.sql' >> $LOG_FILE 2>>$ERR_FILE
+	  exit_code $? $LOG_FILE $ERR_FILE
+	# before_start.sql - Изменения/добавления тестовых таблиц
+	#########################################################################################################
 			
 	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : VACUUM ANALYZE STARTED '
 	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : VACUUM ANALYZE STARTED ' >> $LOG_FILE
+	
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-1'
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-1' >> $LOG_FILE
+	psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f $current_path'/scenario1.sql' >> $LOG_FILE 2>>$ERR_FILE
+	exit_code $? $LOG_FILE $ERR_FILE
+
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-2'
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-2' >> $LOG_FILE
+	psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f $current_path'/scenario2.sql' >> $LOG_FILE 2>>$ERR_FILE
+	exit_code $? $LOG_FILE $ERR_FILE
+
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-3'
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-3' >> $LOG_FILE
+	psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f $current_path'/scenario3.sql' >> $LOG_FILE 2>>$ERR_FILE
+	exit_code $? $LOG_FILE $ERR_FILE
+	
 
 	psql -d test_pgbench_custom -c 'VACUUM ( PARALLEL '$max_parallel_maintenance_workers' ) ' & psql -d $pgbench_db -c 'ANALYZE'  >> $LOG_FILE 2>$ERR_FILE
 	wait
@@ -156,3 +190,4 @@ exit_code $? $LOG_FILE $ERR_FILE
 touch $current_path'/LOAD_TEST_STARTED'
 
 exit 0  
+

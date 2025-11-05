@@ -210,7 +210,11 @@ exit_code $? $LOG_FILE $ERR_FILE
 psql -d $expecto_db -U $expecto_user -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select default_configuration()' >>$LOG_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
 
-psql -d expecto_db -f $current_path'/sh/wait_event_kb/load_to_wait_event_kb.sql' >>$LOG_FILE 2>$ERR_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ЗАПОЛНЕНИЕ KB'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ЗАПОЛНЕНИЕ KB' >>$LOG_FILE
+#psql -d $expecto_db -v ON_ERROR_STOP=on --echo-errors -f $current_path'/sh/wait_event_kb/load_to_wait_event_kb.sql' >>$LOG_FILE 2>$ERR_FILE
+kb_path=$current_path'/sh/wait_event_kb/kb.txt'
+psql -d $expecto_db -v ON_ERROR_STOP=on --echo-errors -c "COPY wait_event_knowledge_base (wait_event , advice ) FROM '$kb_path' WITH ( FORMAT text, DELIMITER '|', ENCODING 'UTF8' ) " >>$LOG_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
 rm -rf $current_path'/sh/wait_event_kb'
 # НАСТРОЙКА pg_expecto

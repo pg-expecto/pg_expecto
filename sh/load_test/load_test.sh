@@ -1,7 +1,7 @@
 #!/bin/sh
 #####################################################################################
 # load_test.sh
-# version 1.0
+# version 4.0
 #####################################################################################
 # Нагрузочное тестирование
 # 
@@ -102,8 +102,16 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ИТЕРАЦИЯ pg_be
 # PGBENCH
 touch $current_path'/PGBENCH_WORKING'
 
-for i in {1..3}
-do
+testdb=`$current_path'/'get_conf_param.sh $current_path testdb 2>$ERR_FILE`
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ТЕСТОВАЯ БД  = '$testdb
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ТЕСТОВАЯ БД  = '$testdb >> $LOG_FILE	
+
+#################################################################################
+# ЕСЛИ ТЕСТОВАЯ БД - ПО УМОЛЧАНИЮ
+if [ "$testdb" == "default" ]
+then 
+  for i in {1..3}
+  do
     pgbench_clients=`psql -d $expecto_db -U $expecto_user -Aqtc "select load_test_get_load_by_scenario("$i")"` 2>$ERR_FILE
     exit_code $? $LOG_FILE $ERR_FILE
 
@@ -116,13 +124,61 @@ do
     echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$i': pgbench_param= '$pgbench_param>> $LOG_FILE
 	
 	pgbench --username=expecto_user $pgbench_param & >>$LOG_FILE 2>$PROGRESS_FILE
-done
-wait
-exit_code $? $LOG_FILE $PROGRESS_FILE  	
+  done
+  wait
+  exit_code $? $LOG_FILE $PROGRESS_FILE  	
 
-psql -d $expecto_db -U $expecto_user -Aqtc 'select load_test_set_scenario_queryid()' 2>$ERR_FILE
-exit_code $? $LOG_FILE $ERR_FILE
+  psql -d $expecto_db -U $expecto_user -Aqtc 'select load_test_set_scenario_queryid()' 2>$ERR_FILE
+  exit_code $? $LOG_FILE $ERR_FILE	
+# ЕСЛИ ТЕСТОВАЯ БД - ПО УМОЛЧАНИЮ  
+#################################################################################
+#################################################################################
+# КАСТОМНАЯ ТЕСТОВАЯ БД
+else
+	#########################################################################################################
+	#  ТЕСТОВЫЕ СЦЕНАРИИ
+	  testdb_owner=`psql  -Aqtc "SELECT r.rolname FROM pg_database d JOIN pg_roles r ON d.datdba = r.oid WHERE d.datname = '$testdb'"`  2>$ERR_FILE
+	  exit_code $? $LOG_FILE $ERR_FILE
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ВЛАДЕЛЕЦ ТЕСТОВОЙ БД  = '$testdb_owner
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ВЛАДЕЛЕЦ ТЕСТОВОЙ БД  = '$testdb_owner >> $LOG_FILE	
+		
+	  let i=0
+	  flag='1'
+	  while [ "$flag" != "0" ]
+	  do
+	    let "i++"
+		flag=`cat $current_path'/param.conf' | grep 'scenario'$i | wc -l`	
+	  done 	  
+	  
+	  for (( scenario_id=1; scenario_id < i; scenario_id++ ))
+	  do
+	  
+		pgbench_clients=`psql -d $expecto_db -U $expecto_user -Aqtc "select load_test_get_load_by_scenario("$scenario_id")"` 2>$ERR_FILE
+		exit_code $? $LOG_FILE $ERR_FILE
+
+		pgbench_param='--file='$current_path'/do_scenario'$scenario_id'.sql --protocol=extended --report-per-command --jobs='"$jobs"' --client='"$pgbench_clients"' --time='"$pg_bench_time"' '$testdb		
 	
+		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$scenario_id': pgbench_clients= '$pgbench_clients
+		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$scenario_id': pgbench_clients= '$pgbench_clients>> $LOG_FILE
+	
+		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$scenario_id': pgbench_param= '$pgbench_param
+		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$scenario_id': pgbench_param= '$pgbench_param>> $LOG_FILE
+	
+		pgbench --username=$testdb_owner $pgbench_param & >>$LOG_FILE 2>$PROGRESS_FILE
+	  done
+	  wait
+	  exit_code $? $LOG_FILE $PROGRESS_FILE  	
+
+	  psql -d $expecto_db -U $expecto_user -Aqtc 'select load_test_set_scenario_queryid()' 2>$ERR_FILE
+	  exit_code $? $LOG_FILE $ERR_FILE	
+	#  ТЕСТОВЫЕ СЦЕНАРИИ
+	#########################################################################################################
+fi
+# КАСТОМНАЯ ТЕСТОВАЯ БД
+#################################################################################
+
+
+
 rm $current_path'/PGBENCH_WORKING'
 # PGBENCH
 #############################################################################

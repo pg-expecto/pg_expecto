@@ -652,8 +652,7 @@ CREATE INDEX performance_incident_idx_priority ON performance_incident (id) WHER
 CREATE OR REPLACE FUNCTION default_configuration() RETURNS integer AS $$
 BEGIN
 	TRUNCATE TABLE configuration ; 
-	INSERT INTO  configuration ( day_for_store  ) VALUES ( 7 ) ; 
-	
+	INSERT INTO  configuration ( day_for_store  ) VALUES ( 7 ) ; 	
 return  0 ;
 END
 $$ LANGUAGE plpgsql ;
@@ -2607,12 +2606,15 @@ COMMENT ON COLUMN configuration.day_for_store IS 'Глубина хранени�
 -------------------------------------------------------------------------------------
 
 
+
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- load_test_functions.sql
--- version 1.0
+-- version 4.0
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Функции обеспечения нагрузочного теста
 -- load_test_new_test() Начать новый тест
+--
+-- load_test_set_weight_for_scenario - Установить вес для тестового сценария
 --
 -- load_test_start_collect_data() Начать собирать данные для статистики для текущей фазы теста
 -- load_test_stop_collect_data() Завершить сбор данных для статистики для текущей фазы теста
@@ -2821,9 +2823,30 @@ DECLARE
   total_load integer ;
   result_load integer ;
   current_load_connections DOUBLE PRECISION ;
+  current_weight real ; 
+  current_test_id integer ;
 BEGIN
+  SELECT load_test_get_current_test_id()
+  INTO current_test_id;
+  
+  SELECT 
+	weight  
+  INTO 
+	current_weight
+  FROM 
+	testing_scenarios
+  WHERE 
+	test_id = current_test_id AND 
+	id = current_scenario ;
+	
+  IF current_weight IS NULL 
+  THEN 
+	RAISE EXCEPTION 'Несуществующий сценарий --> %', current_scenario USING HINT = 'Проверьте ID сценария тестирования';
+	return 10;
+  END IF;
+  
 -------------------------------------------
--- Текущий сценарий 
+-- Веса по умолчанию
 -- сценарий 1 - select only    : 50%
 -- сценарий 2 - select + update: 35%
 -- сценарий 3 - insert only    : 15%
@@ -2832,11 +2855,7 @@ BEGIN
  SELECT load_test_get_load()
  INTO total_load ; 
  
- CASE 
-	WHEN current_scenario = 1 THEN current_load_connections = total_load::DOUBLE PRECISION * 0.5 ;
-	WHEN current_scenario = 2 THEN current_load_connections = total_load::DOUBLE PRECISION * 0.35 ;
-	WHEN current_scenario = 3 THEN current_load_connections = total_load::DOUBLE PRECISION * 0.15 ;	
- END CASE ;
+ current_load_connections = total_load::DOUBLE PRECISION * current_weight ;
  
  SELECT CEIL( current_load_connections )
  INTO result_load ;
@@ -2854,90 +2873,124 @@ CREATE OR REPLACE FUNCTION load_test_set_scenario_queryid() RETURNS integer  AS 
 DECLARE 
  curr_scenario_queryid bigint ; 
  current_test_id integer;
+ current_testdb_name text ;
+ testing_scenarios_id integer ;
+ max_testing_scenarios_id integer ;
 BEGIN
 	
 	SELECT load_test_get_current_test_id()
 	INTO current_test_id ;
 	
-	SELECT scenario_1_queryid
-	INTO curr_scenario_queryid
-	FROM load_test ;
+	SELECT 
+		testdb_name
+	INTO 
+		current_testdb_name
+	FROM 
+		load_test 
+	WHERE 
+		test_id = current_test_id ; 
 		
-	IF curr_scenario_queryid IS NULL 
+	--------------------------------------------------------------
+	-- ТЕСТОВАЯ БД - ПО УМОЛЧАНИЮ
+	IF current_testdb_name = 'default'
 	THEN 
-		-------------------------------------------------------
-		--SCENARIO_1_QUERYID
-		SELECT 
-			queryid
-		INTO 
-			curr_scenario_queryid
-		FROM 
-			pg_stat_statements
-		WHERE 
-			query like 'select scenario1%' ;
-					
-		UPDATE 	
-			load_test
-		SET
-			scenario_1_queryid = curr_scenario_queryid
-		WHERE 
-			test_id = current_test_id;
-		--SCENARIO_1_QUERYID
-		-------------------------------------------------------
-	END IF;
-		
-	SELECT scenario_2_queryid
-	INTO curr_scenario_queryid
-	FROM load_test ;
-		
-	IF curr_scenario_queryid IS NULL 
-	THEN 
-		-------------------------------------------------------
-		--SCENARIO_2_QUERYID
-		SELECT 
-			queryid
-		INTO 
-			curr_scenario_queryid
-		FROM 
-			pg_stat_statements
-		WHERE 
-			query like 'select scenario2%' ;
-					
-		UPDATE 	
-			load_test
-		SET
-			scenario_2_queryid = curr_scenario_queryid
-		WHERE 
-			test_id = current_test_id;
-		--SCENARIO_2_QUERYID
-		-------------------------------------------------------
-	END IF;
+			-------------------------------------------------------
+			--SCENARIO_1_QUERYID
+			SELECT 
+				queryid
+			INTO 
+				curr_scenario_queryid
+			FROM 
+				pg_stat_statements
+			WHERE 
+				query like 'select scenario1%' ;
+						
+			UPDATE 	
+				testing_scenarios
+			SET
+				queryid = curr_scenario_queryid
+			WHERE 
+				test_id = current_test_id AND 
+				id = 1 AND 
+				queryid IS NULL ;
+			--SCENARIO_1_QUERYID
+			-------------------------------------------------------
 
-	SELECT scenario_3_queryid
-	INTO curr_scenario_queryid
-	FROM load_test ;
+			-------------------------------------------------------
+			--SCENARIO_2_QUERYID
+			SELECT 
+				queryid
+			INTO 
+				curr_scenario_queryid
+			FROM 
+				pg_stat_statements
+			WHERE 
+				query like 'select scenario2%' ;
+						
+			UPDATE 	
+				testing_scenarios
+			SET
+				queryid = curr_scenario_queryid
+			WHERE 
+				test_id = current_test_id AND 
+				id = 2 AND 
+				queryid IS NULL ;
+			--SCENARIO_2_QUERYID
+			-------------------------------------------------------
 		
-	IF curr_scenario_queryid IS NULL 
-	THEN 
-		--SCENARIO_3_QUERYID
-		SELECT 
-			queryid
-		INTO 
-			curr_scenario_queryid
-		FROM 
-			pg_stat_statements
-		WHERE 
-			query like 'select scenario3%' ;
-				
-		UPDATE 	
-			load_test
-		SET
-			scenario_3_queryid = curr_scenario_queryid
-		WHERE 
-			test_id = current_test_id;
-		--SCENARIO_3_QUERYID
-		-------------------------------------------------------
-	END IF ;			
+			--SCENARIO_3_QUERYID
+			SELECT 
+				queryid
+			INTO 
+				curr_scenario_queryid
+			FROM 
+				pg_stat_statements
+			WHERE 
+				query like 'select scenario3%' ;
+					
+			UPDATE 	
+				testing_scenarios
+			SET
+				queryid = curr_scenario_queryid
+			WHERE 
+				test_id = current_test_id AND 
+				id = 3 AND 
+				queryid IS NULL ;
+			--SCENARIO_3_QUERYID
+			-------------------------------------------------------
+	-- ТЕСТОВАЯ БД - ПО УМОЛЧАНИЮ
+	--------------------------------------------------------------
+	-- КАСТОМНАЯ ТЕСТОВАЯ БД
+	ELSE	
+		SELECT MAX(id) 
+		INTO max_testing_scenarios_id
+		FROM testing_scenarios
+		WHERE test_id = current_test_id ;
+		
+		FOR testing_scenarios_id IN 1..max_testing_scenarios_id		
+		LOOP 
+			SELECT 
+				queryid
+			INTO 
+				curr_scenario_queryid
+			FROM 
+				pg_stat_statements
+			WHERE 
+				query like 'select scenario'||testing_scenarios_id||'%' ;
+			
+			UPDATE 	
+				testing_scenarios
+			SET
+				queryid = curr_scenario_queryid
+			WHERE 
+				test_id = current_test_id AND 
+				id = testing_scenarios_id AND 
+				queryid IS NULL ;
+		END LOOP;
+		
+	END IF ;
+	-- КАСТОМНАЯ ТЕСТОВАЯ БД
+	--------------------------------------------------------------				
 
  RETURN 0 ; 
 
@@ -3182,9 +3235,28 @@ COMMENT ON FUNCTION load_test_increment_pass_counter IS 'УВЕЛИЧИТЬ СЧ
 --УВЕЛИЧИТЬ СЧЕТЧИК ИТЕРАЦИЙ
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- УСТАНОВИТЬ ВЕС ДЛЯ ТЕСТОВОГО СЦЕНАРИЯ
+CREATE OR REPLACE FUNCTION load_test_set_weight_for_scenario( current_scenario integer  , new_weight real ) RETURNS integer AS $$				
+DECLARE 
+ current_test_id bigint; 
+BEGIN
+    SELECT load_test_get_current_test_id()
+	INTO current_test_id;
+	
+	INSERT INTO testing_scenarios ( id , weight , test_id ) VALUES ( current_scenario ,  new_weight , current_test_id );
+	
+  return 0 ; 
+END
+$$ LANGUAGE plpgsql;		
+COMMENT ON FUNCTION load_test_set_weight_for_scenario IS 'УСТАНОВИТЬ ВЕС ДЛЯ ТЕСТОВОГО СЦЕНАРИЯ';				
+
+-- УСТАНОВИТЬ ВЕС ДЛЯ ТЕСТОВОГО СЦЕНАРИЯ
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
 --------------------------------------------------------------------------------
 -- load_test_tables.sql
--- version 1.0
+-- version 4.0
 --------------------------------------------------------------------------------
 --Таблицы для анализа нагрузочного тестирования
 -----------------------------------------------------------------------------------
@@ -3199,10 +3271,8 @@ CREATE UNLOGGED TABLE load_test
   max_load integer DEFAULT 100 , -- Максимальная нагрука  соединений pgbench
   test_started timestamp with time zone , 
   test_finished timestamp with time zone ,
-  pass_counter integer DEFAULT 0 ,   -- Счетчик проходов теста
-  scenario_1_queryid bigint , 
-  scenario_2_queryid bigint , 
-  scenario_3_queryid bigint   
+  pass_counter integer DEFAULT 0 ,    -- Счетчик проходов теста  
+  testdb_name text DEFAULT 'default' --Наименование тестовой БД
 );
 ALTER TABLE load_test ADD CONSTRAINT load_test_pk PRIMARY KEY (test_id);
 
@@ -3212,9 +3282,6 @@ COMMENT ON COLUMN load_test.max_load IS 'Максимальная нагрука
 COMMENT ON COLUMN load_test.test_started IS 'Начало теста';
 COMMENT ON COLUMN load_test.test_finished IS 'Окончание теста';
 COMMENT ON COLUMN load_test.test_finished IS 'Количество итераций теста';
-COMMENT ON COLUMN load_test.scenario_1_queryid IS 'SQL запрос сценария-1';
-COMMENT ON COLUMN load_test.scenario_2_queryid IS 'SQL запрос сценария-2';
-COMMENT ON COLUMN load_test.scenario_3_queryid IS 'SQL запрос сценария-3';
 --Нагрузочный тест 
 -----------------------------------------------------------------------------------
 
@@ -3245,6 +3312,26 @@ COMMENT ON COLUMN load_test_pass.load_connections IS 'Текущая нагру�
 -- Итерация нагрузочного теста 
 -----------------------------------------------------------------------------------
 
+-------------------------------------------------------------------------------------
+--Тестовые сценарии
+DROP TABLE IF EXISTS testing_scenarios ; 
+CREATE UNLOGGED TABLE testing_scenarios
+(  
+  id integer  ,
+  weight real ,
+  queryid bigint ,
+  test_id integer 
+);
+ALTER TABLE testing_scenarios ADD CONSTRAINT testing_scenarios_pk PRIMARY KEY (id , test_id );
+ALTER TABLE testing_scenarios ADD CONSTRAINT testing_scenarios_fk FOREIGN KEY (test_id) REFERENCES load_test ( test_id );
+
+COMMENT ON TABLE testing_scenarios IS 'Тестовые сценарии';
+COMMENT ON COLUMN testing_scenarios.id IS 'ID тестового сценария ';
+COMMENT ON COLUMN testing_scenarios.weight IS 'Вес сценария ';
+COMMENT ON COLUMN testing_scenarios.queryid IS 'SQL запрос сценария ';
+COMMENT ON COLUMN testing_scenarios.test_id IS 'ID нагурзочного тестирования';
+--Конфигурационные параметры
+-------------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------

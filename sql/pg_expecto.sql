@@ -2855,6 +2855,14 @@ BEGIN
  SELECT load_test_get_load()
  INTO total_load ; 
  
+ --ЕСЛИ нагрузка для сценария не меняется 
+ IF current_weight < 0 
+ THEN 
+	result_load = ABS( current_weight );
+	RETURN result_load; 
+ END IF ;
+ --ЕСЛИ нагрузка для сценария не меняется 
+ 
  current_load_connections = total_load::DOUBLE PRECISION * current_weight ;
  
  SELECT CEIL( current_load_connections )
@@ -5373,7 +5381,7 @@ BEGIN
 	curr_timestamp between 
 	(SELECT MIN(p.start_timestamp) 
 	 FROM   load_test_pass p
-	 WHERE  p.test_id = 1 AND
+	 WHERE  p.test_id = current_test_id AND
 	 p.pass_counter >= 6) 
 	AND 
 	(SELECT MAX(p.finish_timestamp) 

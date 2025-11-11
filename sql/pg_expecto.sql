@@ -5309,7 +5309,7 @@ COMMENT ON FUNCTION reports_iostat_device_meta IS 'Метаданные IOSTAT';
 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- reports_load_test.sql
--- version 1.0
+-- version 4.0
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Отчет по нагрузочному тестированию
 --
@@ -5332,9 +5332,8 @@ DECLARE
  current_median_short DOUBLE PRECISION;
  current_median_long DOUBLE PRECISION;
  
- scenario_queryid_rec record ;
- 
  min_max_rec record ; 
+ testing_scenarios_rec record ;
 BEGIN
     line_count = 1 ;	
 	
@@ -5346,30 +5345,21 @@ BEGIN
 	SELECT load_test_get_current_test_id()
 	INTO current_test_id; 		
 
+	FOR testing_scenarios_rec IN
 	SELECT 
-	  scenario_1_queryid , scenario_2_queryid  , scenario_3_queryid  
-	INTO 
-	  scenario_queryid_rec 
+	  *
 	FROM 
-	  load_test 
+	  testing_scenarios 
 	WHERE 
-	   test_id = current_test_id;
-	
-	result_str[line_count] = 'СЦЕНАРИЙ-1: SELECT ONLY '; 
-	line_count=line_count+1; 
-	result_str[line_count] = scenario_queryid_rec.scenario_1_queryid ; 
-	line_count=line_count+2; 
-
-	result_str[line_count] = 'СЦЕНАРИЙ-2: SELECT+UPDATE'; 
-	line_count=line_count+1; 
-	result_str[line_count] = scenario_queryid_rec.scenario_2_queryid ; 
-	line_count=line_count+2; 
-
-	
-	result_str[line_count] = 'СЦЕНАРИЙ-3: INSERT ONLY'; 
-	line_count=line_count+1; 
-	result_str[line_count] = scenario_queryid_rec.scenario_3_queryid ; 
-	line_count=line_count+1; 	
+	   test_id = current_test_id
+	ORDER BY
+		id 
+	LOOP
+		result_str[line_count] = 'СЦЕНАРИЙ-'||testing_scenarios_rec.id; 
+		line_count=line_count+1; 
+		result_str[line_count] = testing_scenarios_rec.queryid ; 
+		line_count=line_count+2; 
+	END LOOP ;
 	-- ТЕСТОВЫЕ ЗАПРОСЫ
 	------------------------------------------------------  
 

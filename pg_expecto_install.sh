@@ -245,7 +245,7 @@ echo 'kill vmstat'
 pkill -u postgres -x "vmstat"
 
 echo 'start vmstat'
-vmstat 60 -S M -t >/postgres/pg_expecto/vmstat.log 2>&1 &
+vmstat 60 -S M -t >$current_path'/sh/vmstat.log' 2>&1 &
 echo 'vmstat started'
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : VMSTAT - IN PROCESS'
@@ -259,7 +259,7 @@ echo 'kill iostat'
 pkill -u postgres -x "iostat"
 
 echo 'start iostat'
-iostat 60 -d -x -m -t >/postgres/pg_expecto/iostat.log 2>&1 &
+iostat 60 -d -x -m -t >$current_path'/sh/iostat.log' 2>&1 &
 echo 'iostat started '
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : IOSTAT - IN PROCESS'
@@ -278,30 +278,3 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : */1 * * * * '$current
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : */1 * * * * '$current_path'/sh/load_test/load_test.sh' >>$LOG_FILE
 
 exit 0
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

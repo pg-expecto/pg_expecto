@@ -2,7 +2,7 @@
 ########################################################################################################
 # load_test_report.sh
 # Отчет по нагрузочному тестированию
-# version 1.0
+# version 4.0
 ########################################################################################################
 
 #Обработать код возврата 
@@ -102,28 +102,15 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK ' >> $LOG_FILE
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ОТЧЕТ ПО SQL СЦЕНАРИЯМ - НАЧАТ '
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ОТЧЕТ ПО SQL СЦЕНАРИЯМ - НАЧАТ ' >> $LOG_FILE
 
-current_test_id=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT load_test_get_current_test_id()"` 2>$ERR_FILE
-scenario_1_queryid=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT scenario_1_queryid FROM load_test WHERE test_id = $current_test_id"` 2>$ERR_FILE
-scenario_2_queryid=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT scenario_2_queryid FROM load_test WHERE test_id = $current_test_id"` 2>$ERR_FILE
-scenario_3_queryid=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT scenario_3_queryid FROM load_test WHERE test_id = $current_test_id"` 2>$ERR_FILE
 
-for ((sc_count=1; sc_count <= 4; sc_count++ )) 
+
+current_test_id=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT load_test_get_current_test_id()"` 2>$ERR_FILE
+max_sc_count=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT count(id) FROM testing_scenarios WHERE test_id = $current_test_id"` 2>$ERR_FILE
+
+for ((sc_count=1; sc_count <= $max_sc_count; sc_count++ )) 
 do 
-	if [ "$sc_count" == "1" ]
-	then 
-	  let queryid=scenario_1_queryid
-	fi 
-	
-	if [ "$sc_count" == "2" ]
-	then 
-	  let queryid=scenario_2_queryid
-	fi 
-	
-	if [ "$sc_count" == "3" ]
-	then 
-	  let queryid=scenario_3_queryid
-	fi 
-	
+	queryid=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT queryid FROM testing_scenarios WHERE id = $sc_count AND  test_id = $current_test_id"` 2>$ERR_FILE
+		
 	#####################################################################################################
 	## ОЖИДАНИЯ ПО queryid
 	for wait_event_type in 'BufferPin' 'Extension' 'IO' 'IPC' 'Lock' 'LWLock' 'Timeout'

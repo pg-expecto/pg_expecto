@@ -55,7 +55,10 @@ then
   pgbench_clients=`psql -d $expecto_db -U $expecto_user -Aqtc 'select load_test_get_load()'` 2>$ERR_FILE
 
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ИТЕРАЦИЯ : '$current_pass' СЕССИЙ pgbench : '$pgbench_clients >> $LOG_FILE
-
+  
+  psql -d $expecto_db -U $expecto_user -Aqtc 'select load_test_set_scenario_queryid()' 2>$ERR_FILE
+  exit_code $? $LOG_FILE $ERR_FILE	
+  
   exit 0
 fi
 #################################################
@@ -127,9 +130,7 @@ then
   done
   wait
   exit_code $? $LOG_FILE $PROGRESS_FILE  	
-
-  psql -d $expecto_db -U $expecto_user -Aqtc 'select load_test_set_scenario_queryid()' 2>$ERR_FILE
-  exit_code $? $LOG_FILE $ERR_FILE	
+  
 # ЕСЛИ ТЕСТОВАЯ БД - ПО УМОЛЧАНИЮ  
 #################################################################################
 #################################################################################

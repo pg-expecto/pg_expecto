@@ -50,9 +50,21 @@ rm $current_path'/LOAD_TEST_IN_PROGRESS'
 psql -d $performance_monitoring_db -U $performance_monitoring_user -c 'select stop_test()' >> $LOG_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE  
 
-
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ЗАВЕРШЕНИЕ PGBENCH'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ЗАВЕРШЕНИЕ PGBENCH' >> $LOG_FILE
 psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'pgbench'";
 exit_code $? $LOG_FILE $ERR_FILE  
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ЗАВЕРШЕНИЕ СЦЕНАРИЕВ НАГРУЗОЧНОГО ТЕСТИРОВАНИЯ'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ЗАВЕРШЕНИЕ СЦЕНАРИЕВ НАГРУЗОЧНОГО ТЕСТИРОВАНИЯ' >> $LOG_FILE
+psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name like '%select scenario%'";
+exit_code $? $LOG_FILE $ERR_FILE  
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ЗАВЕРШЕНИЕ Airlines processor'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ЗАВЕРШЕНИЕ Airlines processor' >> $LOG_FILE
+psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name like '%Airlines processor%'";
+exit_code $? $LOG_FILE $ERR_FILE  
+
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : НАГРУЗОЧНЫЙ ТЕСТ - ОСТАНОВЛЕН'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : НАГРУЗОЧНЫЙ ТЕСТ - ОСТАНОВЛЕН' >> $LOG_FILE

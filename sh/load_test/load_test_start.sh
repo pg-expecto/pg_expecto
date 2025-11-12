@@ -48,19 +48,20 @@ exit_code $? $LOG_FILE $ERR_FILE
 
 ######################################################################
 # Инициализировать тестовую БД ?
-init_test_db=`$current_path'/'get_conf_param.sh $current_path init_test_db 2>$ERR_FILE`
-exit_code $? $LOG_FILE $ERR_FILE
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : init_test_db = '$init_test_db
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : init_test_db = '$init_test_db >> $LOG_FILE	
-
 testdb=`$current_path'/'get_conf_param.sh $current_path testdb 2>$ERR_FILE`
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ТЕСТОВАЯ БД  = '$testdb
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ТЕСТОВАЯ БД  = '$testdb >> $LOG_FILE	
+
 
 #################################################################################
 # ЕСЛИ ТЕСТОВАЯ БД - ПО УМОЛЧАНИЮ
 if [ "$testdb" == "default" ]
 then
+	init_test_db=`$current_path'/'get_conf_param.sh $current_path init_test_db 2>$ERR_FILE`
+	exit_code $? $LOG_FILE $ERR_FILE
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : init_test_db = '$init_test_db
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : init_test_db = '$init_test_db >> $LOG_FILE	
+
 	#################################################################################
 	# ИНИЦИАЛИЗИРОВАТЬ ТЕСТОВУЮ БД
 	if [ "$init_test_db" == "on" ]
@@ -208,23 +209,10 @@ then
 #################################################################################
 # КАСТОМНАЯ ТЕСТОВАЯ БД
 else
-	#########################################################################################################	
-	# ВАКУУМ ТЕСТОВОЙ БД
-	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ANALYZE/VACUUM ТЕСТОВОЙ БД'
-	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ANALYZE/VACUUM ТЕСТОВОЙ БД' >> $LOG_FILE
-
-	max_parallel_maintenance_workers=`psql  -Aqtc 'show max_parallel_maintenance_workers' 2>$ERR_FILE`
-	exit_code $? $LOG_FILE $ERR_FILE  
-	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : max_parallel_maintenance_workers =  '$max_parallel_maintenance_workers
-	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : max_parallel_maintenance_workers =  '$max_parallel_maintenance_workers >> $LOG_FILE
-	
-	psql -d test_pgbench_custom -c 'VACUUM ( PARALLEL '$max_parallel_maintenance_workers' ) ' & psql -d $testdb -c 'ANALYZE'  >> $LOG_FILE 2>$ERR_FILE
-	wait
+	psql -d $expecto_db -U $expecto_user -c "select load_test_set_testdb('$testdb')" >> $LOG_FILE 2>>$ERR_FILE
 	exit_code $? $LOG_FILE $ERR_FILE
-	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ANALYZE/VACUUM ТЕСТОВОЙ БД - ЗАВЕРШЕН'
-	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ANALYZE/VACUUM ТЕСТОВОЙ БД - ЗАВЕРШЕН' >> $LOG_FILE
-	# ВАКУУМ ТЕСТОВОЙ БД	
-	#########################################################################################################	
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ТЕСТОВАЯ БД НАГРУЗОЧНОГО ТЕСТИРОВАНИЯ = '$testdb
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ТЕСТОВАЯ БД НАГРУЗОЧНОГО ТЕСТИРОВАНИЯ = '$testdb >> $LOG_FILE
 
 	testdb_owner=`psql  -Aqtc "SELECT r.rolname FROM pg_database d JOIN pg_roles r ON d.datdba = r.oid WHERE d.datname = '$testdb'"`  2>$ERR_FILE
 	exit_code $? $LOG_FILE $ERR_FILE

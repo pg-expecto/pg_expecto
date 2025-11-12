@@ -101,7 +101,6 @@ RAISE NOTICE '-- ТЕКУЩИЕ ЗНАЧЕНИЯ';
 			WHEN wait_stats_rec.event_type = 'IPC' THEN current_ipc = COALESCE( wait_stats_rec.event_type_count , 0 );
 			WHEN wait_stats_rec.event_type = 'Lock' THEN current_lock = COALESCE( wait_stats_rec.event_type_count , 0 );
 			WHEN wait_stats_rec.event_type = 'LWLock' THEN current_lwlock = COALESCE( wait_stats_rec.event_type_count , 0 );
-			WHEN wait_stats_rec.event_type = 'LWLock' THEN current_lwlock = COALESCE( wait_stats_rec.event_type_count , 0 );
 			WHEN wait_stats_rec.event_type = 'Timeout' THEN current_timeout = COALESCE( wait_stats_rec.event_type_count , 0 );
 		END CASE ;		
 	END LOOP;
@@ -2616,6 +2615,8 @@ COMMENT ON COLUMN configuration.day_for_store IS 'Глубина хранени�
 --
 -- load_test_set_weight_for_scenario - Установить вес для тестового сценария
 --
+-- load_test_set_testdb - Установить имя тестовой БД
+--
 -- load_test_start_collect_data() Начать собирать данные для статистики для текущей фазы теста
 -- load_test_stop_collect_data() Завершить сбор данных для статистики для текущей фазы теста
 --
@@ -2657,6 +2658,24 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION load_test_new_test IS 'Начать новый тест';
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- Установить имя тестовой БД
+CREATE OR REPLACE FUNCTION load_test_set_testdb( new_testdb text ) RETURNS integer AS $$
+DECLARE
+  current_test_id bigint;  
+BEGIN
+    SELECT load_test_get_current_test_id()
+	INTO current_test_id;
+	
+	UPDATE load_test SET testdb_name = new_testdb WHERE test_id = current_test_id ;		
+	
+  return 0 ; 
+END
+$$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION load_test_new_test IS 'Установить имя тестовой БД';
+-- Установить имя тестовой БД
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -2880,125 +2899,42 @@ COMMENT ON FUNCTION load_test_get_load_by_scenario IS 'Текущее колич
 CREATE OR REPLACE FUNCTION load_test_set_scenario_queryid() RETURNS integer  AS $$
 DECLARE 
  curr_scenario_queryid bigint ; 
- current_test_id integer;
- current_testdb_name text ;
+ current_test_id integer; 
  testing_scenarios_id integer ;
  max_testing_scenarios_id integer ;
 BEGIN
 	
 	SELECT load_test_get_current_test_id()
 	INTO current_test_id ;
-	
-	SELECT 
-		testdb_name
-	INTO 
-		current_testdb_name
-	FROM 
-		load_test 
-	WHERE 
-		test_id = current_test_id ; 
-		
-	--------------------------------------------------------------
-	-- ТЕСТОВАЯ БД - ПО УМОЛЧАНИЮ
-	IF current_testdb_name = 'default'
-	THEN 
-			-------------------------------------------------------
-			--SCENARIO_1_QUERYID
-			SELECT 
-				queryid
-			INTO 
-				curr_scenario_queryid
-			FROM 
-				pg_stat_statements
-			WHERE 
-				query like 'select scenario1%' ;
-						
-			UPDATE 	
-				testing_scenarios
-			SET
-				queryid = curr_scenario_queryid
-			WHERE 
-				test_id = current_test_id AND 
-				id = 1 AND 
-				queryid IS NULL ;
-			--SCENARIO_1_QUERYID
-			-------------------------------------------------------
 
-			-------------------------------------------------------
-			--SCENARIO_2_QUERYID
-			SELECT 
-				queryid
-			INTO 
-				curr_scenario_queryid
-			FROM 
-				pg_stat_statements
-			WHERE 
-				query like 'select scenario2%' ;
-						
-			UPDATE 	
-				testing_scenarios
-			SET
-				queryid = curr_scenario_queryid
-			WHERE 
-				test_id = current_test_id AND 
-				id = 2 AND 
-				queryid IS NULL ;
-			--SCENARIO_2_QUERYID
-			-------------------------------------------------------
-		
-			--SCENARIO_3_QUERYID
-			SELECT 
-				queryid
-			INTO 
-				curr_scenario_queryid
-			FROM 
-				pg_stat_statements
-			WHERE 
-				query like 'select scenario3%' ;
-					
-			UPDATE 	
-				testing_scenarios
-			SET
-				queryid = curr_scenario_queryid
-			WHERE 
-				test_id = current_test_id AND 
-				id = 3 AND 
-				queryid IS NULL ;
-			--SCENARIO_3_QUERYID
-			-------------------------------------------------------
-	-- ТЕСТОВАЯ БД - ПО УМОЛЧАНИЮ
-	--------------------------------------------------------------
-	-- КАСТОМНАЯ ТЕСТОВАЯ БД
-	ELSE	
-		SELECT MAX(id) 
-		INTO max_testing_scenarios_id
-		FROM testing_scenarios
-		WHERE test_id = current_test_id ;
-		
-		FOR testing_scenarios_id IN 1..max_testing_scenarios_id		
-		LOOP 
-			SELECT 
-				queryid
-			INTO 
-				curr_scenario_queryid
-			FROM 
-				pg_stat_statements
-			WHERE 
-				query like 'select scenario'||testing_scenarios_id||'%' ;
-			
-			UPDATE 	
-				testing_scenarios
-			SET
-				queryid = curr_scenario_queryid
-			WHERE 
-				test_id = current_test_id AND 
-				id = testing_scenarios_id AND 
-				queryid IS NULL ;
-		END LOOP;
-		
-	END IF ;
-	-- КАСТОМНАЯ ТЕСТОВАЯ БД
-	--------------------------------------------------------------				
+	SELECT MAX(id) 
+	INTO max_testing_scenarios_id
+	FROM testing_scenarios
+	WHERE test_id = current_test_id ;
+
+	
+	FOR testing_scenarios_id IN 1..max_testing_scenarios_id		
+	LOOP 
+		SELECT 
+			queryid
+		INTO 
+			curr_scenario_queryid
+		FROM 
+			pg_stat_statements
+		WHERE 
+			query like '%select scenario'||testing_scenarios_id||'%' ;
+--RAISE NOTICE 'testing_scenarios_id=%',testing_scenarios_id;
+--RAISE NOTICE 'curr_scenario_queryid=%',curr_scenario_queryid;
+		UPDATE 	
+			testing_scenarios
+		SET
+			queryid = curr_scenario_queryid
+		WHERE 
+			test_id = current_test_id AND 
+			id = testing_scenarios_id AND 
+			queryid = 0  ;
+	END LOOP;
+	
 
  RETURN 0 ; 
 
@@ -3252,7 +3188,7 @@ BEGIN
     SELECT load_test_get_current_test_id()
 	INTO current_test_id;
 	
-	INSERT INTO testing_scenarios ( id , weight , test_id ) VALUES ( current_scenario ,  new_weight , current_test_id );
+	INSERT INTO testing_scenarios ( id , weight , test_id , queryid ) VALUES ( current_scenario ,  new_weight , current_test_id , 0 );
 	
   return 0 ; 
 END

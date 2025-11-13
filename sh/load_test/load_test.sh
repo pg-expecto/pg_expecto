@@ -20,7 +20,7 @@ then
 	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ERROR : Details in '$ERR_FILE
 	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ERROR : Details in '$ERR_FILE >> $LOG_FILE
 	
-	/postgres/pg_expecto/load_test/load_test_stop.sh
+	$current_path'/'load_test_stop.sh
 	
     exit $ecode
 fi
@@ -109,22 +109,25 @@ testdb=`$current_path'/'get_conf_param.sh $current_path testdb 2>$ERR_FILE`
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ТЕСТОВАЯ БД  = '$testdb
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ТЕСТОВАЯ БД  = '$testdb >> $LOG_FILE	
 
+current_test_id=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT load_test_get_current_test_id()"` 2>$ERR_FILE
+max_sc_count=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT count(id) FROM testing_scenarios WHERE test_id = $current_test_id"` 2>$ERR_FILE
+
 #################################################################################
 # ЕСЛИ ТЕСТОВАЯ БД - ПО УМОЛЧАНИЮ
 if [ "$testdb" == "default" ]
 then 
-  for i in {1..3}
+  for (( scenario_id=1; scenario_id <= max_sc_count; scenario_id++ ))
   do
-    pgbench_clients=`psql -d $expecto_db -U $expecto_user -Aqtc "select load_test_get_load_by_scenario("$i")"` 2>$ERR_FILE
+    pgbench_clients=`psql -d $expecto_db -U $expecto_user -Aqtc "select load_test_get_load_by_scenario("$scenario_id")"` 2>$ERR_FILE
     exit_code $? $LOG_FILE $ERR_FILE
 
-	pgbench_param='--file='$current_path'/do_scenario'$i'.sql --protocol=extended --report-per-command --jobs='"$jobs"' --client='"$pgbench_clients"' --time='"$pg_bench_time"' '$pgbench_db		
+	pgbench_param='--file='$current_path'/do_scenario'$scenario_id'.sql --protocol=extended --report-per-command --jobs='"$jobs"' --client='"$pgbench_clients"' --time='"$pg_bench_time"' '$pgbench_db		
 	
-	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$i': pgbench_clients= '$pgbench_clients
-    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$i': pgbench_clients= '$pgbench_clients>> $LOG_FILE
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$scenario_id': pgbench_clients= '$pgbench_clients
+    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$scenario_id': pgbench_clients= '$pgbench_clients>> $LOG_FILE
 	
-    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$i': pgbench_param= '$pgbench_param
-    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$i': pgbench_param= '$pgbench_param>> $LOG_FILE
+    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$scenario_id': pgbench_param= '$pgbench_param
+    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$scenario_id': pgbench_param= '$pgbench_param>> $LOG_FILE
 	
 	pgbench --username=expecto_user $pgbench_param & >>$LOG_FILE 2>$PROGRESS_FILE
   done
@@ -142,16 +145,8 @@ else
 	  exit_code $? $LOG_FILE $ERR_FILE
 	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ВЛАДЕЛЕЦ ТЕСТОВОЙ БД  = '$testdb_owner
 	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ВЛАДЕЛЕЦ ТЕСТОВОЙ БД  = '$testdb_owner >> $LOG_FILE	
-		
-	  let i=0
-	  flag='1'
-	  while [ "$flag" != "0" ]
-	  do
-	    let "i++"
-		flag=`cat $current_path'/param.conf' | grep 'scenario'$i | wc -l`	
-	  done 	  
 	  
-	  for (( scenario_id=1; scenario_id < i; scenario_id++ ))
+	  for (( scenario_id=1; scenario_id <= max_sc_count; scenario_id++ ))
 	  do
 	  
 		pgbench_clients=`psql -d $expecto_db -U $expecto_user -Aqtc "select load_test_get_load_by_scenario("$scenario_id")"` 2>$ERR_FILE

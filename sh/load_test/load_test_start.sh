@@ -18,7 +18,7 @@ then
 	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ERROR : Details in '$ERR_FILE
 	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ERROR : Details in '$ERR_FILE >> $LOG_FILE
 	
-	/postgres/pg_expecto/load_test/load_test_stop.sh
+	$current_path'/'load_test_stop.sh
 	
     exit $ecode
 fi
@@ -105,37 +105,36 @@ then
 			# before_start.sql - Изменения/добавления тестовых таблиц
 			#########################################################################################################
 			
-
-			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-1'
-			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-1' >> $LOG_FILE
-			psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f $current_path'/scenario1.sql' >> $LOG_FILE 2>>$ERR_FILE
-			exit_code $? $LOG_FILE $ERR_FILE
-
-			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-2'
-			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-2' >> $LOG_FILE
-			psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f $current_path'/scenario2.sql' >> $LOG_FILE 2>>$ERR_FILE
-			exit_code $? $LOG_FILE $ERR_FILE
-
-			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-3'
-			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-3' >> $LOG_FILE
-			psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f $current_path'/scenario3.sql' >> $LOG_FILE 2>>$ERR_FILE
-			exit_code $? $LOG_FILE $ERR_FILE
+			#########################################################################################################
+			#  ТЕСТОВЫЕ СЦЕНАРИИ
+			  let i=1
+			  flag='1'
+			  while [ "$flag" != "0" ]
+			  do
+				
+				echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i
+				echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i >> $LOG_FILE
+				psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f  $current_path'/scenario'$i'.sql' >> $LOG_FILE 2>>$ERR_FILE
+				exit_code $? $LOG_FILE $ERR_FILE
+			  
+				echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ СКРИПТ ВЫЗОВА СЦЕНАРИЯ-'$i
+				echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ СКРИПТ ВЫЗОВА СЦЕНАРИЯ-'$i >> $LOG_FILE
+				echo 'select scenario'$i'();' > $current_path'/do_scenario'$i'.sql'
+				
+				current_scenario='scenario'$i
+				current_weight=`$current_path'/'get_conf_param.sh $current_path $current_scenario 2>$ERR_FILE`
+				echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$i' ВЕС = '$current_weight
+				echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$i' ВЕС = '$current_weight >> $LOG_FILE	
 			
-			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : pgbench ВЫЗОВ ФУНКЦИИ СЦЕНАРИЯ-1'
-			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : pgbench ВЫЗОВ ФУНКЦИИ СЦЕНАРИЯ-1' >> $LOG_FILE
-			psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f $current_path'/do_scenario1.sql' >> $LOG_FILE 2>>$ERR_FILE
-			exit_code $? $LOG_FILE $ERR_FILE
+				psql -d $expecto_db -U $expecto_user -c "select load_test_set_weight_for_scenario($i , $current_weight )" >> $LOG_FILE 2>>$ERR_FILE
+				exit_code $? $LOG_FILE $ERR_FILE    
+				
+				let "i++"
+				flag=`cat $current_path'/param.conf' | grep 'scenario'$i | wc -l`		
+			  done 	  
+			#  ТЕСТОВЫЕ СЦЕНАРИИ
+			######################################################################################################### 
 			
-			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : pgbench ВЫЗОВ ФУНКЦИИ СЦЕНАРИЯ-2'
-			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : pgbench ВЫЗОВ ФУНКЦИИ СЦЕНАРИЯ-2' >> $LOG_FILE
-			psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f $current_path'/do_scenario2.sql' >> $LOG_FILE 2>>$ERR_FILE
-			exit_code $? $LOG_FILE $ERR_FILE
-			
-			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : pgbench ВЫЗОВ ФУНКЦИИ СЦЕНАРИЯ-3'
-			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : pgbench ВЫЗОВ ФУНКЦИИ СЦЕНАРИЯ-3' >> $LOG_FILE
-			psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f $current_path'/do_scenario3.sql' >> $LOG_FILE 2>>$ERR_FILE
-			exit_code $? $LOG_FILE $ERR_FILE
-
 
 		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") '  : OK : СОЗДАНИЕ И ИНИЦИАЛИЗАЦИЯ ТЕСТОВОЙ БД - ЗАВЕРШЕНО'
 		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") '  : OK : СОЗДАНИЕ И ИНИЦИАЛИЗАЦИЯ ТЕСТОВОЙ БД - ЗАВЕРШЕНО'>> $LOG_FILE
@@ -154,20 +153,35 @@ then
 		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : VACUUM ANALYZE STARTED '
 		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : VACUUM ANALYZE STARTED ' >> $LOG_FILE
 		
-		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-1'
-		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-1' >> $LOG_FILE
-		psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f $current_path'/scenario1.sql' >> $LOG_FILE 2>>$ERR_FILE
-		exit_code $? $LOG_FILE $ERR_FILE
-
-		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-2'
-		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-2' >> $LOG_FILE
-		psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f $current_path'/scenario2.sql' >> $LOG_FILE 2>>$ERR_FILE
-		exit_code $? $LOG_FILE $ERR_FILE
-
-		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-3'
-		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-3' >> $LOG_FILE
-		psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f $current_path'/scenario3.sql' >> $LOG_FILE 2>>$ERR_FILE
-		exit_code $? $LOG_FILE $ERR_FILE
+		#########################################################################################################
+		#  ТЕСТОВЫЕ СЦЕНАРИИ
+		  let i=1
+		  flag='1'
+		  while [ "$flag" != "0" ]
+		  do
+			
+			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i
+			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i >> $LOG_FILE
+			psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f  $current_path'/scenario'$i'.sql' >> $LOG_FILE 2>>$ERR_FILE
+			exit_code $? $LOG_FILE $ERR_FILE
+		  
+			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ СКРИПТ ВЫЗОВА СЦЕНАРИЯ-'$i
+			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ СКРИПТ ВЫЗОВА СЦЕНАРИЯ-'$i >> $LOG_FILE
+			echo 'select scenario'$i'();' > $current_path'/do_scenario'$i'.sql'
+			
+			current_scenario='scenario'$i
+			current_weight=`$current_path'/'get_conf_param.sh $current_path $current_scenario 2>$ERR_FILE`
+			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$i' ВЕС = '$current_weight
+			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$i' ВЕС = '$current_weight >> $LOG_FILE	
+		
+			psql -d $expecto_db -U $expecto_user -c "select load_test_set_weight_for_scenario($i , $current_weight )" >> $LOG_FILE 2>>$ERR_FILE
+			exit_code $? $LOG_FILE $ERR_FILE    
+			
+			let "i++"
+			flag=`cat $current_path'/param.conf' | grep 'scenario'$i | wc -l`		
+		  done 	  
+		#  ТЕСТОВЫЕ СЦЕНАРИИ
+		######################################################################################################### 
 		
 		#########################################################################################################	
 		# ВАКУУМ ТЕСТОВОЙ БД
@@ -189,21 +203,7 @@ then
 	fi
 	# ИНИЦИАЛИЗИРОВАТЬ ТЕСТОВУЮ БД
 	#################################################################################
-
-  #################################################################################
-  # НАЗНАЧИТЬ ВЕСА ТЕСТОВЫМ СЦЕНАРИЯМ  
-  for i in {1..3}
-  do
-	current_scenario='scenario'$i
-    current_weight=`$current_path'/'get_conf_param.sh $current_path $current_scenario 2>$ERR_FILE`
-    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$i' ВЕС = '$current_weight
-    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$i' ВЕС = '$current_weight >> $LOG_FILE	
 	
-	psql -d $expecto_db -U $expecto_user -c "select load_test_set_weight_for_scenario($i , $current_weight )" >> $LOG_FILE 2>>$ERR_FILE
-    exit_code $? $LOG_FILE $ERR_FILE    
-  done	
-  # НАЗНАЧИТЬ ВЕСА ТЕСТОВЫМ СЦЕНАРИЯМ  
-  #################################################################################
 # ЕСЛИ ТЕСТОВАЯ БД - ПО УМОЛЧАНИЮ
 #################################################################################
 #################################################################################

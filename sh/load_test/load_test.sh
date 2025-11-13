@@ -221,15 +221,13 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ФЛАГ ОСТАНО�
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ФЛАГ ОСТАНОВКИ НАГРУЗОЧНОГО ТЕСТА = '$is_test_could_be_finished >> $LOG_FILE
 if [ "$is_test_could_be_finished" == "1" ];
 then 	
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ОЧИСТКА ТАБЛИЦЫ pgbench_history '
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ОЧИСТКА ТАБЛИЦЫ pgbench_history ' >> $LOG_FILE
-  psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -Aqtc 'TRUNCATE TABLE pgbench_history' >> $LOG_FILE 2>>$ERR_FILE
-  exit_code $? $LOG_FILE $ERR_FILE
-  
-  #################################################
-  # ФИНАЛЬНЫЙ ОТЧЕТ
-  # ФИНАЛЬНЫЙ ОТЧЕТ
-  #################################################
+  if [ "$testdb" == "default" ]
+  then 
+    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ОЧИСТКА ТАБЛИЦЫ pgbench_history '
+    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ОЧИСТКА ТАБЛИЦЫ pgbench_history ' >> $LOG_FILE
+    psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -Aqtc 'TRUNCATE TABLE pgbench_history' >> $LOG_FILE 2>>$ERR_FILE
+    exit_code $? $LOG_FILE $ERR_FILE
+  fi
   
   #################################################
   # Опустить флаг

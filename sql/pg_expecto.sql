@@ -2923,8 +2923,7 @@ BEGIN
 			pg_stat_statements
 		WHERE 
 			query like '%select scenario'||testing_scenarios_id||'%' ;
---RAISE NOTICE 'testing_scenarios_id=%',testing_scenarios_id;
---RAISE NOTICE 'curr_scenario_queryid=%',curr_scenario_queryid;
+
 		UPDATE 	
 			testing_scenarios
 		SET
@@ -5433,18 +5432,6 @@ DECLARE
 BEGIN
     line_count = 1 ;	
 	
-	result_str[line_count] = 'ИЗМЕНЕНИЕ НАГРУЗКИ В ХОДЕ НАГРУЗОЧНОГО ТЕСТИРОВАНИЯ ' ; 
-	line_count=line_count+2; 
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+2; 
-	
-	result_str[line_count] = 	'timestamp'||'|'||
-								'№'||'|'||								
-								'LOAD'||'|'
-								;							
-	line_count=line_count+1; 
 	
 	SELECT load_test_get_current_test_id()
 	INTO current_test_id; 
@@ -5468,6 +5455,20 @@ BEGIN
 	WHERE  
 		p.test_id = current_test_id AND 
 		p.pass_counter >= 6 ;
+
+    result_str[line_count] = 'ИЗМЕНЕНИЕ НАГРУЗКИ В ХОДЕ НАГРУЗОЧНОГО ТЕСТИРОВАНИЯ ' ; 
+	line_count=line_count+2; 
+	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+1; 
+	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+2; 
+	
+	result_str[line_count] = 	'timestamp'||'|'||
+								'№'||'|'||								
+								'LOAD'||'|'
+								;							
+	line_count=line_count+1; 
+
 
     counter = 1 ;
 	FOR cluster_stat_median_rec IN
@@ -6284,7 +6285,8 @@ BEGIN
 	ELSE 
 		corr_cs_in = 0 ;
 	END IF;
-
+	
+    line_count=line_count+1;
     result_str[line_count] = 'Корреляция переключений контекста и прерываний(cs - in) | ' ||
 	REPLACE ( TO_CHAR( ROUND( corr_cs_in::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
 	line_count=line_count+1;	

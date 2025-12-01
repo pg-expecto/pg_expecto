@@ -160,7 +160,7 @@ else
 		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$scenario_id': pgbench_param= '$pgbench_param
 		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$scenario_id': pgbench_param= '$pgbench_param>> $LOG_FILE
 	
-		pgbench --username=$testdb_owner $pgbench_param & >>$LOG_FILE 2>$PROGRESS_FILE
+		pgbench  --no-vacuum --username=$testdb_owner $pgbench_param & >>$LOG_FILE 2>$PROGRESS_FILE
 	  done
 	  wait
 	  exit_code $? $LOG_FILE $PROGRESS_FILE  	

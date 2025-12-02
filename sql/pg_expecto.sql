@@ -2931,7 +2931,7 @@ BEGIN
 		WHERE 
 			test_id = current_test_id AND 
 			id = testing_scenarios_id AND 
-			queryid = 0  ;
+			queryid = 0  OR queryid IS NULL ; -- костыль "OR queryid IS NULL"
 	END LOOP;
 	
 

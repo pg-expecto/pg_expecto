@@ -51,3 +51,4 @@ shared_preload_libraries=‘pg_stat_statements , pg_wait_sampling’
 - [Использование PG_EXPECTO для выявления проблемных SQL запросов при анализе инцидента производительности СУБД PostgreSQL](https://dzen.ru/a/aQX74beixXl2XCfR?share_to=link)
 - [PG_EXPECTO : Настройка сценариев нагрузочного тестирования СУБД PostgreSQL](https://dzen.ru/a/aQsuqvClBDUYiIA6?share_to=link)
 - [PG_EXPECTO 4 + Демобаза 2.0 : использование тестовой базы данных для нагрузочного тестирования СУБД](https://dzen.ru/a/aRMGMa7auy4kKuPk?share_to=link)
+- [PG_EXPECTO: Анализ влияния размера shared_buffers на производительность СУБД PostgreSQL](https://habr.com/p/976344/)

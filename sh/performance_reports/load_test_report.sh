@@ -80,6 +80,7 @@ exit_code $? $LOG_FILE $ERR_FILE
 
 chmod 777 $REPORT_FILE
 mv $REPORT_FILE $REPORT_DIR
+reports_load_test_loading=$REPORT_FILE
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
@@ -145,7 +146,68 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ОТЧЕТ ПО SQL С�
 ##################################################################################################################################
 
 
+REPORT_DIR='/tmp/pg_expecto_reports'
+REPORT_FILE='_1.summary.txt'
+cd $REPORT_DIR
+
+#Заголовок отчета 
+title=$1
+
+echo $title > $REPORT_FILE
+echo $(date "+%d-%m-%Y %H:%M:%S") >> $REPORT_FILE
+echo ' ' >> $REPORT_FILE
+
+
+#файл postgresql.auto.conf
+echo 'postgresql.auto.conf' >> $REPORT_FILE
+data_directory=`psql -Aqtc  'SHOW data_directory'`
+postgresql_auto_conf=$data_directory'/postgresql.auto.conf'
+cat $postgresql_auto_conf >> $REPORT_FILE
+echo ' ' >> $REPORT_FILE
+
+#количество ядер CPU
+echo 'CPU' >> $REPORT_FILE
+lscpu >>  $REPORT_FILE
+echo ' ' >> $REPORT_FILE
+
+#размер RAM
+echo 'RAM' >> $REPORT_FILE
+free -b | awk '/^Mem:/ {printf "%.2f GB\n", $2/1024/1024/1024}' >> $REPORT_FILE
+echo ' ' >> $REPORT_FILE
+
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+cat 'postgres._load_test_loading.txt' >> $REPORT_FILE 
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+echo 'ПРОИЗВОДИТЕЛЬНОСТЬ И ОЖИДАНИЯ СУБД' >> $REPORT_FILE
+cat 'postgres.1.cluster_report_meta.txt' >> $REPORT_FILE 
+cat 'postgres.1.cluster_report_4graph.txt' >> $REPORT_FILE 
+cat 'postgres.2.wait_event.txt' >> $REPORT_FILE 
+cat 'postgres.3.queryid.txt' >> $REPORT_FILE 
+cat 'postgres.x.sql_list.txt' >> $REPORT_FILE 
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+echo 'МЕТРИКИ VMSTAT IOSTAT' >> $REPORT_FILE
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+cat 'linux.1.waitings_vmstat_corr.txt' >> $REPORT_FILE 
+cat 'linux.2.vmstat_iostat_vdc.txt' >> $REPORT_FILE 
+cat 'linux.2.vmstat_iostat_vdd.txt' >> $REPORT_FILE 
+cat 'linux.3.vmstat_io.txt' >> $REPORT_FILE 
+cat 'linux.4.vmstat_cpu.txt' >> $REPORT_FILE 
+cat 'linux.5.vmstat_ram.txt' >> $REPORT_FILE 
+cat 'linux.x.iostat_vdc_meta.txt' >> $REPORT_FILE 
+cat 'linux.x.iostat_vdc_4graph.txt' >> $REPORT_FILE 
+cat 'linux.x.iostat_vdd_meta.txt' >> $REPORT_FILE 
+cat 'linux.x.iostat_vdd_4graph.txt' >> $REPORT_FILE 
+cat 'linux.x.vmstat_meta.txt' >> $REPORT_FILE 
+cat 'linux.x.vmstat_4graph.txt' >> $REPORT_FILE 
+
+REPORT_FILE='_1.prompt.txt'
+echo 'Проанализируй данные по метрикам производительности и ожиданий СУБД , метрикам инфраструктуры vmstat/iostat, для заданной СУБД PostgreSQL. Подготовь промпты  DeepSeek для сводного анализа результатов.' > $REPORT_FILE
+
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ ПО НАГРУЗОЧНОМУ ТЕСТИРОВАНИЮ - ВЫПОЛНЕН'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ ПО НАГРУЗОЧНОМУ ТЕСТИРОВАНИЮ - ВЫПОЛНЕН' >> $LOG_FILE
 
+
+
 exit 0 
+
+

@@ -175,6 +175,11 @@ echo 'RAM' >> $REPORT_FILE
 free -b | awk '/^Mem:/ {printf "%.2f GB\n", $2/1024/1024/1024}' >> $REPORT_FILE
 echo ' ' >> $REPORT_FILE
 
+#IO
+echo 'IO' >> $REPORT_FILE
+lsblk >> $REPORT_FILE
+echo ' ' >> $REPORT_FILE
+
 echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 cat 'postgres._load_test_loading.txt' >> $REPORT_FILE 
 echo '-------------------------------------------------------------------------' >> $REPORT_FILE

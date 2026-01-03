@@ -2,7 +2,7 @@
 ########################################################################################################
 # pg_expecto_install.sh
 # Инсталлятор
-# version 3.0
+# version 5.0
 # Исходная папка /tmp/pg_expecto
 # mkdir /postgres/pg_expecto
 # cp /tmp/pg_expecto/pg_expecto_install.sh /postgres/pg_expecto/
@@ -245,7 +245,7 @@ echo 'kill vmstat'
 pkill -u postgres -x "vmstat"
 
 echo 'start vmstat'
-vmstat 60 -S M -t >$current_path'/sh/vmstat.log' 2>&1 &
+vmstat 60 -S M -t >/postgres/pg_expecto/vmstat.log 2>&1 &
 echo 'vmstat started'
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : VMSTAT - IN PROCESS'
@@ -259,7 +259,7 @@ echo 'kill iostat'
 pkill -u postgres -x "iostat"
 
 echo 'start iostat'
-iostat 60 -d -x -m -t >$current_path'/sh/iostat.log' 2>&1 &
+iostat 60 -d -x -m -t >/postgres/pg_expecto/iostat.log 2>&1 &
 echo 'iostat started '
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : IOSTAT - IN PROCESS'

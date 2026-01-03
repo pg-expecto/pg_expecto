@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- core_cluster_functions.sql
--- version 2.0
+-- version 5.0
 --------------------------------------------------------------------------------
 -- Статистика производительности по кластеру
 --
@@ -43,12 +43,32 @@ DECLARE
   current_lock  bigint  ;
   current_lwlock  bigint  ;
   current_timeout  bigint  ;  
+  wait_stats_rec	record ;
   -- ОЖИДАНИЯ
   --------------------------------------------
+  
+  --------------------------------------------
+  -- Чтение/Запись разделяемых блоков
+  current_shared_blks_read bigint ;
+  current_shared_blks_dirtied bigint ;
+  current_shared_blks_written bigint ; 
+  current_shared_blk_read_time double precision ;
+  current_shared_blk_write_time double precision;
+  
+  shared_blks_read_long numeric ;
+  shared_blks_dirtied_long numeric ;
+  shared_blks_written_long numeric ;
+  shared_blk_read_time_long numeric ;
+  shared_blk_write_time_long numeric ;
+  
+  shared_blk_rec record ; 
+  -- Чтение/Запись разделяемых блоков
+  --------------------------------------------
+  
 	
 	max_timestamp timestamptz ; 
-		
-	wait_stats_rec	record ;
+	
+
 	
 BEGIN	
 	SELECT 	date_trunc( 'minute' , CURRENT_TIMESTAMP ) 
@@ -106,6 +126,24 @@ RAISE NOTICE '-- ТЕКУЩИЕ ЗНАЧЕНИЯ';
 	END LOOP;
 	-- ОЖИДАНИЯ		
 	---------------------------------------------------------------
+	
+	---------------------------------------------------------------
+    -- Чтение/Запись разделяемых блоков
+	SELECT 
+		SUM(shared_blks_read ) AS sum_shared_blks_read ,
+		SUM(shared_blks_dirtied ) AS sum_shared_blks_dirtied ,
+		SUM(shared_blks_written ) AS sum_shared_blks_written ,
+		SUM(shared_blk_read_time ) AS sum_shared_blk_read_time ,
+		SUM(shared_blk_write_time ) AS sum_shared_blk_write_time 
+	INTO 
+		shared_blk_rec
+	FROM 
+		pg_stat_statements st JOIN pg_database pd ON ( pd.oid = st.dbid )
+	WHERE 
+	    st.toplevel AND  --True, если данный запрос выполнялся на верхнем уровне (всегда true, если для параметра pg_stat_statements.track задано значение top)
+		pd.datname NOT IN ('postgres' , 'template1' , 'template0' , 'pgpropwr' , 'expecto_db' );
+	-- Чтение/Запись разделяемых блоков
+	---------------------------------------------------------------
 
 	INSERT INTO cluster_stat
 	(
@@ -118,7 +156,12 @@ RAISE NOTICE '-- ТЕКУЩИЕ ЗНАЧЕНИЯ';
 		curr_ipc  ,
 		curr_lock  ,
 		curr_lwlock ,
-		curr_timeout
+		curr_timeout , 
+		curr_shared_blks_read , 
+		curr_shared_blks_dirtied, 
+		curr_shared_blks_written, 
+		curr_shared_blk_read_time ,
+		curr_shared_blk_write_time
 	)
 	VALUES 
 	( 
@@ -131,7 +174,12 @@ RAISE NOTICE '-- ТЕКУЩИЕ ЗНАЧЕНИЯ';
 		current_ipc   ,
 		current_lock  ,
 		current_lwlock ,
-		current_timeout 
+		current_timeout ,
+		shared_blk_rec.sum_shared_blks_read,
+		shared_blk_rec.sum_shared_blks_dirtied,
+		shared_blk_rec.sum_shared_blks_written,
+		shared_blk_rec.sum_shared_blk_read_time,
+		shared_blk_rec.sum_shared_blk_write_time 
 	);		
 -- ТЕКУЩИЕ ЗНАЧЕНИЯ	
 -------------------------------------------------------------------------------------------------------------------------
@@ -200,6 +248,37 @@ RAISE NOTICE '-- ТЕКУЩИЕ ЗНАЧЕНИЯ';
 	FROM cluster_stat
 	WHERE curr_timestamp BETWEEN max_timestamp - (interval '60 minute') AND max_timestamp ;	
 	IF timeout_long IS NULL THEN timeout_long = 0 ; END IF ; 	
+	
+	-- Чтение/Запись разделяемых блоков
+	SELECT (percentile_cont(0.5) within group (order by curr_shared_blks_read))::numeric
+	INTO shared_blks_read_long
+	FROM cluster_stat
+	WHERE curr_timestamp BETWEEN max_timestamp - (interval '60 minute') AND max_timestamp ;	
+	IF shared_blks_read_long IS NULL THEN shared_blks_read_long = 0 ; END IF ; 	
+	
+	SELECT (percentile_cont(0.5) within group (order by curr_shared_blks_dirtied))::numeric
+	INTO shared_blks_dirtied_long
+	FROM cluster_stat
+	WHERE curr_timestamp BETWEEN max_timestamp - (interval '60 minute') AND max_timestamp ;	
+	IF shared_blks_dirtied_long IS NULL THEN shared_blks_dirtied_long = 0 ; END IF ; 	
+	
+	SELECT (percentile_cont(0.5) within group (order by curr_shared_blks_written))::numeric
+	INTO shared_blks_written_long
+	FROM cluster_stat
+	WHERE curr_timestamp BETWEEN max_timestamp - (interval '60 minute') AND max_timestamp ;	
+	IF shared_blks_written_long IS NULL THEN shared_blks_written_long = 0 ; END IF ; 	
+	
+	SELECT (percentile_cont(0.5) within group (order by curr_shared_blk_read_time))::numeric
+	INTO shared_blk_read_time_long
+	FROM cluster_stat
+	WHERE curr_timestamp BETWEEN max_timestamp - (interval '60 minute') AND max_timestamp ;	
+	IF shared_blk_read_time_long IS NULL THEN shared_blk_read_time_long = 0 ; END IF ; 	
+	
+	SELECT (percentile_cont(0.5) within group (order by curr_shared_blk_write_time))::numeric
+	INTO shared_blk_write_time_long
+	FROM cluster_stat
+	WHERE curr_timestamp BETWEEN max_timestamp - (interval '60 minute') AND max_timestamp ;	
+	IF shared_blk_write_time_long IS NULL THEN shared_blk_write_time_long = 0 ; END IF ; 	
 -- МЕДИАНЫ 
 -----------------------------------------------------------------------------------
 
@@ -228,7 +307,12 @@ INSERT INTO cluster_stat_median
 		curr_ipc  ,
 		curr_lock  ,
 		curr_lwlock ,  
-		curr_timeout
+		curr_timeout ,
+		curr_shared_blks_read ,
+		curr_shared_blks_dirtied ,
+		curr_shared_blks_written ,
+		curr_shared_blk_read_time ,
+		curr_shared_blk_write_time
 	)
 	VALUES 
 	(
@@ -241,8 +325,12 @@ INSERT INTO cluster_stat_median
 		ipc_long ,
 		lock_long ,
 		lwlock_long ,
-		timeout_long 
-		
+		timeout_long ,
+		shared_blks_read_long ,
+		shared_blks_dirtied_long ,
+		shared_blks_written_long ,
+		shared_blk_read_time_long ,
+		shared_blk_write_time_long 
 	);
 -- СОХРАНИТЬ СТАТИСТИКУ
 ----------------------------------------------------------------------------
@@ -531,7 +619,7 @@ COMMENT ON PROCEDURE  start_incident IS 'Начать инцидент прои�
 
 --------------------------------------------------------------------------------
 -- core_cluster_tables.sql
--- version 2.0
+-- version 5.0
 --------------------------------------------------------------------------------
 --Статистика уровня кластера 
 --------------------------------------------------------------------------------
@@ -553,7 +641,15 @@ CREATE UNLOGGED TABLE cluster_stat
 	curr_ipc  bigint,
 	curr_lock  bigint,
 	curr_lwlock bigint,
-	curr_timeout bigint
+	curr_timeout bigint , 
+	
+	curr_shared_blks_read bigint , 
+	curr_shared_blks_dirtied bigint , 
+	curr_shared_blks_written bigint , 
+	--если включён track_io_timing, иначе ноль
+	curr_shared_blk_read_time double precision ,
+	curr_shared_blk_write_time double precision
+	--если включён track_io_timing, иначе ноль
 );
 ALTER TABLE cluster_stat ADD CONSTRAINT cluster_stat_pk PRIMARY KEY (id);
 CREATE INDEX cluster_stat_idx ON cluster_stat ( curr_timestamp );
@@ -569,6 +665,11 @@ COMMENT ON COLUMN cluster_stat.curr_ipc IS 'Количество ожидани�
 COMMENT ON COLUMN cluster_stat.curr_lock IS 'Количество ожиданий типа Lock';
 COMMENT ON COLUMN cluster_stat.curr_lwlock IS 'Количество ожиданий типа LWLock';
 COMMENT ON COLUMN cluster_stat.curr_timeout IS 'Количество ожиданий типа Timeout';
+COMMENT ON COLUMN cluster_stat.curr_shared_blks_read IS 'Общее число прочитанных разделяемых блоков';
+COMMENT ON COLUMN cluster_stat.curr_shared_blks_dirtied IS 'Общее число загрязнённых разделяемых блоков';
+COMMENT ON COLUMN cluster_stat.curr_shared_blks_written IS 'Общее число записанных разделяемых блоков';
+COMMENT ON COLUMN cluster_stat.curr_shared_blk_read_time IS 'Общее время на чтение разделяемых блоков';
+COMMENT ON COLUMN cluster_stat.curr_shared_blk_write_time IS 'Общее время на запись разделяемых блоков';
 --Текущая статистика
 --------------------------------------------------------------------------------
 
@@ -589,7 +690,15 @@ CREATE UNLOGGED TABLE cluster_stat_median
 	curr_ipc  numeric,
 	curr_lock  numeric,
 	curr_lwlock numeric , 
-	curr_timeout numeric
+	curr_timeout numeric , 
+	
+	curr_shared_blks_read bigint , 
+	curr_shared_blks_dirtied bigint , 
+	curr_shared_blks_written bigint , 
+	--если включён track_io_timing, иначе ноль
+	curr_shared_blk_read_time double precision ,
+	curr_shared_blk_write_time double precision
+	--если включён track_io_timing, иначе ноль
 );
 ALTER TABLE cluster_stat_median ADD CONSTRAINT cluster_stat_median_pk PRIMARY KEY (id);
 CREATE INDEX cluster_stat_median_idx ON cluster_stat_median ( curr_timestamp );
@@ -605,6 +714,11 @@ COMMENT ON COLUMN cluster_stat_median.curr_ipc IS 'Медиана количес
 COMMENT ON COLUMN cluster_stat_median.curr_lock IS 'Медиана количества  ожиданий типа Lock';
 COMMENT ON COLUMN cluster_stat_median.curr_lwlock IS 'Медиана количества  ожиданий типа LWLock';
 COMMENT ON COLUMN cluster_stat_median.curr_timeout IS 'Медиана количества  ожиданий типа Timeout';
+COMMENT ON COLUMN cluster_stat_median.curr_shared_blks_read IS 'Общее число прочитанных разделяемых блоков';
+COMMENT ON COLUMN cluster_stat_median.curr_shared_blks_dirtied IS 'Общее число загрязнённых разделяемых блоков';
+COMMENT ON COLUMN cluster_stat_median.curr_shared_blks_written IS 'Общее число записанных разделяемых блоков';
+COMMENT ON COLUMN cluster_stat_median.curr_shared_blk_read_time IS 'Общее время на чтение разделяемых блоков';
+COMMENT ON COLUMN cluster_stat_median.curr_shared_blk_write_time IS 'Общее время на запись разделяемых блоков';
 --Скользящие медианы
 --------------------------------------------------------------------------------
 

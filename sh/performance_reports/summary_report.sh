@@ -2,7 +2,7 @@
 ########################################################################################################
 # summary_report.sh
 # Сводный отчет  производительности/ожиданиям СУБД и метрикам ОС 
-# version 3.0
+# version 5.0
 ########################################################################################################
 
 #Обработать код возврата 
@@ -250,6 +250,7 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТ
 ##################################################################################################################################
 # IOSTAT
 array=($devices_list)
+cpu_count=`nproc --all`
 
 let i=0
 while :
@@ -281,6 +282,19 @@ do
 	  mv $REPORT_FILE $REPORT_DIR
 	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
 	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
+	  
+	  
+	  REPORT_FILE=$current_path'/linux.x.iostat_'$device'_performance.txt'
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ПРОИЗВОДИТЕЛЬНОСТЬ IO : '$device
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ПРОИЗВОДИТЕЛЬНОСТЬ IO : '$device >> $LOG_FILE
+	  psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_io_performance($cpu_count , '$device' , '$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
+	  exit_code $? $LOG_FILE $ERR_FILE
+	  chmod 777 $REPORT_FILE
+	  mv $REPORT_FILE $REPORT_DIR
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
+	  
+	  
 
   let i=i+1
 done

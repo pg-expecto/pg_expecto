@@ -2,7 +2,7 @@
 ########################################################################################################
 # load_test_report.sh
 # Отчет по нагрузочному тестированию
-# version 4.0
+# version 5.0
 ########################################################################################################
 
 #Обработать код возврата 
@@ -145,10 +145,15 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ОТЧЕТ ПО SQL С�
 # SCENARIO REPORT
 ##################################################################################################################################
 
-
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : 1.ВХОДНЫЕ ДАННЫЕ ДЛЯ НЕЙРОСЕТИ - СУБД И VMSTAT/IOSTAT '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : 1.ВХОДНЫЕ ДАННЫЕ ДЛЯ НЕЙРОСЕТИ - СУБД И VMSTAT/IOSTAT ' >> $LOG_FILE
 REPORT_DIR='/tmp/pg_expecto_reports'
 REPORT_FILE='_1.summary.txt'
 cd $REPORT_DIR
+
+devices_list=`$current_path'/'get_reports_param.sh $current_path devices_list 2>$ERR_FILE`
+exit_code $? $LOG_FILE $ERR_FILE
+array=($devices_list)
 
 #Заголовок отчета 
 title=$1
@@ -178,40 +183,120 @@ echo ' ' >> $REPORT_FILE
 #IO
 echo 'IO' >> $REPORT_FILE
 lsblk >> $REPORT_FILE
+echo 'devices='$devices_list >> $REPORT_FILE
 echo ' ' >> $REPORT_FILE
 
-echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 cat 'postgres._load_test_loading.txt' >> $REPORT_FILE 
 echo '-------------------------------------------------------------------------' >> $REPORT_FILE
-echo 'ПРОИЗВОДИТЕЛЬНОСТЬ И ОЖИДАНИЯ СУБД' >> $REPORT_FILE
+echo 'PostgreSQL' >> $REPORT_FILE
+echo '-----------' >> $REPORT_FILE
 cat 'postgres.1.cluster_report_meta.txt' >> $REPORT_FILE 
+echo '-----------' >> $REPORT_FILE
 cat 'postgres.1.cluster_report_4graph.txt' >> $REPORT_FILE 
+echo '-----------' >> $REPORT_FILE
 cat 'postgres.2.wait_event.txt' >> $REPORT_FILE 
+echo '-----------' >> $REPORT_FILE
 cat 'postgres.3.queryid.txt' >> $REPORT_FILE 
+echo '-----------' >> $REPORT_FILE
 cat 'postgres.x.sql_list.txt' >> $REPORT_FILE 
 echo '-------------------------------------------------------------------------' >> $REPORT_FILE
-echo 'МЕТРИКИ VMSTAT IOSTAT' >> $REPORT_FILE
-echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+echo 'VMSTAT IOSTAT CORRELATION AND CHECKLISTS' >> $REPORT_FILE
+echo '       ' >> $REPORT_FILE
 cat 'linux.1.waitings_vmstat_corr.txt' >> $REPORT_FILE 
-cat 'linux.2.vmstat_iostat_vdc.txt' >> $REPORT_FILE 
-cat 'linux.2.vmstat_iostat_vdd.txt' >> $REPORT_FILE 
+echo '-----------' >> $REPORT_FILE
 cat 'linux.3.vmstat_io.txt' >> $REPORT_FILE 
+echo '-----------' >> $REPORT_FILE
 cat 'linux.4.vmstat_cpu.txt' >> $REPORT_FILE 
+echo '-----------' >> $REPORT_FILE
 cat 'linux.5.vmstat_ram.txt' >> $REPORT_FILE 
-cat 'linux.x.iostat_vdc_meta.txt' >> $REPORT_FILE 
-cat 'linux.x.iostat_vdc_4graph.txt' >> $REPORT_FILE 
-cat 'linux.x.iostat_vdd_meta.txt' >> $REPORT_FILE 
-cat 'linux.x.iostat_vdd_4graph.txt' >> $REPORT_FILE 
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+echo 'VMSTAT ' >> $REPORT_FILE
+echo '       ' >> $REPORT_FILE
 cat 'linux.x.vmstat_meta.txt' >> $REPORT_FILE 
+echo '-----------' >> $REPORT_FILE
 cat 'linux.x.vmstat_4graph.txt' >> $REPORT_FILE 
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 
 REPORT_FILE='_1.prompt.txt'
-echo 'Проанализируй данные по метрикам производительности и ожиданий СУБД , метрикам инфраструктуры vmstat/iostat, для заданной СУБД PostgreSQL. Подготовь промпты  DeepSeek для сводного анализа результатов.' > $REPORT_FILE
+echo 'Проанализируй данные по метрикам производительности и ожиданий СУБД , метрикам инфраструктуры vmstat/iostat. Подготовь итоговый отчет по результатам анализа.' > $REPORT_FILE
+
+######################################################################################################
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : 2.ВХОДНЫЕ ДАННЫЕ ДЛЯ НЕЙРОСЕТИ - IO PERFORMANCE '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : 2.ВХОДНЫЕ ДАННЫЕ ДЛЯ НЕЙРОСЕТИ - IO PERFORMANCE ' >> $LOG_FILE
+REPORT_DIR='/tmp/pg_expecto_reports'
+REPORT_FILE='_2.io_performance.txt'
+cd $REPORT_DIR
+
+#количество ядер CPU
+echo 'CPU' >> $REPORT_FILE
+lscpu >>  $REPORT_FILE
+echo ' ' >> $REPORT_FILE
+
+#IO
+echo 'IO' >> $REPORT_FILE
+lsblk >> $REPORT_FILE
+echo 'devices='$devices_list >> $REPORT_FILE
+echo ' ' >> $REPORT_FILE
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+echo 'VMSTAT/IOSTAT - CORRELATION' >> $REPORT_FILE
+echo ' ' >> $REPORT_FILE
+let i=0
+while :
+do  
+  device=${array[$i]}
+  size=${#device}
+	
+  if [ "$size" == 0 ];
+  then 
+   break
+  fi 
+  
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  DEVICE =  '$device
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  DEVICE =  '$device >> $LOG_FILE
+  
+  CURRENT_REPORT_FILE='linux.2.vmstat_iostat_'$device'.txt'
+
+  cat $CURRENT_REPORT_FILE >> $REPORT_FILE 
+  echo '-----------' >> $REPORT_FILE
+  
+  let i=i+1
+done
+
+echo 'IOSTAT - PERFORMANCE' >> $REPORT_FILE
+echo ' ' >> $REPORT_FILE
+let i=0
+while :
+do  
+  device=${array[$i]}
+  size=${#device}
+	
+  if [ "$size" == 0 ];
+  then 
+   break
+  fi   
+	CURRENT_REPORT_FILE='linux.x.iostat_'$device'_meta.txt'
+	cat $CURRENT_REPORT_FILE >> $REPORT_FILE 
+	echo '-----------' >> $REPORT_FILE
+	
+	CURRENT_REPORT_FILE='linux.x.iostat_'$device'_4graph.txt'
+	cat $CURRENT_REPORT_FILE >> $REPORT_FILE 
+	echo '-----------' >> $REPORT_FILE
+	
+	CURRENT_REPORT_FILE='linux.x.iostat_'$device'_performance.txt'
+	cat $CURRENT_REPORT_FILE >> $REPORT_FILE 
+	echo '-----------' >> $REPORT_FILE
+	
+	  
+  let i=i+1
+done
+
+
+REPORT_FILE='_2.io_performance_prompt.txt'
+echo 'Подготовь итоговый по результатам анализа производительности подсистемы IO' > $REPORT_FILE
+
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ ПО НАГРУЗОЧНОМУ ТЕСТИРОВАНИЮ - ВЫПОЛНЕН'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ ПО НАГРУЗОЧНОМУ ТЕСТИРОВАНИЮ - ВЫПОЛНЕН' >> $LOG_FILE
-
-
 
 exit 0 
 

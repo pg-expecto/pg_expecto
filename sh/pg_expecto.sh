@@ -2,7 +2,7 @@
 ########################################################################################################
 # pg_expecto.sh
 # Корневой скрипт 
-# version 2.0
+# version 5.0
 ########################################################################################################
 
  
@@ -132,7 +132,7 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : РАСЧЕТ СТАТИ
 # СОБРАТЬ СТАТИСТИКУ IOSTAT
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : РАСЧЕТ СТАТИСТИКИ IOSTAT - НАЧАТ'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : РАСЧЕТ СТАТИСТИКИ IOSTAT - НАЧАТ'>> $LOG_FILE
-SOURCE_FILE=$current_path'/iostat.log'
+SOURCE_FILE='/postgres/pg_expecto/iostat.log'
 
 	line_start=`grep -n "Device" $SOURCE_FILE | cut -d: -f1 | tail -1 `
 	

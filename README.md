@@ -55,4 +55,5 @@ shared_preload_libraries=‘pg_stat_statements , pg_wait_sampling’
 - [PG_EXPECTO: Анализ влияния размера shared_buffers на производительность СУБД PostgreSQL](https://habr.com/p/976344/)
 - [PG_EXPECTO: work_mem: мифы и реальность производительности PostgreSQL](https://dzen.ru/a/aULBju4l2iRx7gNd)
 - [PG_EXPECTO : Использование нейросети для анализа результатов нагрузочного тестирования СУБД PostgreSQL](https://dzen.ru/a/aVkK0LKXRRwLXNu3?share_to=link)
+- [PG_EXPECTO: Анализ производительности подсистемы IO по результатам нагрузочного тестирования СУБД PostgreSQL](https://dzen.ru/a/aVpK0FifsUtYkQa1?share_to=link)
 

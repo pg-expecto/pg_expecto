@@ -22,7 +22,8 @@
 ## Статус проекта
 Текущая версия: 5
 
-## Установка (Installation)
+## Системные требования
+Для работы **pg_expecto** требуются установленные утилиты **vmstat** и **iostat**
 ### ВАЖНО
 Для работы **pg_expecto** требуются установленные библиотеки расширений **pg_stat_statements** и **pg_wait_sampling**
 
@@ -56,4 +57,4 @@ shared_preload_libraries=‘pg_stat_statements , pg_wait_sampling’
 - [PG_EXPECTO: work_mem: мифы и реальность производительности PostgreSQL](https://dzen.ru/a/aULBju4l2iRx7gNd)
 - [PG_EXPECTO : Использование нейросети для анализа результатов нагрузочного тестирования СУБД PostgreSQL](https://dzen.ru/a/aVkK0LKXRRwLXNu3?share_to=link)
 - [PG_EXPECTO: Анализ производительности подсистемы IO по результатам нагрузочного тестирования СУБД PostgreSQL](https://dzen.ru/a/aVpK0FifsUtYkQa1?share_to=link)
-
+- [PG_EXPECTO: Чек-лист проверки инфраструктуры Linux по результатам нагрузочного тестирования PostgreSQL](https://dzen.ru/a/aV9ygh51Ij69nyLY?share_to=link)

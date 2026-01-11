@@ -262,6 +262,10 @@ do
   let i=i+1
 done
 
+echo '-----------' >> $REPORT_FILE
+cat 'linux.3.vmstat_io.txt' >> $REPORT_FILE 
+echo '-----------' >> $REPORT_FILE
+
 echo 'IOSTAT - PERFORMANCE' >> $REPORT_FILE
 echo ' ' >> $REPORT_FILE
 let i=0
@@ -291,8 +295,27 @@ do
 done
 
 
-REPORT_FILE='_2.io_performance_prompt.txt'
-echo 'Подготовь итоговый по результатам анализа производительности подсистемы IO' > $REPORT_FILE
+REPORT_FILE='_2.io_performance_prompt.txt' > $REPORT_FILE
+echo 'Подготовь отчет по результатам анализа производительности подсистемы IO' >> $REPORT_FILE 
+echo 'для дисковых устройств, используемых для файловых систем /data /wal' >> $REPORT_FILE
+echo '**Общая характеристика системы**' >> $REPORT_FILE
+echo '- Период анализа' >> $REPORT_FILE
+echo '- Основные устройства хранения' >> $REPORT_FILE
+echo '- Тип нагрузки' >> $REPORT_FILE
+echo 'Состав отчета по файловой системе:' >> $REPORT_FILE
+echo '**Критические проблемы производительности по файловой системе**' >> $REPORT_FILE
+echo '**Анализ корреляций и паттернов нагрузки по файловой системе**' >> $REPORT_FILE
+echo '**Диагностика узких мест IO по файловой системе**' >> $REPORT_FILE
+echo '- r_await(ms)' >> $REPORT_FILE
+echo '- w_await(ms)' >> $REPORT_FILE
+echo '- aqu_sz' >> $REPORT_FILE
+echo '- proc_b' >> $REPORT_FILE
+echo '- cpu_wa(%)' >> $REPORT_FILE
+echo '- Корреляция speed с IOPS' >> $REPORT_FILE
+echo '- Корреляция speed с пропускной способностью (MB/s)' >> $REPORT_FILE
+echo '- Вывод по диагностике узких мест IO' >> $REPORT_FILE
+echo '**Рекомендации по оптимизации файловой системы**' >> $REPORT_FILE
+echo '**Итоговый вывод по производительности IO**' >> $REPORT_FILE
 
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ ПО НАГРУЗОЧНОМУ ТЕСТИРОВАНИЮ - ВЫПОЛНЕН'

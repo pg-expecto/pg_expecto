@@ -643,7 +643,7 @@ CREATE UNLOGGED TABLE cluster_stat
 	curr_lwlock bigint,
 	curr_timeout bigint , 
 	
-	curr_shared_blks_read bigint , 
+	curr_shared_blks_read  , 
 	curr_shared_blks_dirtied bigint , 
 	curr_shared_blks_written bigint , 
 	--если включён track_io_timing, иначе ноль
@@ -692,9 +692,9 @@ CREATE UNLOGGED TABLE cluster_stat_median
 	curr_lwlock numeric , 
 	curr_timeout numeric , 
 	
-	curr_shared_blks_read bigint , 
-	curr_shared_blks_dirtied bigint , 
-	curr_shared_blks_written bigint , 
+	curr_shared_blks_read numeric , 
+	curr_shared_blks_dirtied numeric , 
+	curr_shared_blks_written numeric , 
 	--если включён track_io_timing, иначе ноль
 	curr_shared_blk_read_time double precision ,
 	curr_shared_blk_write_time double precision
@@ -4717,7 +4717,8 @@ BEGIN
 
 
 	
-	result_str[line_count] = 'Метаданные IOSTAT' ; 
+	
+	result_str[line_count] = 'Данные для графиков IOSTAT' ; 
 	line_count=line_count+1;
 	
 	
@@ -5198,7 +5199,7 @@ BEGIN
 
 
 	
-	result_str[line_count] = 'Данные для графиков IOSTAT' ; 
+	result_str[line_count] = 'Метаданные IOSTAT' ; 
 	line_count=line_count+1;
 	
 	
@@ -6551,7 +6552,7 @@ COMMENT ON FUNCTION reports_vmstat_cpu IS 'Чек-лист CPU';
 -- Чек-лист CPU
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- reports_vmstat_io.sql
--- version 1.0
+-- version 5.0
 --------------------------------------------------------------------------------
 --
 -- reports_vmstat_io Чек-лист IO
@@ -6580,6 +6581,16 @@ DECLARE
   
   b_regr_rec record ;
   
+  sum_shared_blks_rec record ; 
+  shared_blks_read_write_ratio DOUBLE PRECISION ;
+  
+  speed_read_blks_corr DOUBLE PRECISION ;
+  speed_write_blks_corr DOUBLE PRECISION ;
+  
+  speed_read_time_corr DOUBLE PRECISION ;
+  speed_write_time_corr DOUBLE PRECISION ; 
+
+
 BEGIN
 	line_count = 1 ;
 	
@@ -6812,6 +6823,285 @@ BEGIN
 	END IF ;	
 	--b — процессы в uninterruptible sleep (обычно ждут IO)(% превышение CPU)
 	-----------------------------------------------------------------------------
+	
+	-----------------------------------------------------------------------------
+	-- Отношение прочитанных блоков к записанным(новые+измененные)
+	SELECT 
+		SUM(curr_shared_blks_read)::DOUBLE PRECISION / 
+		(SUM(curr_shared_blks_dirtied)::DOUBLE PRECISION + SUM(curr_shared_blks_written )::DOUBLE PRECISION) 
+	INTO 
+		shared_blks_read_write_ratio
+	FROM 
+		cluster_stat_median
+	WHERE 
+		curr_timestamp BETWEEN min_timestamp AND max_timestamp ;	
+	
+	line_count=line_count+1;
+    result_str[line_count] = 'Отношение прочитанных блоков к записанным |' ||
+	REPLACE ( TO_CHAR( ROUND( shared_blks_read_write_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
+	line_count=line_count+1;	
+	
+	IF shared_blks_read_write_ratio < 0.5 
+	THEN 
+		result_str[line_count] = 'INFO: Очень низкое соотношение прочитанных к записанным блокам (<0.5)' ; 
+		line_count=line_count+1;
+	ELSIF shared_blks_read_write_ratio >= 0.5 AND shared_blks_read_write_ratio < 1.5 
+	THEN 
+		result_str[line_count] = 'WARNING: Низкое соотношение прочитанных к записанным блокам (0.5 - 1.5)' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'OLTP сценарий.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Фокус оптимизации — производительность WAL, настройка VACUUM.' ; 
+		line_count=line_count+1;
+	ELSE
+		result_str[line_count] = 'ALARM: Очень высокое соотношение прочитанных к записанным блокам (>1.5)' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'OLAP сценарий.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Фокус оптимизации — кэширование и скорость чтения.' ; 
+		line_count=line_count+1;
+	END IF;		
+
+	-- Отношение прочитанных блоков к записанным(новые+измененные)
+	-----------------------------------------------------------------------------
+    
+    
+	-----------------------------------------------------------------------------
+	-- Корреляция операционная скорость - прочитанные блоки
+	SELECT COALESCE( corr( v1.curr_op_speed , v2.curr_shared_blks_read ) , 0 ) AS correlation_value 
+	INTO speed_read_blks_corr
+	FROM
+		cluster_stat_median v1 JOIN cluster_stat_median v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) 
+	WHERE 	
+		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	line_count=line_count+1;
+    result_str[line_count] = 'Корреляция операционная скорость - прочитанные блоки |' ||
+	REPLACE ( TO_CHAR( ROUND( speed_read_blks_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
+	line_count=line_count+1;	
+	
+	
+	IF speed_read_blks_corr <= 0 
+	THEN 
+	    result_str[line_count] = 'OK: Корреляция (speed - shared_blks_read ) - отрицательная или отсутствует' ; 
+		line_count=line_count+1;			 
+		result_str[line_count] = 'Большая часть данных обслуживается из кэша. Штатная OLTP-нагрузка.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Рост производительности достигается за счет оптимизации CPU' ; 
+		line_count=line_count+1;
+	ELSIF speed_read_blks_corr > 0.7 
+	THEN 
+		result_str[line_count] = 'ALARM : Очень высокая корреляция (speed - shared_blks_read ).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Рост скорости операций напрямую зависит от роста чтений с диска.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Недостаток RAM, неэффективные индексы или выполнение больших seq scan.' ; 
+		line_count=line_count+1;
+	ELSIF speed_read_blks_corr > 0.5 AND speed_read_blks_corr <= 0.7
+	THEN 
+		result_str[line_count] = 'WARNING : Высокая корреляция (speed - shared_blks_read ).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Производительности IO - недостаточно для данной нагрузки.' ; 
+		line_count=line_count+1;
+	ELSE
+		result_str[line_count] = 'INFO : Слабая корреляция (speed - shared_blks_read ).' ; 
+		line_count=line_count+1;		
+	END IF;	
+	-- Корреляция операционная скорость - прочитанные блоки
+	-----------------------------------------------------------------------------
+	
+	-----------------------------------------------------------------------------
+	-- Корреляция операционная скорость - записанные блоки
+	SELECT COALESCE( corr( v1.curr_op_speed , v2.curr_shared_blks_dirtied + v2.curr_shared_blks_written ) , 0 ) AS correlation_value 
+	INTO speed_write_blks_corr
+	FROM
+		cluster_stat_median v1 JOIN cluster_stat_median v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) 
+	WHERE 	
+		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	line_count=line_count+1;
+    result_str[line_count] = 'Корреляция операционная скорость - записанные блоки |' ||
+	REPLACE ( TO_CHAR( ROUND( speed_write_blks_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
+	line_count=line_count+1;	
+	
+	
+	IF speed_write_blks_corr <= 0 
+	THEN 
+	    result_str[line_count] = 'OK: Корреляция (speed - shared_blks_write ) - отрицательная или отсутствует' ; 
+		line_count=line_count+1;			 
+		result_str[line_count] = 'Операции записи не являются основным узким местом' ; 
+		line_count=line_count+1;		
+	ELSIF speed_write_blks_corr > 0.7 
+	THEN 
+		result_str[line_count] = 'ALARM : Очень высокая корреляция (speed - shared_blks_write ).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Система ограничена производительностью записи на диск' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Точки для анализа: скорость дисков, настройки commit_delay, wal_buffers.' ; 
+		line_count=line_count+1;
+	ELSIF speed_write_blks_corr > 0.5 AND speed_write_blks_corr <= 0.7
+	THEN 
+		result_str[line_count] = 'WARNING : Высокая корреляция (speed - shared_blks_write ).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Рост операций записи приводит к падению общей скорости.' ; 
+		line_count=line_count+1;
+	ELSE
+		result_str[line_count] = 'INFO : Слабая корреляция (speed - shared_blks_write ).' ; 
+		line_count=line_count+1;
+	END IF;	
+	-- Корреляция операционная скорость - записанные блоки
+	-----------------------------------------------------------------------------
+
+---------------------------------------------------------------------------------
+--RESERVED FOR FUTURE 
+/*
+	-----------------------------------------------------------------------------
+	-- Корреляция операционной скорости - время чтения
+	line_count=line_count+1;
+	SELECT COALESCE( corr( v1.curr_op_speed , v2.curr_shared_blk_read_time) , 0 ) AS correlation_value 
+	INTO speed_read_time_corr
+	FROM
+		cluster_stat_median v1 JOIN cluster_stat_median v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) 
+	WHERE 	
+		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+    line_count=line_count+1;
+    result_str[line_count] = 'Корреляция операционной скорости - время чтения |' ||
+	REPLACE ( TO_CHAR( ROUND( speed_read_time_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
+	line_count=line_count+1;			 
+	
+	
+	IF speed_read_time_corr <= 0 
+	THEN 
+	    result_str[line_count] = 'OK: Корреляция (speed - shared_blk_read_time ) - отрицательная или отсутствует' ; 
+		line_count=line_count+1;			 
+		result_str[line_count] = 'Система может переключаться на кеширование или менять паттерны доступа' ; 
+		line_count=line_count+1;		
+	ELSIF speed_read_time_corr > 0.7 
+	THEN 
+		result_str[line_count] = 'ALARM : Очень высокая корреляция (speed - shared_blk_read_time ).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Производительность сильно зависит от скорости чтения' ; 
+		line_count=line_count+1;		
+	ELSIF speed_read_time_corr > 0.5 AND speed_read_time_corr <= 0.7
+	THEN 
+		result_str[line_count] = 'WARNING : Высокая корреляция (speed - shared_blk_read_time ).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Чтение не является ограничивающим фактором.' ; 
+		line_count=line_count+1;
+	ELSE
+		result_str[line_count] = 'INFO: Слабая корреляция (speed - shared_blk_read_time ).' ; 
+		line_count=line_count+1;	
+	END IF;				
+	-- Корреляция операционной скорости - время чтения
+	-----------------------------------------------------------------------------
+
+	-----------------------------------------------------------------------------
+	-- Корреляция операционной скорости - время записи
+	SELECT COALESCE( corr( v1.curr_op_speed , v2.curr_shared_blk_write_time) , 0 ) AS correlation_value 
+	INTO speed_write_time_corr
+	FROM
+		cluster_stat_median v1 JOIN cluster_stat_median v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) 
+	WHERE 	
+		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+		
+	line_count=line_count+1;
+    result_str[line_count] = 'Корреляция операционной скорости - время записи |' ||
+	REPLACE ( TO_CHAR( ROUND( speed_write_time_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
+	line_count=line_count+1;			 
+		
+	IF speed_write_time_corr <= 0 
+	THEN 
+	    result_str[line_count] = 'OK: Корреляция (speed - curr_shared_blk_write_time ) - отрицательная или отсутствует' ; 
+		line_count=line_count+1;			 
+		result_str[line_count] = 'Возможна буферизация или асинхронная запись' ; 
+		line_count=line_count+1;		
+	ELSIF speed_write_time_corr > 0.7 
+	THEN 
+		result_str[line_count] = 'ALARM : Очень высокая корреляция (speed - curr_shared_blk_write_time ).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Запись на диск — узкое место' ; 
+		line_count=line_count+1;		
+	ELSIF speed_write_time_corr > 0.5 AND speed_write_time_corr <= 0.7
+	THEN 
+		result_str[line_count] = 'WARNING : Высокая корреляция (speed - curr_shared_blk_write_time ).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Запись не лимитирует производительность' ; 
+		line_count=line_count+1;
+	ELSE
+		result_str[line_count] = 'INFO: Слабая корреляция (speed - curr_shared_blk_write_time ).' ; 
+		line_count=line_count+1;	
+	END IF;				
+	-- Корреляция операционной скорости - время записи
+	-----------------------------------------------------------------------------
+	
+	-----------------------------------------------------------------------------
+	--Сценарии 
+	line_count=line_count+1;	
+	--Сценарий 1: Доминирование чтения
+	result_str[line_count] = 'Сценарий 1: Доминирование чтения' ; 
+	line_count=line_count+1;	
+	IF speed_read_time_corr >= 0.7 AND speed_write_time_corr >= 0.15
+	THEN 
+		result_str[line_count] = 'Производительность ограничена скоростью чтения.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Участки оптимизации:' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Увеличить shared_buffers' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Оптимизация запросов' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Добавить индексы для hot таблиц' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Оптимизация дисков' ; 
+		line_count=line_count+1;	
+	END IF;	
+	--Сценарий 2: Доминирование чтения
+	
+	--Сценарий 2: Доминирование записи
+	result_str[line_count] = 'Сценарий 2: Доминирование записи' ; 
+	line_count=line_count+1;	
+	IF speed_read_time_corr >= 0.15 AND speed_write_time_corr >= 0.7
+	THEN 
+		result_str[line_count] = 'Производительность ограничена скоростью записи.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Участки оптимизации:' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Оптимизировать checkpoint_segments и checkpoint_timeout' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Увеличить wal_buffers и max_wal_size' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Настроить bgwriter_delay и bgwriter_lru_maxpages' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Оптимизация дисков' ; 
+		line_count=line_count+1;	
+	END IF;	
+	--Сценарий 2: Доминирование записи
+	
+	--Сценарий 3: Сбалансированная нагрузка 
+	result_str[line_count] = 'Сценарий 2: Сбалансированная нагрузка' ; 
+	line_count=line_count+1;	
+	IF (speed_read_time_corr - speed_write_time_corr) <= 0.10
+	THEN 
+		result_str[line_count] = 'Производительность не ограничена IO.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Участки оптимизации:' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'CPU (cpu_tuple_cost, параллелизм)' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Тяжелые блокировки' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Ожидания СУБД' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Оптимизация запросов' ; 
+		line_count=line_count+1;	
+	END IF;	
+	--Сценарий 3: Сбалансированная нагрузка 	
+	--Сценарии 
+	-----------------------------------------------------------------------------
+--RESERVED FOR FUTURE 	
+*/
+---------------------------------------------------------------------------------	
 
 
   return result_str ; 
@@ -9996,3 +10286,348 @@ COMMENT ON FUNCTION get_sql_by_queryid IS 'текст SQL запроса по qu
 -------------------------------------------------------------------------------
 
 
+--------------------------------------------------------------------------------
+-- reports_io_performance.sql
+-- version 5.0
+--------------------------------------------------------------------------------
+--
+-- reports_io_performance IO-performance
+--
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
+-- Чек-лист IO
+CREATE OR REPLACE FUNCTION reports_io_performance( cpu_count integer , device_name text  , start_timestamp text , finish_timestamp text  ) RETURNS text[] AS $$
+DECLARE
+ result_str text[] ;
+ line_count integer ;
+ min_timestamp timestamptz ; 
+ max_timestamp timestamptz ; 
+ 
+ line_counter integer ; 
+ counter integer;
+
+ io_perf_rec record;  
+ 
+ speed_iops_corr DOUBLE PRECISION ;
+ speed_mbps_corr DOUBLE PRECISION ; 
+ delta_corr DOUBLE PRECISION ; 
+ 
+BEGIN
+	line_count = 1 ;
+	
+	
+	
+	
+	IF finish_timestamp = 'CURRENT_TIMESTAMP'
+	THEN 
+		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+
+		min_timestamp = max_timestamp - interval '1 hour'; 	
+	ELSE
+		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	min_timestamp ; 
+		
+		SELECT 	date_trunc('minute' ,  to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+	END IF ;
+
+
+	
+	result_str[line_count] = 'Производительность подсистемы IO' ; 
+	line_count=line_count+1;
+	
+	result_str[line_count] = 'DEVICE = '||device_name ; 
+	line_count=line_count+1;
+		
+	result_str[line_count] = 'CPU | '||cpu_count||'|' ;  
+	line_count=line_count+2;
+	
+	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+1; 
+	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+2; 
+		
+	-----------------------------------------------------------------------------
+	-- Корреляция операционная скорость - IOPS
+	SELECT COALESCE( corr( v1.curr_op_speed , v2.dev_rps_long + v2.dev_wps_long ) , 0 ) AS correlation_value 
+	INTO speed_iops_corr
+	FROM
+		cluster_stat_median v1 JOIN os_stat_iostat_device_median v2 ON ( v1.curr_timestamp = v2.curr_timestamp )
+	WHERE 	
+		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
+		AND v2.device = device_name ;
+	
+	line_count=line_count+1;
+    result_str[line_count] = 'Корреляция операционная скорость - IOPS |' ||
+	REPLACE ( TO_CHAR( ROUND( speed_iops_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
+	line_count=line_count+1;	
+	
+	IF speed_iops_corr >= 0.7
+	THEN 
+		result_str[line_count] = 'INFO: Очень высокая корреляция (speed - IOPS ).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Классический OLTP-паттерн.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Производительность напрямую зависит от способности диска обрабатывать мелкие операции.' ; 
+		line_count=line_count+1;
+	ELSIF speed_iops_corr >= 0  AND speed_iops_corr < 0.7
+	THEN 
+		result_str[line_count] = 'WARNING: Слабая корреляция (speed - IOPS ).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'IOPS не является ограничивающим фактором.' ; 
+		line_count=line_count+1;		
+	ELSE
+		result_str[line_count] = 'ALARM: Отрицательная корреляция (speed - IOPS ).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Производительность НЕ ограничена IO.' ; 
+		line_count=line_count+1;	
+		result_str[line_count] = 'Возможны  проблемы с CPU, блокировками, памятью' ; 
+		line_count=line_count+1;		
+	END IF;	
+	-- Корреляция операционная скорость - IOPS
+	-----------------------------------------------------------------------------
+	
+	-----------------------------------------------------------------------------
+	-- Корреляция операционная скорость - MBps
+	SELECT COALESCE( corr( v1.curr_op_speed , v2.dev_rmbs_long + v2.dev_wmbps_long ) , 0 ) AS correlation_value 
+	INTO speed_mbps_corr
+	FROM
+		cluster_stat_median v1 JOIN os_stat_iostat_device_median v2 ON ( v1.curr_timestamp = v2.curr_timestamp )
+	WHERE 	
+		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
+		AND v2.device = device_name ;
+	
+	line_count=line_count+1;
+    result_str[line_count] = 'Корреляция операционная скорость - MB/s |' ||
+	REPLACE ( TO_CHAR( ROUND( speed_mbps_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
+	line_count=line_count+1;	
+	
+	IF speed_mbps_corr >= 0.7
+	THEN 
+		result_str[line_count] = 'ALARM: Очень высокая корреляция (speed - MB/s ).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Классический OLAP/аналитический паттерн' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Производительность ограничена пропускной способностью диска' ; 
+		line_count=line_count+1;
+	ELSIF speed_mbps_corr >= 0  AND speed_mbps_corr < 0.7
+	THEN 
+		result_str[line_count] = 'WARNING: Слабая корреляция (speed - MB/s ).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Нагрузка чувствительна к объему передаваемых данных.' ; 
+		line_count=line_count+1;		
+	ELSE
+		result_str[line_count] = 'INFO: Отрицательная корреляция (speed - MB/s ).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Проблема не в пропускной способности диска.' ; 
+		line_count=line_count+1;			
+	END IF;	
+	line_count=line_count+1;			
+	-- Корреляция операционная скорость - MB/s
+	-----------------------------------------------------------------------------
+	
+	-----------------------------------------------------------------------------
+	-- Сценарии нагрузки 
+	result_str[line_count] = 'Тип нагрузки ' ; 
+	line_count=line_count+1;
+	--Сценарий 1: Высокая корреляция по обоим показателям (r > 0.7)
+	IF speed_iops_corr >= 0.7 AND speed_mbps_corr >= 0.7
+	THEN 
+		result_str[line_count] = 'Сценарий 1: Высокая корреляция по обоим показателям (r > 0.7)' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Смешанная нагрузка. Дисковая подсистема — узкое место.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Участки оптимизации:' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Соотношение read/write IOPS' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Размер shared_buffers и кеширование' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Возможно, нужны более производительные диски' ; 
+		line_count=line_count+1;
+	END IF ;
+	--Сценарий 1: Высокая корреляция по обоим показателям (r > 0.7)
+	
+	--Сценарий 2: Высокий IOPS-корреляция, низкий MB/s-корреляция
+	IF speed_iops_corr >= 0.7 AND (speed_mbps_corr < 0.7 AND speed_mbps_corr > 0.2 )
+	THEN 
+		result_str[line_count] = 'Сценарий 2: Высокая IOPS-корреляция, низкая MB/s-корреляция' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'OLTP-нагрузка с множеством мелких операций' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Участки оптимизации:' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Индексы (избыточные, отсутствующие)' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Размер work_mem для сортировок и хэш-операций' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Настройки автовакуума' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'SSD с высоким IOPS' ; 
+		line_count=line_count+1;
+	END IF ;
+	--Сценарий 2: Высокий IOPS-корреляция, низкий MB/s-корреляция
+	
+	--Сценарий 3: Низкий IOPS-корреляция, высокий MB/s-корреляция
+	IF speed_iops_corr <= 0.25 AND (speed_mbps_corr >= 0.7  )
+	THEN 
+		result_str[line_count] = 'Сценарий 3: Низкая IOPS-корреляция, высокая MB/s-корреляция' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Аналитическая/ETL нагрузка' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Участки оптимизации:' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Партиционирование больших таблиц' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Настройки work_mem для агрегаций' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Параллельное выполнение запросов' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Диски с высокой пропускной способностью' ; 
+		line_count=line_count+1;
+	END IF ;
+	--Сценарий 3: Низкий IOPS-корреляция, высокий MB/s-корреляция
+	
+	--Сценарий 4: Низкая корреляция по обоим показателям (r < 0.25)
+	IF speed_iops_corr <= 0.25 AND (speed_mbps_corr <= 0.25  )
+	THEN 
+		result_str[line_count] = 'Сценарий 4: Низкая корреляция по обоим показателям (r < 0.25)' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Узкое место не в IO' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Участки оптимизации:' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'CPU' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Тяжелые блокировки' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Ожидания СУБД' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Параметры параллелизма' ; 
+		line_count=line_count+1;
+	END IF ;
+	--Сценарий 4: Низкая корреляция по обоим показателям (r < 0.25)
+	
+	-- Сценарии нагрузки 
+	-----------------------------------------------------------------------------
+	
+	-----------------------------------------------------------------------------
+	--Характер нагрузки
+	line_count=line_count+1;
+	delta_corr = ABS( speed_iops_corr - speed_mbps_corr );
+	result_str[line_count] = 'Характер нагрузки' ; 
+	line_count=line_count+1;
+	
+	IF delta_corr >= 0.5 
+	THEN 
+		result_str[line_count] = 'Ярко выраженный: OLTP или OLAP' ; 
+		line_count=line_count+1;
+	ELSIF delta_corr >= 0.3 AND delta_corr < 0.5
+	THEN 
+		result_str[line_count] = 'Смешанная нагрузка ' ; 
+		line_count=line_count+1;
+	ELSE
+		result_str[line_count] = 'Снижение производительности не вызвано IO' ; 
+		line_count=line_count+1;
+	END IF;
+	line_count=line_count+1;
+	--Характер нагрузки
+	-----------------------------------------------------------------------------
+
+
+	DROP TABLE IF EXISTS tmp_timepoints;
+	CREATE TEMPORARY TABLE tmp_timepoints
+	(
+		curr_timestamp timestamptz  ,   
+		curr_timepoint integer 
+	);
+
+
+	INSERT INTO tmp_timepoints
+	(
+		curr_timestamp ,	
+		curr_timepoint 
+	)
+	SELECT 
+		curr_timestamp , 
+		row_number() over (order by curr_timestamp) AS x
+	FROM
+	os_stat_iostat_device_median
+	WHERE 
+		curr_timestamp BETWEEN min_timestamp AND max_timestamp  
+	ORDER BY curr_timestamp	;	
+
+	result_str[line_count] = 	'timestamp'||'|'||  --1
+								'№'||'|'	--2
+								'utilization(%)'||'|'	--3
+								'r_await(ms)'||'|'--4
+								'w_await(ms)'||'|'	--5							
+								'IOPS'||'|'	--6
+								'MB/s'||'|'	--7
+								'aqu_sz'||'|'	--8
+								'proc_b'||'|'	--9
+								'cpu_wa(%)'||'|'	--10								
+								'shared_blk_rw_time(s)'||'|' --11
+								'shared_blks_read'||'|' --12
+								'shared_blks_dirtied'||'|' --13
+								'shared_blks_written'||'|' --14														
+								;
+	line_count = line_count + 1;
+	
+	counter = 0 ; 
+	FOR io_perf_rec IN
+	SELECT 
+		ios.curr_timestamp , --1
+		ios.dev_util_pct_long AS util ,--3
+		ios.dev_r_await_long AS r_await ,--4
+		ios.dev_w_await_long AS w_await ,--5
+		(ios.dev_rps_long + ios.dev_wps_long) AS iops ,--6
+		(ios.dev_rmbs_long + ios.dev_wmbps_long ) AS mbs , --7
+		ios.dev_aqu_sz_long AS aqu_sz , --8
+		vms.procs_b_long AS proc_b , --9 
+		vms.cpu_wa_long AS cpu_wa , --10		
+		(cls.curr_shared_blk_read_time+cls.curr_shared_blk_write_time)/1000.0 AS shared_blks_read_write_time , --11
+		cls.curr_shared_blks_read AS shared_blks_read ,--12
+		cls.curr_shared_blks_read AS shared_blks_dirtied ,--13
+		cls.curr_shared_blks_read AS shared_blks_written --14		
+	FROM 
+		os_stat_iostat_device_median ios 
+		JOIN os_stat_vmstat_median vms ON (ios.curr_timestamp = vms.curr_timestamp )
+		JOIN cluster_stat_median cls ON (ios.curr_timestamp = cls.curr_timestamp )
+	WHERE 	
+		ios.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
+		AND ios.device = device_name
+    ORDER BY ios.curr_timestamp 
+	LOOP
+		counter = counter + 1 ;
+		
+		result_str[line_count] =
+								to_char( io_perf_rec.curr_timestamp , 'YYYY-MM-DD HH24:MI') ||'|'|| --1
+								counter ||'|'||  --2
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.util::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --3
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.r_await::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --4
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.w_await::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --5
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.iops::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --6
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.mbs::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --7
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.aqu_sz::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --8
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.proc_b::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --9
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.cpu_wa::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --10								
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_read_write_time::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --11
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_read::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --12
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_dirtied::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --13
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_written::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|' --14
+								;
+		
+		line_count=line_count+1; 			
+	END LOOP;
+								
+
+
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION reports_io_performance IS 'IO-performance';
+-- Чек-лист IO
+-------------------------------------------------------------------------------

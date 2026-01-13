@@ -49,12 +49,14 @@ DECLARE
   
   --------------------------------------------
   -- Чтение/Запись разделяемых блоков
+  current_shared_blks_hit bigint ;
   current_shared_blks_read bigint ;
   current_shared_blks_dirtied bigint ;
   current_shared_blks_written bigint ; 
   current_shared_blk_read_time double precision ;
   current_shared_blk_write_time double precision;
   
+  shared_blks_hit_long numeric ;
   shared_blks_read_long numeric ;
   shared_blks_dirtied_long numeric ;
   shared_blks_written_long numeric ;
@@ -130,6 +132,7 @@ RAISE NOTICE '-- ТЕКУЩИЕ ЗНАЧЕНИЯ';
 	---------------------------------------------------------------
     -- Чтение/Запись разделяемых блоков
 	SELECT 
+		SUM(shared_blks_hit ) AS sum_shared_blks_hit ,
 		SUM(shared_blks_read ) AS sum_shared_blks_read ,
 		SUM(shared_blks_dirtied ) AS sum_shared_blks_dirtied ,
 		SUM(shared_blks_written ) AS sum_shared_blks_written ,
@@ -157,6 +160,7 @@ RAISE NOTICE '-- ТЕКУЩИЕ ЗНАЧЕНИЯ';
 		curr_lock  ,
 		curr_lwlock ,
 		curr_timeout , 
+		curr_shared_blks_hit , 
 		curr_shared_blks_read , 
 		curr_shared_blks_dirtied, 
 		curr_shared_blks_written, 
@@ -175,6 +179,7 @@ RAISE NOTICE '-- ТЕКУЩИЕ ЗНАЧЕНИЯ';
 		current_lock  ,
 		current_lwlock ,
 		current_timeout ,
+		shared_blk_rec.sum_shared_blks_hit,
 		shared_blk_rec.sum_shared_blks_read,
 		shared_blk_rec.sum_shared_blks_dirtied,
 		shared_blk_rec.sum_shared_blks_written,
@@ -250,6 +255,12 @@ RAISE NOTICE '-- ТЕКУЩИЕ ЗНАЧЕНИЯ';
 	IF timeout_long IS NULL THEN timeout_long = 0 ; END IF ; 	
 	
 	-- Чтение/Запись разделяемых блоков
+	SELECT (percentile_cont(0.5) within group (order by curr_shared_blks_hit))::numeric
+	INTO shared_blks_hit_long
+	FROM cluster_stat
+	WHERE curr_timestamp BETWEEN max_timestamp - (interval '60 minute') AND max_timestamp ;	
+	IF shared_blks_hit_long IS NULL THEN shared_blks_hit_long = 0 ; END IF ; 	
+	
 	SELECT (percentile_cont(0.5) within group (order by curr_shared_blks_read))::numeric
 	INTO shared_blks_read_long
 	FROM cluster_stat
@@ -308,6 +319,7 @@ INSERT INTO cluster_stat_median
 		curr_lock  ,
 		curr_lwlock ,  
 		curr_timeout ,
+		curr_shared_blks_hit ,
 		curr_shared_blks_read ,
 		curr_shared_blks_dirtied ,
 		curr_shared_blks_written ,
@@ -326,6 +338,7 @@ INSERT INTO cluster_stat_median
 		lock_long ,
 		lwlock_long ,
 		timeout_long ,
+		shared_blks_hit_long ,
 		shared_blks_read_long ,
 		shared_blks_dirtied_long ,
 		shared_blks_written_long ,
@@ -643,7 +656,8 @@ CREATE UNLOGGED TABLE cluster_stat
 	curr_lwlock bigint,
 	curr_timeout bigint , 
 	
-	curr_shared_blks_read  , 
+	curr_shared_blks_hit  bigint , 
+	curr_shared_blks_read  bigint , 
 	curr_shared_blks_dirtied bigint , 
 	curr_shared_blks_written bigint , 
 	--если включён track_io_timing, иначе ноль
@@ -665,6 +679,7 @@ COMMENT ON COLUMN cluster_stat.curr_ipc IS 'Количество ожидани�
 COMMENT ON COLUMN cluster_stat.curr_lock IS 'Количество ожиданий типа Lock';
 COMMENT ON COLUMN cluster_stat.curr_lwlock IS 'Количество ожиданий типа LWLock';
 COMMENT ON COLUMN cluster_stat.curr_timeout IS 'Количество ожиданий типа Timeout';
+COMMENT ON COLUMN cluster_stat.curr_shared_blks_hit IS 'Общее число попаданий разделяемых блоков в кеш';
 COMMENT ON COLUMN cluster_stat.curr_shared_blks_read IS 'Общее число прочитанных разделяемых блоков';
 COMMENT ON COLUMN cluster_stat.curr_shared_blks_dirtied IS 'Общее число загрязнённых разделяемых блоков';
 COMMENT ON COLUMN cluster_stat.curr_shared_blks_written IS 'Общее число записанных разделяемых блоков';
@@ -692,6 +707,7 @@ CREATE UNLOGGED TABLE cluster_stat_median
 	curr_lwlock numeric , 
 	curr_timeout numeric , 
 	
+	curr_shared_blks_hit numeric , 
 	curr_shared_blks_read numeric , 
 	curr_shared_blks_dirtied numeric , 
 	curr_shared_blks_written numeric , 
@@ -714,6 +730,7 @@ COMMENT ON COLUMN cluster_stat_median.curr_ipc IS 'Медиана количес
 COMMENT ON COLUMN cluster_stat_median.curr_lock IS 'Медиана количества  ожиданий типа Lock';
 COMMENT ON COLUMN cluster_stat_median.curr_lwlock IS 'Медиана количества  ожиданий типа LWLock';
 COMMENT ON COLUMN cluster_stat_median.curr_timeout IS 'Медиана количества  ожиданий типа Timeout';
+COMMENT ON COLUMN cluster_stat_median.curr_shared_blks_hit IS 'Общее число попаданий разделяемых блоков в кеш';
 COMMENT ON COLUMN cluster_stat_median.curr_shared_blks_read IS 'Общее число прочитанных разделяемых блоков';
 COMMENT ON COLUMN cluster_stat_median.curr_shared_blks_dirtied IS 'Общее число загрязнённых разделяемых блоков';
 COMMENT ON COLUMN cluster_stat_median.curr_shared_blks_written IS 'Общее число записанных разделяемых блоков';
@@ -10313,6 +10330,9 @@ DECLARE
  speed_mbps_corr DOUBLE PRECISION ; 
  delta_corr DOUBLE PRECISION ; 
  
+ hit_ratio  DOUBLE PRECISION ; 
+ hit_ratio_median  DOUBLE PRECISION ; 
+ 
 BEGIN
 	line_count = 1 ;
 	
@@ -10535,7 +10555,40 @@ BEGIN
 	line_count=line_count+1;
 	--Характер нагрузки
 	-----------------------------------------------------------------------------
+	-----------------------------------------------------------------------------
+	-- Финальный Hit Ratio
+	SELECT 
+		( curr_shared_blks_hit / NULLIF(curr_shared_blks_hit + curr_shared_blks_read, 0))*100.0 
+	INTO 
+		hit_ratio
+	FROM 
+		cluster_stat_median
+	WHERE 
+		curr_timestamp = max_timestamp ;
 
+    result_str[line_count] = 'Shared buffers HIT RATIO | '||REPLACE ( TO_CHAR( ROUND( hit_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+	
+	IF hit_ratio >= 99.0 
+	THEN 
+		result_str[line_count] = 'OK : Идеальный результат для OLTP' ; 
+		line_count=line_count+2;
+	ELSIF hit_ratio >= 90.0 AND hit_ratio < 99.0
+	THEN 
+		result_str[line_count] = 'INFO: приемлемо для OLAP, особенно при работе с большими таблицами' ; 
+		line_count=line_count+2;
+	ELSIF hit_ratio >= 85.0 AND hit_ratio < 90.0
+	THEN 
+		result_str[line_count] = 'WARNING: низкое значение HIT RATIO' ; 
+		line_count=line_count+2;
+	ELSE
+		result_str[line_count] = 'ALARM: критически низкое значение HIT RATIO' ; 
+		line_count=line_count+2;
+	END IF;	
+	
+		 		
+	-- Финальный Hit Ratio
+	-----------------------------------------------------------------------------
 
 	DROP TABLE IF EXISTS tmp_timepoints;
 	CREATE TEMPORARY TABLE tmp_timepoints
@@ -10570,9 +10623,10 @@ BEGIN
 								'proc_b'||'|'	--9
 								'cpu_wa(%)'||'|'	--10								
 								'shared_blk_rw_time(s)'||'|' --11
-								'shared_blks_read'||'|' --12
-								'shared_blks_dirtied'||'|' --13
-								'shared_blks_written'||'|' --14														
+								'shared_blks_hit'||'|' --12
+								'shared_blks_read'||'|' --13
+								'shared_blks_dirtied'||'|' --14
+								'shared_blks_written'||'|' --15														
 								;
 	line_count = line_count + 1;
 	
@@ -10589,9 +10643,10 @@ BEGIN
 		vms.procs_b_long AS proc_b , --9 
 		vms.cpu_wa_long AS cpu_wa , --10		
 		(cls.curr_shared_blk_read_time+cls.curr_shared_blk_write_time)/1000.0 AS shared_blks_read_write_time , --11
-		cls.curr_shared_blks_read AS shared_blks_read ,--12
-		cls.curr_shared_blks_read AS shared_blks_dirtied ,--13
-		cls.curr_shared_blks_read AS shared_blks_written --14		
+		cls.curr_shared_blks_hit AS shared_blks_hit ,--12
+		cls.curr_shared_blks_read AS shared_blks_read ,--13
+		cls.curr_shared_blks_dirtied AS shared_blks_dirtied ,--14
+		cls.curr_shared_blks_written AS shared_blks_written --15		
 	FROM 
 		os_stat_iostat_device_median ios 
 		JOIN os_stat_vmstat_median vms ON (ios.curr_timestamp = vms.curr_timestamp )
@@ -10615,9 +10670,10 @@ BEGIN
 								REPLACE ( TO_CHAR( ROUND( io_perf_rec.proc_b::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --9
 								REPLACE ( TO_CHAR( ROUND( io_perf_rec.cpu_wa::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --10								
 								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_read_write_time::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --11
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_read::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --12
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_dirtied::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --13
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_written::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|' --14
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_hit::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --12
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_read::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --13
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_dirtied::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --14
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_written::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|' --15
 								;
 		
 		line_count=line_count+1; 			

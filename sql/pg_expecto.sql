@@ -10331,7 +10331,9 @@ DECLARE
  delta_corr DOUBLE PRECISION ; 
  
  hit_ratio  DOUBLE PRECISION ; 
- hit_ratio_median  DOUBLE PRECISION ; 
+ 
+ shared_blks_corr DOUBLE PRECISION ; 
+ 
  
 BEGIN
 	line_count = 1 ;
@@ -10589,6 +10591,85 @@ BEGIN
 		 		
 	-- Финальный Hit Ratio
 	-----------------------------------------------------------------------------
+	
+	-----------------------------------------------------------------------------
+	-- корреляция shared_blks_hit - shared_blks_read
+	SELECT COALESCE( corr( v1.curr_shared_blks_hit , v1.curr_shared_blks_read ) , 0 ) AS correlation_value 
+	INTO shared_blks_corr
+	FROM
+		cluster_stat_median v1 
+	WHERE 	
+		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp;
+    
+	result_str[line_count] = 'Корреляция shared_blks_hit - shared_blks_read | '||REPLACE ( TO_CHAR( ROUND( shared_blks_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+	
+	
+	IF shared_blks_corr <= -0.7 AND shared_blks_corr >= -1.0
+	THEN 
+		result_str[line_count] = 'OK : Эффективное кэширование.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Высокая предсказуемость.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Когда нагрузка попадает в кэш, это реально снижает дисковую нагрузку.' ; 
+		line_count=line_count+2;
+	END IF;
+	
+	IF shared_blks_corr <= -0.3 AND shared_blks_corr > -0.7
+	THEN 
+		result_str[line_count] = 'INFO : Нелинейная зависимость от кэша.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Нелинейная зависимость от кэша.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Увеличение hit помогает, но не пропорционально.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Возможные причины' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Фрагментация доступа: Даже при повторных запросах нужно подчитывать новые данные с диска.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Конкуренция за кэш: OLTP и аналитические запросы "вытесняют" данные друг друга.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Разные рабочие наборы: Несколько приложений с разными паттернами доступа.' ; 
+		line_count=line_count+2;
+	END IF;
+	
+	IF shared_blks_corr <= 0.3 AND shared_blks_corr > -0.3
+	THEN 
+		result_str[line_count] = 'WARNING :  Кэширование практически не влияет на дисковую нагрузку.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Производительность определяется дисковыми характеристиками.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Кэш работает как буфер, но не как ускоритель.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Нагрузка: Аналитическая/OLAP или "сканирующая":' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Рабочий набор >> shared_buffers: Данные читаются один раз и вытесняются.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Случайные большие запросы: Каждый запрос читает уникальные данные.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Проблемы с эффективностью кэша: Неправильные настройки autovacuum, много мёртвых кортежей.' ; 
+		line_count=line_count+2;
+	END IF;
+	
+	IF shared_blks_corr > 0.3 
+	THEN 
+		result_str[line_count] = 'ALARM : Кэширования связано с большим чтением с диска' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Возможные причины:' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'В периоды высокой нагрузки растут hit и read.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'OLTP-запросы (высокий hit) и отчетные (высокий read) запускаются одновременно.' ; 
+		line_count=line_count+2;		
+	END IF;
+	
+	
+	
+	-- корреляция shared_blks_hit - shared_blks_read
+	-----------------------------------------------------------------------------
+	
+	
+	
 
 	DROP TABLE IF EXISTS tmp_timepoints;
 	CREATE TEMPORARY TABLE tmp_timepoints

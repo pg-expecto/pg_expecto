@@ -17,7 +17,7 @@
 ## Контакты
 - Ринат Сунгатуллин **kznalp@yandex.ru**
 - [Дзен-канал](https://dzen.ru/kznalp) : https://dzen.ru/kznalp
-- [Телеграм-канал](https://t.me/pg_hazel) : https://t.me/pg_hazel
+- [Телеграм-канал](https://t.me/pg_expecto) : https://t.me/pg_expecto
 
 ## Статус проекта
 Текущая версия: 5

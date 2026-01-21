@@ -2,7 +2,7 @@
 ########################################################################################################
 # pg_expecto.sh
 # Корневой скрипт 
-# version 5.0
+# version 5.2
 ########################################################################################################
 
  
@@ -101,6 +101,10 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : РАСЧЕТ СТАТИ
 # СБРОС СТАТИСТИКИ 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СБРОС СТАТИСТИКИ  '
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СБРОС СТАТИСТИКИ  ' >> $LOG_FILE
+for db in $(psql -t -c "SELECT datname FROM pg_database WHERE datallowconn AND datname != 'template0'"); do
+    psql -d "$db" -c "SELECT pg_stat_reset();"
+done
+
 psql -d $expecto_db -Aqtc "SELECT pg_stat_statements_reset()" >> $LOG_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' OK : pg_stat_statements_reset  '

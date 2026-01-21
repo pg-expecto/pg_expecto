@@ -6607,6 +6607,10 @@ DECLARE
   speed_read_time_corr DOUBLE PRECISION ;
   speed_write_time_corr DOUBLE PRECISION ; 
 
+   hit_ratio  DOUBLE PRECISION ; 
+
+   shared_blks_corr DOUBLE PRECISION ; 
+   io_perf_rec record;
 
 BEGIN
 	line_count = 1 ;
@@ -6844,8 +6848,11 @@ BEGIN
 	-----------------------------------------------------------------------------
 	-- Отношение прочитанных блоков к записанным(новые+измененные)
 	SELECT 
-		SUM(curr_shared_blks_read)::DOUBLE PRECISION / 
-		(SUM(curr_shared_blks_dirtied)::DOUBLE PRECISION + SUM(curr_shared_blks_written )::DOUBLE PRECISION) 
+		CASE 
+			WHEN SUM(curr_shared_blks_dirtied) > 0
+			THEN ROUND(SUM(curr_shared_blks_read+curr_shared_blks_hit)::numeric / SUM(curr_shared_blks_dirtied), 4)
+			ELSE NULL -- избегаем деления на ноль, если нет изменений
+		END 
 	INTO 
 		shared_blks_read_write_ratio
 	FROM 
@@ -6854,30 +6861,31 @@ BEGIN
 		curr_timestamp BETWEEN min_timestamp AND max_timestamp ;	
 	
 	line_count=line_count+1;
-    result_str[line_count] = 'Отношение прочитанных блоков к записанным |' ||
+    result_str[line_count] = 'Отношение прочитанных блоков к измененным |' ||
 	REPLACE ( TO_CHAR( ROUND( shared_blks_read_write_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
 	line_count=line_count+1;	
-	
-	IF shared_blks_read_write_ratio < 0.5 
+
+
+	IF shared_blks_read_write_ratio IS NULL
 	THEN 
-		result_str[line_count] = 'INFO: Очень низкое соотношение прочитанных к записанным блокам (<0.5)' ; 
-		line_count=line_count+1;
-	ELSIF shared_blks_read_write_ratio >= 0.5 AND shared_blks_read_write_ratio < 1.5 
-	THEN 
-		result_str[line_count] = 'WARNING: Низкое соотношение прочитанных к записанным блокам (0.5 - 1.5)' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'OLTP сценарий.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Фокус оптимизации — производительность WAL, настройка VACUUM.' ; 
-		line_count=line_count+1;
+		result_str[line_count] = 'Только читающая нагрузка.' ; 
+		line_count=line_count+1;		 
 	ELSE
-		result_str[line_count] = 'ALARM: Очень высокое соотношение прочитанных к записанным блокам (>1.5)' ; 
+		result_str[line_count] = 'Эмпирические ориентиры ' ; 
 		line_count=line_count+1;
-		result_str[line_count] = 'OLAP сценарий.' ; 
+		result_str[line_count] = ' для оценки типа нагрузки(OLAP/OLTP): ' ; 
 		line_count=line_count+1;
-		result_str[line_count] = 'Фокус оптимизации — кэширование и скорость чтения.' ; 
-		line_count=line_count+1;
-	END IF;		
+
+		IF shared_blks_read_write_ratio >= 40
+		THEN 
+			result_str[line_count] = 'OLAP сценарий.' ; 
+			line_count=line_count+1;		
+		ELSE 
+			result_str[line_count] = 'OLTP сценарий.' ; 
+			line_count=line_count+1;		
+		END IF;
+	
+	END IF ;
 
 	-- Отношение прочитанных блоков к записанным(новые+измененные)
 	-----------------------------------------------------------------------------
@@ -6904,15 +6912,11 @@ BEGIN
 		line_count=line_count+1;			 
 		result_str[line_count] = 'Большая часть данных обслуживается из кэша. Штатная OLTP-нагрузка.' ; 
 		line_count=line_count+1;
-		result_str[line_count] = 'Рост производительности достигается за счет оптимизации CPU' ; 
-		line_count=line_count+1;
 	ELSIF speed_read_blks_corr > 0.7 
 	THEN 
 		result_str[line_count] = 'ALARM : Очень высокая корреляция (speed - shared_blks_read ).' ; 
 		line_count=line_count+1;
 		result_str[line_count] = 'Рост скорости операций напрямую зависит от роста чтений с диска.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Недостаток RAM, неэффективные индексы или выполнение больших seq scan.' ; 
 		line_count=line_count+1;
 	ELSIF speed_read_blks_corr > 0.5 AND speed_read_blks_corr <= 0.7
 	THEN 
@@ -6968,6 +6972,154 @@ BEGIN
 	END IF;	
 	-- Корреляция операционная скорость - записанные блоки
 	-----------------------------------------------------------------------------
+	
+	-----------------------------------------------------------------------------
+	-- Hit Ratio
+	line_count=line_count+1;
+	SELECT 
+		( curr_shared_blks_hit / NULLIF(curr_shared_blks_hit + curr_shared_blks_read, 0))*100.0 
+	INTO 
+		hit_ratio
+	FROM 
+		cluster_stat_median
+	WHERE 
+		curr_timestamp = max_timestamp ;
+
+    result_str[line_count] = 'Shared buffers HIT RATIO | '||REPLACE ( TO_CHAR( ROUND( hit_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+	
+	IF hit_ratio >= 99.0 
+	THEN 
+		result_str[line_count] = 'OK : Идеальный результат для OLTP' ; 
+		line_count=line_count+2;
+	ELSIF hit_ratio >= 90.0 AND hit_ratio < 99.0
+	THEN 
+		result_str[line_count] = 'INFO: приемлемо для OLAP, особенно при работе с большими таблицами' ; 
+		line_count=line_count+2;
+	ELSIF hit_ratio >= 85.0 AND hit_ratio < 90.0
+	THEN 
+		result_str[line_count] = 'WARNING: низкое значение HIT RATIO' ; 
+		line_count=line_count+2;
+	ELSE
+		result_str[line_count] = 'ALARM: критически низкое значение HIT RATIO' ; 
+		line_count=line_count+2;
+	END IF;			 		
+	-- Hit Ratio
+	-----------------------------------------------------------------------------
+	
+	-----------------------------------------------------------------------------
+	-- корреляция shared_blks_hit - shared_blks_read
+	SELECT COALESCE( corr( v1.curr_shared_blks_hit , v1.curr_shared_blks_read ) , 0 ) AS correlation_value 
+	INTO shared_blks_corr
+	FROM
+		cluster_stat_median v1 
+	WHERE 	
+		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp;
+    
+	result_str[line_count] = 'Корреляция shared_blks_hit - shared_blks_read | '||REPLACE ( TO_CHAR( ROUND( shared_blks_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+	
+	
+	IF shared_blks_corr <= -0.7 AND shared_blks_corr >= -1.0
+	THEN 
+		result_str[line_count] = 'OK : Эффективное кэширование.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Высокая предсказуемость.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Когда нагрузка попадает в кэш, это реально снижает дисковую нагрузку.' ; 
+		line_count=line_count+2;
+	END IF;
+	
+	IF shared_blks_corr <= -0.3 AND shared_blks_corr > -0.7
+	THEN 
+		result_str[line_count] = 'INFO : Нелинейная зависимость от кэша.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Нелинейная зависимость от кэша.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Увеличение hit помогает, но не пропорционально.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Возможные причины' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Фрагментация доступа: Даже при повторных запросах нужно подчитывать новые данные с диска.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Конкуренция за кэш: OLTP и аналитические запросы "вытесняют" данные друг друга.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Разные рабочие наборы: Несколько приложений с разными паттернами доступа.' ; 
+		line_count=line_count+2;
+	END IF;
+	
+	IF shared_blks_corr <= 0.3 AND shared_blks_corr > -0.3
+	THEN 
+		result_str[line_count] = 'WARNING :  Кэширование практически не влияет на дисковую нагрузку.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Производительность определяется дисковыми характеристиками.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Кэш работает как буфер, но не как ускоритель.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Нагрузка: Аналитическая или "сканирующая":' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Рабочий набор >> shared_buffers: Данные читаются один раз и вытесняются.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Случайные большие запросы: Каждый запрос читает уникальные данные.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Проблемы с эффективностью кэша: Неправильные настройки autovacuum, много мёртвых кортежей.' ; 
+		line_count=line_count+2;
+	END IF;
+	
+	IF shared_blks_corr > 0.3 
+	THEN 
+		result_str[line_count] = 'ALARM : Кэширования связано с большим чтением с диска' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Возможные причины:' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'В периоды высокой нагрузки растут hit и read.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'OLTP-запросы (высокий hit) и отчетные (высокий read) запускаются одновременно.' ; 
+		line_count=line_count+2;		
+	END IF;
+	
+	
+	
+	-- корреляция shared_blks_hit - shared_blks_read
+	-----------------------------------------------------------------------------
+	
+	result_str[line_count] = 	'timestamp'||'|'||  --1
+								'№'||'|'	--2
+								'shared_blk_rw_time(s)'||'|' --3
+								'shared_blks_hit'||'|' --4
+								'shared_blks_read'||'|' --5
+								'shared_blks_dirtied'||'|' --6
+								'shared_blks_written'||'|' --7												
+								;
+	line_count = line_count + 1;
+	counter = 0 ; 
+	FOR io_perf_rec IN
+	SELECT 
+		cls.curr_timestamp , --1
+		(cls.curr_shared_blk_read_time+cls.curr_shared_blk_write_time)/1000.0 AS shared_blks_read_write_time , --3
+		cls.curr_shared_blks_hit AS shared_blks_hit ,--4
+		cls.curr_shared_blks_read AS shared_blks_read ,--5
+		cls.curr_shared_blks_dirtied AS shared_blks_dirtied ,--6
+		cls.curr_shared_blks_written AS shared_blks_written --7		
+	FROM cluster_stat_median cls 
+	WHERE 	
+		cls.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
+    ORDER BY cls.curr_timestamp 
+	LOOP
+		counter = counter + 1 ;
+		result_str[line_count] =
+								to_char( io_perf_rec.curr_timestamp , 'YYYY-MM-DD HH24:MI') ||'|'|| --1
+								counter ||'|'||  --2
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_read_write_time::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --3
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_hit::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --4
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_read::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --5
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_dirtied::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --6
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_written::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|' --7
+								;
+		
+		line_count=line_count+1; 
+	END LOOP;
+		
 
 ---------------------------------------------------------------------------------
 --RESERVED FOR FUTURE 
@@ -10330,9 +10482,9 @@ DECLARE
  speed_mbps_corr DOUBLE PRECISION ; 
  delta_corr DOUBLE PRECISION ; 
  
- hit_ratio  DOUBLE PRECISION ; 
  
- shared_blks_corr DOUBLE PRECISION ; 
+ 
+ 
  
  
 BEGIN
@@ -10389,16 +10541,10 @@ BEGIN
 	IF speed_iops_corr >= 0.7
 	THEN 
 		result_str[line_count] = 'INFO: Очень высокая корреляция (speed - IOPS ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Классический OLTP-паттерн.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Производительность напрямую зависит от способности диска обрабатывать мелкие операции.' ; 
-		line_count=line_count+1;
+		line_count=line_count+1;		
 	ELSIF speed_iops_corr >= 0  AND speed_iops_corr < 0.7
 	THEN 
 		result_str[line_count] = 'WARNING: Слабая корреляция (speed - IOPS ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'IOPS не является ограничивающим фактором.' ; 
 		line_count=line_count+1;		
 	ELSE
 		result_str[line_count] = 'ALARM: Отрицательная корреляция (speed - IOPS ).' ; 
@@ -10429,8 +10575,6 @@ BEGIN
 	IF speed_mbps_corr >= 0.7
 	THEN 
 		result_str[line_count] = 'ALARM: Очень высокая корреляция (speed - MB/s ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Классический OLAP/аналитический паттерн' ; 
 		line_count=line_count+1;
 		result_str[line_count] = 'Производительность ограничена пропускной способностью диска' ; 
 		line_count=line_count+1;
@@ -10534,7 +10678,7 @@ BEGIN
 	
 	-- Сценарии нагрузки 
 	-----------------------------------------------------------------------------
-	
+/*	
 	-----------------------------------------------------------------------------
 	--Характер нагрузки
 	line_count=line_count+1;
@@ -10557,116 +10701,8 @@ BEGIN
 	line_count=line_count+1;
 	--Характер нагрузки
 	-----------------------------------------------------------------------------
-	-----------------------------------------------------------------------------
-	-- Финальный Hit Ratio
-	SELECT 
-		( curr_shared_blks_hit / NULLIF(curr_shared_blks_hit + curr_shared_blks_read, 0))*100.0 
-	INTO 
-		hit_ratio
-	FROM 
-		cluster_stat_median
-	WHERE 
-		curr_timestamp = max_timestamp ;
+*/	
 
-    result_str[line_count] = 'Shared buffers HIT RATIO | '||REPLACE ( TO_CHAR( ROUND( hit_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-	
-	IF hit_ratio >= 99.0 
-	THEN 
-		result_str[line_count] = 'OK : Идеальный результат для OLTP' ; 
-		line_count=line_count+2;
-	ELSIF hit_ratio >= 90.0 AND hit_ratio < 99.0
-	THEN 
-		result_str[line_count] = 'INFO: приемлемо для OLAP, особенно при работе с большими таблицами' ; 
-		line_count=line_count+2;
-	ELSIF hit_ratio >= 85.0 AND hit_ratio < 90.0
-	THEN 
-		result_str[line_count] = 'WARNING: низкое значение HIT RATIO' ; 
-		line_count=line_count+2;
-	ELSE
-		result_str[line_count] = 'ALARM: критически низкое значение HIT RATIO' ; 
-		line_count=line_count+2;
-	END IF;	
-	
-		 		
-	-- Финальный Hit Ratio
-	-----------------------------------------------------------------------------
-	
-	-----------------------------------------------------------------------------
-	-- корреляция shared_blks_hit - shared_blks_read
-	SELECT COALESCE( corr( v1.curr_shared_blks_hit , v1.curr_shared_blks_read ) , 0 ) AS correlation_value 
-	INTO shared_blks_corr
-	FROM
-		cluster_stat_median v1 
-	WHERE 	
-		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp;
-    
-	result_str[line_count] = 'Корреляция shared_blks_hit - shared_blks_read | '||REPLACE ( TO_CHAR( ROUND( shared_blks_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-	
-	
-	IF shared_blks_corr <= -0.7 AND shared_blks_corr >= -1.0
-	THEN 
-		result_str[line_count] = 'OK : Эффективное кэширование.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Высокая предсказуемость.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Когда нагрузка попадает в кэш, это реально снижает дисковую нагрузку.' ; 
-		line_count=line_count+2;
-	END IF;
-	
-	IF shared_blks_corr <= -0.3 AND shared_blks_corr > -0.7
-	THEN 
-		result_str[line_count] = 'INFO : Нелинейная зависимость от кэша.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Нелинейная зависимость от кэша.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Увеличение hit помогает, но не пропорционально.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Возможные причины' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Фрагментация доступа: Даже при повторных запросах нужно подчитывать новые данные с диска.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Конкуренция за кэш: OLTP и аналитические запросы "вытесняют" данные друг друга.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Разные рабочие наборы: Несколько приложений с разными паттернами доступа.' ; 
-		line_count=line_count+2;
-	END IF;
-	
-	IF shared_blks_corr <= 0.3 AND shared_blks_corr > -0.3
-	THEN 
-		result_str[line_count] = 'WARNING :  Кэширование практически не влияет на дисковую нагрузку.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Производительность определяется дисковыми характеристиками.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Кэш работает как буфер, но не как ускоритель.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Нагрузка: Аналитическая/OLAP или "сканирующая":' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Рабочий набор >> shared_buffers: Данные читаются один раз и вытесняются.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Случайные большие запросы: Каждый запрос читает уникальные данные.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Проблемы с эффективностью кэша: Неправильные настройки autovacuum, много мёртвых кортежей.' ; 
-		line_count=line_count+2;
-	END IF;
-	
-	IF shared_blks_corr > 0.3 
-	THEN 
-		result_str[line_count] = 'ALARM : Кэширования связано с большим чтением с диска' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Возможные причины:' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'В периоды высокой нагрузки растут hit и read.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'OLTP-запросы (высокий hit) и отчетные (высокий read) запускаются одновременно.' ; 
-		line_count=line_count+2;		
-	END IF;
-	
-	
-	
-	-- корреляция shared_blks_hit - shared_blks_read
-	-----------------------------------------------------------------------------
 	
 	
 	
@@ -10703,11 +10739,6 @@ BEGIN
 								'aqu_sz'||'|'	--8
 								'proc_b'||'|'	--9
 								'cpu_wa(%)'||'|'	--10								
-								'shared_blk_rw_time(s)'||'|' --11
-								'shared_blks_hit'||'|' --12
-								'shared_blks_read'||'|' --13
-								'shared_blks_dirtied'||'|' --14
-								'shared_blks_written'||'|' --15														
 								;
 	line_count = line_count + 1;
 	
@@ -10722,16 +10753,11 @@ BEGIN
 		(ios.dev_rmbs_long + ios.dev_wmbps_long ) AS mbs , --7
 		ios.dev_aqu_sz_long AS aqu_sz , --8
 		vms.procs_b_long AS proc_b , --9 
-		vms.cpu_wa_long AS cpu_wa , --10		
-		(cls.curr_shared_blk_read_time+cls.curr_shared_blk_write_time)/1000.0 AS shared_blks_read_write_time , --11
-		cls.curr_shared_blks_hit AS shared_blks_hit ,--12
-		cls.curr_shared_blks_read AS shared_blks_read ,--13
-		cls.curr_shared_blks_dirtied AS shared_blks_dirtied ,--14
-		cls.curr_shared_blks_written AS shared_blks_written --15		
+		vms.cpu_wa_long AS cpu_wa  --10		
+		
 	FROM 
 		os_stat_iostat_device_median ios 
-		JOIN os_stat_vmstat_median vms ON (ios.curr_timestamp = vms.curr_timestamp )
-		JOIN cluster_stat_median cls ON (ios.curr_timestamp = cls.curr_timestamp )
+		JOIN os_stat_vmstat_median vms ON (ios.curr_timestamp = vms.curr_timestamp )		
 	WHERE 	
 		ios.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
 		AND ios.device = device_name
@@ -10749,12 +10775,7 @@ BEGIN
 								REPLACE ( TO_CHAR( ROUND( io_perf_rec.mbs::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --7
 								REPLACE ( TO_CHAR( ROUND( io_perf_rec.aqu_sz::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --8
 								REPLACE ( TO_CHAR( ROUND( io_perf_rec.proc_b::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --9
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.cpu_wa::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --10								
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_read_write_time::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --11
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_hit::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --12
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_read::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --13
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_dirtied::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --14
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_written::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|' --15
+								REPLACE ( TO_CHAR( ROUND( io_perf_rec.cpu_wa::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'  --10								
 								;
 		
 		line_count=line_count+1; 			

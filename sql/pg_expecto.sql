@@ -867,7 +867,7 @@ COMMENT ON FUNCTION get_hour_before IS 'Получить текстовую ст
 
 --------------------------------------------------------------------------------
 -- core_os_functions.sql
--- version 1.0
+-- version 6.0
 --------------------------------------------------------------------------------
 -- Статистика уровня ОС
 --------------------------------------------------------------------------------
@@ -906,6 +906,14 @@ DECLARE
 	current_cpu_wa numeric ; --  wa — ожидание IO
 	current_cpu_st numeric ;  --  st — stolen (украдено гипервизором)
 	
+	--VM
+	current_dirty_kb numeric;		--dirty pages size (KB)
+	current_dirty_percent numeric ;	--% от dirty_ratio
+	current_dirty_bg_percent numeric;	--% от dirty_background_ratio
+	current_available_mem_mb numeric ;		--free + cached memory
+	--VM
+	
+	
     curr_procs_r_long numeric ; -- r — процессы в run queue (готовы к выполнению)
 	curr_procs_b_long numeric ; -- b — процессы в uninterruptible sleep (обычно ждут IO)
 	
@@ -928,6 +936,13 @@ DECLARE
 	curr_cpu_id_long numeric ; -- id — idle
 	curr_cpu_wa_long numeric ; --  wa — ожидание IO
 	curr_cpu_st_long numeric	;  --  st — stolen (украдено гипервизором)
+	
+	--VM
+	curr_dirty_kb_long numeric ;		--dirty pages size (KB)
+	curr_dirty_percent_long numeric ;		--% от dirty_ratio
+	curr_dirty_bg_percent_long numeric ;		--% от dirty_background_ratio
+	curr_available_mem_mb_long numeric 	;	--free + cached memory
+	--VM
 	
 	vmstat_array  text[] ;
 	
@@ -975,6 +990,17 @@ BEGIN
 	current_cpu_wa = vmstat_array[16]::numeric ; 
 	--  st — stolen (украдено гипервизором)
 	current_cpu_st = vmstat_array[17]::numeric ; 
+	
+	
+	--dirty pages size (KB)
+	current_dirty_kb  = vmstat_array[20]::numeric ; 		
+	--% от dirty_ratio
+	current_dirty_percent = vmstat_array[21]::numeric ; 
+	--% от dirty_background_ratio
+	current_dirty_bg_percent = vmstat_array[22]::numeric ; 	
+	--free + cached memory
+	current_available_mem_mb  = vmstat_array[23]::numeric ; 	
+	
 
 --Сохранить текущие значения
 	INSERT INTO os_stat_vmstat
@@ -1002,7 +1028,13 @@ BEGIN
 		cpu_sy   , -- sy — system time
 		cpu_id   , -- id — idle
 		cpu_wa   , --  wa — ожидание IO
-		cpu_st 	  --  st — stolen (украдено гипервизором)
+		cpu_st 	  ,--  st — stolen (украдено гипервизором)
+		
+		dirty_kb , 			    --dirty pages size (KB)
+		dirty_percent  ,		--% от dirty_ratio
+		dirty_bg_percent  ,		--% от dirty_background_ratio
+		available_mem_mb  		--free + cached memory
+	--VM
 	)
 	VALUES 
 	(
@@ -1028,7 +1060,13 @@ BEGIN
 		current_cpu_sy  , -- sy — system time
 		current_cpu_id  , -- id — idle
 		current_cpu_wa  , --  wa — ожидание IO
-		current_cpu_st 	
+		current_cpu_st 	, --  st — stolen (украдено гипервизором)
+		
+		current_dirty_kb , --dirty pages size (KB)
+		current_dirty_percent , --% от dirty_ratio
+		current_dirty_bg_percent , --% от dirty_background_ratio
+		current_available_mem_mb  --free + cached memory
+		
 	);
 --Сохранить текущие значения	
 	
@@ -1151,6 +1189,36 @@ BEGIN
 	FROM os_stat_vmstat
 	WHERE curr_timestamp BETWEEN max_timestamp - (interval '60 minute') AND max_timestamp ;	
 	IF curr_cpu_st_long  IS NULL THEN curr_cpu_st_long  = 0 ; END IF;
+	
+	
+	--dirty pages size (KB)
+	SELECT (percentile_cont(0.5) within group (order by dirty_kb))::numeric
+	INTO curr_dirty_kb_long 
+	FROM os_stat_vmstat
+	WHERE curr_timestamp BETWEEN max_timestamp - (interval '60 minute') AND max_timestamp ;	
+	IF curr_dirty_kb_long  IS NULL THEN curr_dirty_kb_long  = 0 ; END IF;
+	
+	---% от dirty_ratio
+	SELECT (percentile_cont(0.5) within group (order by dirty_percent))::numeric
+	INTO curr_dirty_percent_long 
+	FROM os_stat_vmstat
+	WHERE curr_timestamp BETWEEN max_timestamp - (interval '60 minute') AND max_timestamp ;	
+	IF curr_dirty_percent_long  IS NULL THEN curr_dirty_percent_long  = 0 ; END IF;
+	
+	--% от dirty_background_ratio
+	SELECT (percentile_cont(0.5) within group (order by dirty_bg_percent))::numeric
+	INTO curr_dirty_bg_percent_long 
+	FROM os_stat_vmstat
+	WHERE curr_timestamp BETWEEN max_timestamp - (interval '60 minute') AND max_timestamp ;	
+	IF curr_dirty_bg_percent_long  IS NULL THEN curr_dirty_bg_percent_long  = 0 ; END IF;
+	
+	--free + cached memory
+	SELECT (percentile_cont(0.5) within group (order by available_mem_mb))::numeric
+	INTO curr_available_mem_mb_long 
+	FROM os_stat_vmstat
+	WHERE curr_timestamp BETWEEN max_timestamp - (interval '60 minute') AND max_timestamp ;	
+	IF curr_available_mem_mb_long  IS NULL THEN curr_available_mem_mb_long  = 0 ; END IF;
+	
 --Скользящие медианы	
 
 --Сохранить статистические данные
@@ -1179,7 +1247,12 @@ BEGIN
 		cpu_sy_long  , -- sy — system time
 		cpu_id_long  , -- id — idle
 		cpu_wa_long  , --  wa — ожидание IO
-		cpu_st_long 	  --  st — stolen (украдено гипервизором)
+		cpu_st_long  ,	  --  st — stolen (украдено гипервизором)
+		
+		dirty_kb_long ,  --dirty pages size (KB)
+		dirty_percent_long  ,		--% от dirty_ratio
+		dirty_bg_percent_long  ,		--% от dirty_background_ratio
+		available_mem_mb_long  		--free + cached memory	
 	)
 	VALUES 
 	(
@@ -1205,7 +1278,12 @@ BEGIN
 		curr_cpu_sy_long  , -- sy — system time
 		curr_cpu_id_long  , -- id — idle
 		curr_cpu_wa_long  , --  wa — ожидание IO
-		curr_cpu_st_long    --  st — stolen (украдено гипервизором)		
+		curr_cpu_st_long  , --  st — stolen (украдено гипервизором)	
+
+		curr_dirty_kb_long , --dirty pages size (KB)
+		curr_dirty_percent_long	, --% от dirty_ratio
+		curr_dirty_bg_percent_long , --% от dirty_background_ratio
+		curr_available_mem_mb_long --free + cached memory
 	);
 --Сохранить статистические данные
 	
@@ -1651,8 +1729,8 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION os_stat_iostat_device IS 'Сформировать статистику по метрикам iostat';
 -- Сформировать статистику по метрикам iostat
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------
--- statement_stat_tables.sql
--- version 1.0
+-- core_os_tables.sql
+-- version 6.0
 --------------------------------------------------------------------------------
 -- Статистика уровня ОС
 --------------------------------------------------------------------------------
@@ -1686,7 +1764,15 @@ CREATE UNLOGGED TABLE os_stat_vmstat
 	cpu_sy  integer , -- sy — system time
 	cpu_id  integer , -- id — idle
 	cpu_wa  integer , --  wa — ожидание IO
-	cpu_st integer	  --  st — stolen (украдено гипервизором)
+	cpu_st integer	,  --  st — stolen (украдено гипервизором)
+	----------------------------------------------------------
+	--VM
+	dirty_kb DOUBLE PRECISION ,		--dirty pages size (KB)
+	dirty_percent DOUBLE PRECISION ,		--% от dirty_ratio
+	dirty_bg_percent DOUBLE PRECISION ,		--% от dirty_background_ratio
+	available_mem_mb DOUBLE PRECISION 		--free + cached memory
+	--VM
+	----------------------------------------------------------
 );
 
 ALTER TABLE os_stat_vmstat ADD CONSTRAINT os_stat_vmstat_pk PRIMARY KEY (id);
@@ -1711,6 +1797,13 @@ COMMENT ON COLUMN os_stat_vmstat.cpu_sy IS 'sy — system time';
 COMMENT ON COLUMN os_stat_vmstat.cpu_id IS 'id — idle';
 COMMENT ON COLUMN os_stat_vmstat.cpu_wa IS 'wa — ожидание IO';
 COMMENT ON COLUMN os_stat_vmstat.cpu_st IS 'st — stolen (украдено гипервизором)';
+
+COMMENT ON COLUMN os_stat_vmstat.dirty_kb IS 'dirty pages size (KB)';
+COMMENT ON COLUMN os_stat_vmstat.dirty_percent IS '% от dirty_ratio';
+COMMENT ON COLUMN os_stat_vmstat.dirty_bg_percent IS '% от dirty_background_ratio';
+COMMENT ON COLUMN os_stat_vmstat.available_mem_mb IS 'free + cached memory';
+
+
 -- Метрики vmstat
 --------------------------------------------------------------------------------
 
@@ -1744,31 +1837,45 @@ CREATE UNLOGGED TABLE os_stat_vmstat_median
 	cpu_sy_long numeric , -- sy — system time
 	cpu_id_long numeric , -- id — idle
 	cpu_wa_long numeric , --  wa — ожидание IO
-	cpu_st_long numeric  	  --  st — stolen (украдено гипервизором)
+	cpu_st_long numeric ,  --  st — stolen (украдено гипервизором)
+	----------------------------------------------------------
+	--VM
+	dirty_kb_long DOUBLE PRECISION ,		--dirty pages size (KB)
+	dirty_percent_long numeric ,		--% от dirty_ratio
+	dirty_bg_percent_long numeric ,		--% от dirty_background_ratio
+	available_mem_mb_long numeric 		--free + cached memory
+	--VM
+	----------------------------------------------------------
 	
 );
 ALTER TABLE os_stat_vmstat_median ADD CONSTRAINT os_stat_vmstat_median_pk PRIMARY KEY (id);
 CREATE INDEX os_stat_vmstat_median_idx ON os_stat_vmstat_median ( curr_timestamp );
 
 COMMENT ON TABLE os_stat_vmstat_median IS 'Скользящие медианы по метрикам vmstat';
-COMMENT ON COLUMN os_stat_vmstat.curr_timestamp IS 'Точка времени сбора данных ';	
-COMMENT ON COLUMN os_stat_vmstat.procs_r IS 'Скользящая медиана по метрике r — процессы в run queue (готовы к выполнению) ';
-COMMENT ON COLUMN os_stat_vmstat.procs_b IS 'Скользящая медиана по метрике b — процессы в uninterruptible sleep (обычно ждут IO) ';
-COMMENT ON COLUMN os_stat_vmstat.memory_swpd IS 'Скользящая медиана по метрике swpd — объём свопа ';
-COMMENT ON COLUMN os_stat_vmstat.memory_free IS 'Скользящая медиана по метрике free — свободная RAM ';
-COMMENT ON COLUMN os_stat_vmstat.memory_buff IS 'Скользящая медиана по метрике buff — буферы';
-COMMENT ON COLUMN os_stat_vmstat.memory_cache IS 'Скользящая медиана по метрике cache — кэш';
-COMMENT ON COLUMN os_stat_vmstat.swap_si IS 'Скользящая медиана по метрике si — swap in (из swap в RAM)';
-COMMENT ON COLUMN os_stat_vmstat.swap_so IS 'Скользящая медиана по метрике si — so — swap out (из RAM в swap)';
-COMMENT ON COLUMN os_stat_vmstat.io_bi IS 'Скользящая медиана по метрике bi — блоки, считанные с устройств';
-COMMENT ON COLUMN os_stat_vmstat.io_bo IS 'Скользящая медиана по метрике bo — записанные на устройства';
-COMMENT ON COLUMN os_stat_vmstat.system_in IS 'Скользящая медиана по метрике in — прерывания';
-COMMENT ON COLUMN os_stat_vmstat.system_cs IS 'Скользящая медиана по метрике cs — переключения контекста';
-COMMENT ON COLUMN os_stat_vmstat.cpu_us IS 'Скользящая медиана по метрике us — user time';
-COMMENT ON COLUMN os_stat_vmstat.cpu_sy IS 'Скользящая медиана по метрике sy — system time';
-COMMENT ON COLUMN os_stat_vmstat.cpu_id IS 'Скользящая медиана по метрике id — idle';
-COMMENT ON COLUMN os_stat_vmstat.cpu_wa IS 'Скользящая медиана по метрике wa — ожидание IO';
-COMMENT ON COLUMN os_stat_vmstat.cpu_st IS 'Скользящая медиана по метрике st — stolen (украдено гипервизором)';
+COMMENT ON COLUMN os_stat_vmstat_median.curr_timestamp IS 'Точка времени сбора данных ';	
+COMMENT ON COLUMN os_stat_vmstat_median.procs_r_long IS 'Скользящая медиана по метрике r — процессы в run queue (готовы к выполнению) ';
+COMMENT ON COLUMN os_stat_vmstat_median.procs_b_long IS 'Скользящая медиана по метрике b — процессы в uninterruptible sleep (обычно ждут IO) ';
+COMMENT ON COLUMN os_stat_vmstat_median.memory_swpd_long IS 'Скользящая медиана по метрике swpd — объём свопа ';
+COMMENT ON COLUMN os_stat_vmstat_median.memory_free_long IS 'Скользящая медиана по метрике free — свободная RAM ';
+COMMENT ON COLUMN os_stat_vmstat_median.memory_buff_long IS 'Скользящая медиана по метрике buff — буферы';
+COMMENT ON COLUMN os_stat_vmstat_median.memory_cache_long IS 'Скользящая медиана по метрике cache — кэш';
+COMMENT ON COLUMN os_stat_vmstat_median.swap_si_long IS 'Скользящая медиана по метрике si — swap in (из swap в RAM)';
+COMMENT ON COLUMN os_stat_vmstat_median.swap_so_long IS 'Скользящая медиана по метрике si — so — swap out (из RAM в swap)';
+COMMENT ON COLUMN os_stat_vmstat_median.io_bi_long IS 'Скользящая медиана по метрике bi — блоки, считанные с устройств';
+COMMENT ON COLUMN os_stat_vmstat_median.io_bo_long IS 'Скользящая медиана по метрике bo — записанные на устройства';
+COMMENT ON COLUMN os_stat_vmstat_median.system_in_long IS 'Скользящая медиана по метрике in — прерывания';
+COMMENT ON COLUMN os_stat_vmstat_median.system_cs_long IS 'Скользящая медиана по метрике cs — переключения контекста';
+COMMENT ON COLUMN os_stat_vmstat_median.cpu_us_long IS 'Скользящая медиана по метрике us — user time';
+COMMENT ON COLUMN os_stat_vmstat_median.cpu_sy_long IS 'Скользящая медиана по метрике sy — system time';
+COMMENT ON COLUMN os_stat_vmstat_median.cpu_id_long IS 'Скользящая медиана по метрике id — idle';
+COMMENT ON COLUMN os_stat_vmstat_median.cpu_wa_long IS 'Скользящая медиана по метрике wa — ожидание IO';
+COMMENT ON COLUMN os_stat_vmstat_median.cpu_st_long IS 'Скользящая медиана по метрике st — stolen (украдено гипервизором)';
+
+COMMENT ON COLUMN os_stat_vmstat_median.dirty_percent_long IS 'Скользящая медиана по метрике dirty_kb_long--dirty pages size (KB)';
+COMMENT ON COLUMN os_stat_vmstat_median.dirty_percent_long IS 'Скользящая медиана по метрике dirty_percent_long-% от dirty_ratio';
+COMMENT ON COLUMN os_stat_vmstat_median.dirty_bg_percent_long IS 'Скользящая медиана по метрике dirty_bg_percent_long-% от dirty_background_ratio';
+COMMENT ON COLUMN os_stat_vmstat_median.available_mem_mb_long IS 'Скользящая медиана по метрике available_mem_mb_long-free + cached memory';
+
 --Скользящие медианы
 --------------------------------------------------------------------------------
 
@@ -2739,7 +2846,7 @@ COMMENT ON COLUMN configuration.day_for_store IS 'Глубина хранени�
 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- load_test_functions.sql
--- version 4.0
+-- version 6.0
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Функции обеспечения нагрузочного теста
 -- load_test_new_test() Начать новый тест
@@ -2770,6 +2877,22 @@ COMMENT ON COLUMN configuration.day_for_store IS 'Глубина хранени�
 -- load_test_increment_pass_counter() --УВЕЛИЧИТЬ СЧЕТЧИК ИТЕРАЦИЙ
 --
 -- load_test_set_scenario_queryid --Установить quaryid для сценариев 
+
+---------------------------------------------------------------------
+-- ЗАФИКСИРОВАТЬ ПАРАМЕТРЫ vm
+/*
+  save_dirty_background_ratio( integer )
+  save_dirty_ratio( integer )
+  save_dirty_background_bytes( integer )
+  save_dirty_bytes( integer )
+  save_dirty_expire_centisecs( integer )
+  save_dirty_writeback_centisecs( integer )
+  save_vfs_cache_pressure( integer )
+  save_swappiness( integer )
+*/
+-- ЗАФИКСИРОВАТЬ ПАРАМЕТРЫ vm
+
+-- get_vm_params_list() --получить список текущих параметров управления RAM 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -3328,9 +3451,244 @@ COMMENT ON FUNCTION load_test_set_weight_for_scenario IS 'УСТАНОВИТЬ �
 -- УСТАНОВИТЬ ВЕС ДЛЯ ТЕСТОВОГО СЦЕНАРИЯ
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
---------------------------------------------------------------------------------
+---------------------------------------------------------------------
+-- ЗАФИКСИРОВАТЬ ПАРАМЕТРЫ vm
+CREATE OR REPLACE FUNCTION save_dirty_background_ratio( new_dirty_background_ratio integer ) RETURNS integer AS $$				
+DECLARE 
+ current_test_id bigint; 
+BEGIN
+    SELECT load_test_get_current_test_id()
+	INTO current_test_id;
+	
+	UPDATE load_test
+	SET dirty_background_ratio = new_dirty_background_ratio
+	WHERE test_id = current_test_id ; 
+	
+  return 0 ; 
+END
+$$ LANGUAGE plpgsql;		
+COMMENT ON FUNCTION load_test_set_weight_for_scenario IS 'СОХРАНИТЬ ЗНАЧЕНИЕ ПАРАМЕТРА vm.dirty_background_ratio ';				
+
+
+CREATE OR REPLACE FUNCTION save_dirty_ratio( new_dirty_ratio integer ) RETURNS integer AS $$				
+DECLARE 
+ current_test_id bigint; 
+BEGIN
+    SELECT load_test_get_current_test_id()
+	INTO current_test_id;
+	
+	UPDATE load_test
+	SET dirty_ratio = new_dirty_ratio
+	WHERE test_id = current_test_id ; 
+	
+  return 0 ; 
+END
+$$ LANGUAGE plpgsql;		
+COMMENT ON FUNCTION load_test_set_weight_for_scenario IS 'СОХРАНИТЬ ЗНАЧЕНИЕ ПАРАМЕТРА vm.dirty_ratio ';				
+
+CREATE OR REPLACE FUNCTION save_dirty_background_bytes( new_dirty_background_bytes integer ) RETURNS integer AS $$				
+DECLARE 
+ current_test_id bigint; 
+BEGIN
+    SELECT load_test_get_current_test_id()
+	INTO current_test_id;
+	
+	UPDATE load_test
+	SET dirty_background_bytes = new_dirty_background_bytes
+	WHERE test_id = current_test_id ; 
+	
+  return 0 ; 
+END
+$$ LANGUAGE plpgsql;		
+COMMENT ON FUNCTION load_test_set_weight_for_scenario IS 'СОХРАНИТЬ ЗНАЧЕНИЕ ПАРАМЕТРА vm.dirty_background_bytes ';
+
+CREATE OR REPLACE FUNCTION save_dirty_bytes( new_dirty_bytes integer ) RETURNS integer AS $$				
+DECLARE 
+ current_test_id bigint; 
+BEGIN
+    SELECT load_test_get_current_test_id()
+	INTO current_test_id;
+	
+	UPDATE load_test
+	SET dirty_bytes = new_dirty_bytes
+	WHERE test_id = current_test_id ; 
+	
+  return 0 ; 
+END
+$$ LANGUAGE plpgsql;		
+COMMENT ON FUNCTION load_test_set_weight_for_scenario IS 'СОХРАНИТЬ ЗНАЧЕНИЕ ПАРАМЕТРА vm.dirty_bytes ';
+
+CREATE OR REPLACE FUNCTION save_dirty_expire_centisecs( new_dirty_expire_centisecs integer ) RETURNS integer AS $$				
+DECLARE 
+ current_test_id bigint; 
+BEGIN
+    SELECT load_test_get_current_test_id()
+	INTO current_test_id;
+	
+	UPDATE load_test
+	SET dirty_expire_centisecs = new_dirty_expire_centisecs
+	WHERE test_id = current_test_id ; 
+	
+  return 0 ; 
+END
+$$ LANGUAGE plpgsql;		
+COMMENT ON FUNCTION load_test_set_weight_for_scenario IS 'СОХРАНИТЬ ЗНАЧЕНИЕ ПАРАМЕТРА vm.dirty_expire_centisecs ';					
+
+CREATE OR REPLACE FUNCTION save_dirty_writeback_centisecs( new_dirty_writeback_centisecs integer ) RETURNS integer AS $$				
+DECLARE 
+ current_test_id bigint; 
+BEGIN
+    SELECT load_test_get_current_test_id()
+	INTO current_test_id;
+	
+	UPDATE load_test
+	SET dirty_writeback_centisecs = new_dirty_writeback_centisecs
+	WHERE test_id = current_test_id ; 
+	
+  return 0 ; 
+END
+$$ LANGUAGE plpgsql;		
+COMMENT ON FUNCTION load_test_set_weight_for_scenario IS 'СОХРАНИТЬ ЗНАЧЕНИЕ ПАРАМЕТРА vm.dirty_writeback_centisecs ';	
+
+CREATE OR REPLACE FUNCTION save_vfs_cache_pressure( new_vfs_cache_pressure integer ) RETURNS integer AS $$				
+DECLARE 
+ current_test_id bigint; 
+BEGIN
+    SELECT load_test_get_current_test_id()
+	INTO current_test_id;
+	
+	UPDATE load_test
+	SET vfs_cache_pressure = new_vfs_cache_pressure
+	WHERE test_id = current_test_id ; 
+	
+  return 0 ; 
+END
+$$ LANGUAGE plpgsql;		
+COMMENT ON FUNCTION load_test_set_weight_for_scenario IS 'СОХРАНИТЬ ЗНАЧЕНИЕ ПАРАМЕТРА vm.vfs_cache_pressure ';	
+
+CREATE OR REPLACE FUNCTION save_swappiness( new_swappiness integer ) RETURNS integer AS $$				
+DECLARE 
+ current_test_id bigint; 
+BEGIN
+    SELECT load_test_get_current_test_id()
+	INTO current_test_id;
+	
+	UPDATE load_test
+	SET swappiness = new_swappiness
+	WHERE test_id = current_test_id ; 
+	
+  return 0 ; 
+END
+$$ LANGUAGE plpgsql;		
+COMMENT ON FUNCTION load_test_set_weight_for_scenario IS 'СОХРАНИТЬ ЗНАЧЕНИЕ ПАРАМЕТРА vm.swappiness ';	
+
+-- ЗАФИКСИРОВАТЬ ПАРАМЕТРЫ vm
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+-- get_vm_params() --получить список текущих параметров управления RAM 
+CREATE OR REPLACE FUNCTION get_vm_params_list() RETURNS text[] AS $$				
+DECLARE 
+ current_test_id bigint; 
+ vm_record record ; 
+ result_str text[];
+ line_count integer ;
+BEGIN
+	line_count = 1 ;
+	
+    SELECT load_test_get_current_test_id()
+	INTO current_test_id;
+	
+	result_str[line_count] = 'ТЕКУЩИЕ НАСТРОЙКИ УПРАВЛЕНИЯ VM и RAM' ;
+	line_count=line_count+1;
+
+	SELECT 
+		dirty_background_ratio ,
+		dirty_ratio            ,
+		dirty_background_bytes ,
+		dirty_bytes            ,
+		dirty_expire_centisecs ,
+		dirty_writeback_centisecs,
+		vfs_cache_pressure ,
+		swappiness         
+	INTO vm_record
+	FROM load_test
+	WHERE test_id = current_test_id ; 
+	
+	
+	result_str[line_count] = '1.ПОРОГИ ДЛЯ ЗАПУСКА ФОНОВОЙ ЗАПИСИ НА ДИСК:'||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'vm.dirty_background_ratio '||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'процент от общей оперативной памяти,'||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'по достижении которого система начинает фоновую запись "грязных" данных на диск.'||' | '||vm_record.dirty_background_ratio ||'|';
+	line_count=line_count+2;
+	
+	result_str[line_count] = 'vm.dirty_background_bytes '||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'абсолютный объем "грязных" данных в байтах '||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'для запуска фоновой записи (имеет приоритет над ratio).'||' | '||vm_record.dirty_background_bytes ||'|';
+	line_count=line_count+3;
+	
+
+	result_str[line_count] = '2.ПОРОГИ ДЛЯ ПРИНУДИТЕЛЬНОЙ СИНХРОННОЙ ЗАПИСИ:'||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'vm.dirty_ratio '||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'процент памяти, по превышении которого процессы блокируются '||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'и вынуждены синхронно записывать данные на диск.'||' | '||vm_record.dirty_ratio ||'|';
+	line_count=line_count+2;
+	
+	result_str[line_count] = 'vm.dirty_bytes '||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'абсолютный лимит "грязных" данных в байтах'||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'для блокировки процессов (имеет приоритет над ratio).'||' | '||vm_record.dirty_bytes ||'|'; 
+	line_count=line_count+3;
+
+	result_str[line_count] = '3.ТАЙМИНГИ ЗАПИСИ:'||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'vm.dirty_expire_centisecs '||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'время (в сотых долях секунды)'||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'по истечении которого "грязные" данные считаются устаревшими и подлежат записи.'||' | '||vm_record.dirty_expire_centisecs ||'|';
+	line_count=line_count+2;
+	
+	result_str[line_count] = 'vm.dirty_writeback_centisecs '||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'частота (в сотых долях секунды), '||'|';
+	line_count=line_count+1;
+	result_str[line_count] = ' с которой фоновый процесс проверяет и записывает устаревшие данные.'||' | '||vm_record.dirty_writeback_centisecs ||'|';
+	line_count=line_count+3;
+	
+
+	result_str[line_count] = '4.НАСТРОЙКИ УПРАВЛЕНИЯ ПАМЯТЬЮ:'||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'vm.vfs_cache_pressure'||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'тенденция ядра к освобождению памяти, '||'|';
+	line_count=line_count+1;
+	result_str[line_count] = ' занятой кэшем файловой системы (чем выше значение, тем агрессивнее).'||' | '||vm_record.vfs_cache_pressure ||'|';
+	line_count=line_count+2;
+	
+	result_str[line_count] = 'vm.swappiness '||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'склонность системы к использованию подкачки на диск (swap)'||'|';
+	line_count=line_count+1;
+	result_str[line_count] = 'вместо освобождения кэша страниц в RAM (диапазон от 0 до 100).'||' | '||vm_record.swappiness ||'|';
+	line_count=line_count+1;
+	
+	
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql;		
+COMMENT ON FUNCTION get_vm_params_list IS 'получить список текущих параметров управления RAM ';	
+-----------------------------------------------------------------------------------
 -- load_test_tables.sql
--- version 4.0
+-- version 6.0
 --------------------------------------------------------------------------------
 --Таблицы для анализа нагрузочного тестирования
 -----------------------------------------------------------------------------------
@@ -3346,7 +3704,39 @@ CREATE UNLOGGED TABLE load_test
   test_started timestamp with time zone , 
   test_finished timestamp with time zone ,
   pass_counter integer DEFAULT 0 ,    -- Счетчик проходов теста  
-  testdb_name text DEFAULT 'default' --Наименование тестовой БД
+  testdb_name text DEFAULT 'default', --Наименование тестовой БД
+  ---------------------------------------------------------------
+  -- НАСТРОЙКИ ОС ПО ВРЕМЯ ТЕСТА
+ /*
+ Пороги для запуска фоновой записи на диск:
+	vm.dirty_background_ratio — процент от общей оперативной памяти, по достижении которого система начинает фоновую запись "грязных" данных на диск.
+	vm.dirty_background_bytes — абсолютный объем "грязных" данных в байтах для запуска фоновой записи (имеет приоритет над ratio).
+
+Пороги для принудительной синхронной записи:
+	vm.dirty_ratio — процент памяти, по превышении которого процессы блокируются и вынуждены синхронно записывать данные на диск.
+	vm.dirty_bytes — абсолютный лимит "грязных" данных в байтах для блокировки процессов (имеет приоритет над ratio).
+
+Тайминги записи:
+	vm.dirty_expire_centisecs — время (в сотых долях секунды), по истечении которого "грязные" данные считаются устаревшими и подлежат записи.
+	vm.dirty_writeback_centisecs — частота (в сотых долях секунды), с которой фоновый процесс проверяет и записывает устаревшие данные.
+
+Настройки управления памятью:
+	vm.vfs_cache_pressure — тенденция ядра к освобождению памяти, занятой кэшем файловой системы (чем выше значение, тем агрессивнее).
+	vm.swappiness — склонность системы к использованию подкачки на диск (swap) вместо освобождения кэша страниц в RAM (диапазон от 0 до 100).
+ */
+  dirty_background_ratio          integer ,
+  dirty_ratio                     integer ,
+  dirty_background_bytes          integer ,
+  dirty_bytes                     integer ,
+  dirty_expire_centisecs          integer ,
+  dirty_writeback_centisecs       integer ,
+  
+  vfs_cache_pressure              integer ,
+  swappiness                      integer 
+  -- НАСТРОЙКИ ОС ПО ВРЕМЯ ТЕСТА
+  ---------------------------------------------------------------
+  
+  
 );
 ALTER TABLE load_test ADD CONSTRAINT load_test_pk PRIMARY KEY (test_id);
 
@@ -3355,7 +3745,18 @@ COMMENT ON COLUMN load_test.base_load_connections IS 'Базовое колич�
 COMMENT ON COLUMN load_test.max_load IS 'Максимальная нагрука  соединений pgbench';
 COMMENT ON COLUMN load_test.test_started IS 'Начало теста';
 COMMENT ON COLUMN load_test.test_finished IS 'Окончание теста';
-COMMENT ON COLUMN load_test.test_finished IS 'Количество итераций теста';
+COMMENT ON COLUMN load_test.pass_counter IS 'Счетчик проходов теста ';
+COMMENT ON COLUMN load_test.testdb_name IS 'Наименование тестовой БД';
+
+COMMENT ON COLUMN load_test.dirty_background_ratio IS 'процент от общей оперативной памяти, по достижении которого система начинает фоновую запись "грязных" данных на диск';
+COMMENT ON COLUMN load_test.dirty_ratio IS 'процент памяти, по превышении которого процессы блокируются и вынуждены синхронно записывать данные на диск';
+COMMENT ON COLUMN load_test.dirty_background_bytes IS 'абсолютный объем "грязных" данных в байтах для запуска фоновой записи (имеет приоритет над ratio)';
+COMMENT ON COLUMN load_test.dirty_bytes IS 'абсолютный лимит "грязных" данных в байтах для блокировки процессов (имеет приоритет над ratio)';
+COMMENT ON COLUMN load_test.dirty_expire_centisecs IS 'время (в сотых долях секунды), по истечении которого "грязные" данные считаются устаревшими и подлежат записи';
+COMMENT ON COLUMN load_test.dirty_writeback_centisecs IS 'частота (в сотых долях секунды), с которой фоновый процесс проверяет и записывает устаревшие данные';
+COMMENT ON COLUMN load_test.vfs_cache_pressure IS 'тенденция ядра к освобождению памяти, занятой кэшем файловой системы (чем выше значение, тем агрессивнее)';
+COMMENT ON COLUMN load_test.swappiness IS 'склонность системы к использованию подкачки на диск (swap) вместо освобождения кэша страниц в RAM (диапазон от 0 до 100)';
+
 --Нагрузочный тест 
 -----------------------------------------------------------------------------------
 
@@ -4154,7 +4555,7 @@ COMMENT ON FUNCTION reports_cluster_report_4graph IS 'Данные для пос
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 -- reports_cluster_report_meta.sql
--- version 1.0
+-- version 5.3
 --------------------------------------------------------------------------------
 -- Метаданные для отчета по производительности и ожиданиям на уровне СУБД
 --
@@ -4592,27 +4993,8 @@ BEGIN
 	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - timeout 
 	----------------------------------------------------------------------------------------------------
 	
-	result_str[line_count] = 'КОЭФФИЦИЕНТЫ КОРРЕЛЯЦИИ' ; 
-	line_count=line_count+1; 
-	
-	result_str[line_count] = 'SPEED - WAITINGS' ||'|'|| REPLACE ( TO_CHAR( ROUND( speed_waitings_correlation::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAITINGS - BUFFERPIN' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_bufferpin::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAITINGS - EXTENSION' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_extension::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAITINGS - IO' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_io::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAITINGS - IPC' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_ipc::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAITINGS - LOCK' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_lock::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAITINGS - LWLOCK' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_lwlock::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAITINGS - TIMEOUT' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_timeout::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+2; 
-	
-	
+	----------------------------------------------------------------------------------------------------
+	-- Граничные значения
 	SELECT 
 		MIN( cl.curr_op_speed) AS min_curr_op_speed , MAX( cl.curr_op_speed) AS max_curr_op_speed , 
 		MIN( cl.curr_waitings) AS min_curr_waitings , MAX( cl.curr_waitings) AS max_curr_waitings , 
@@ -4628,6 +5010,51 @@ BEGIN
 		cluster_stat_median cl 
 	WHERE 	
 		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	;
+	-- Граничные значения
+	----------------------------------------------------------------------------------------------------
+		
+	
+	result_str[line_count] = 'КОРРЕЛЯЦИЯ | КОЭФФИЦИЕНТ | %(среднее количество ' ; 
+	line_count=line_count+1; 
+	result_str[line_count] = ' |  | ожиданий данного типа ' ; 
+	line_count=line_count+1; 
+	result_str[line_count] = ' |  | к общему количеству) ' ; 
+	line_count=line_count+1; 
+	
+	
+	result_str[line_count] = 'SPEED - WAITINGS' ||'|'|| REPLACE ( TO_CHAR( ROUND( speed_waitings_correlation::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 
+	result_str[line_count] = 'WAITINGS - BUFFERPIN' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_bufferpin::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( ((min_max_rec.max_curr_bufferpin + min_max_rec.min_curr_bufferpin)/2.0)/
+																					  ((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0, 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 
+	result_str[line_count] = 'WAITINGS - EXTENSION' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_extension::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( ((min_max_rec.max_curr_extension + min_max_rec.min_curr_extension)/2.0)/
+																					  ((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0, 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 
+	result_str[line_count] = 'WAITINGS - IO' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_io::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( ((min_max_rec.max_curr_io + min_max_rec.min_curr_io)/2.0)/
+																					  ((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0, 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 
+	result_str[line_count] = 'WAITINGS - IPC' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_ipc::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( ((min_max_rec.max_curr_ipc + min_max_rec.min_curr_ipc)/2.0)/
+																					  ((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0, 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 
+	result_str[line_count] = 'WAITINGS - LOCK' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_lock::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( ((min_max_rec.max_curr_lock + min_max_rec.min_curr_lock)/2.0)/
+																					  ((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0, 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 
+	result_str[line_count] = 'WAITINGS - LWLOCK' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_lwlock::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( ((min_max_rec.max_curr_lwlock + min_max_rec.min_curr_lwlock)/2.0)/
+																					  ((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0, 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 
+	result_str[line_count] = 'WAITINGS - TIMEOUT' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_timeout::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( ((min_max_rec.max_curr_timeout + min_max_rec.min_curr_timeout)/2.0)/
+																					  ((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0, 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+2; 
+	
+	
+	
 		
 
 	result_str[line_count] = 	' '||'|'||
@@ -6569,7 +6996,7 @@ COMMENT ON FUNCTION reports_vmstat_cpu IS 'Чек-лист CPU';
 -- Чек-лист CPU
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- reports_vmstat_io.sql
--- version 5.0
+-- version 6.0
 --------------------------------------------------------------------------------
 --
 -- reports_vmstat_io Чек-лист IO
@@ -6607,7 +7034,7 @@ DECLARE
   speed_read_time_corr DOUBLE PRECISION ;
   speed_write_time_corr DOUBLE PRECISION ; 
 
-   hit_ratio  DOUBLE PRECISION ; 
+   hit_ratio_rec  record ; 
 
    shared_blks_corr DOUBLE PRECISION ; 
    io_perf_rec record;
@@ -6876,7 +7303,7 @@ BEGIN
 		result_str[line_count] = ' для оценки типа нагрузки(OLAP/OLTP): ' ; 
 		line_count=line_count+1;
 
-		IF shared_blks_read_write_ratio >= 40
+		IF shared_blks_read_write_ratio >= 200
 		THEN 
 			result_str[line_count] = 'OLAP сценарий.' ; 
 			line_count=line_count+1;		
@@ -6976,27 +7403,45 @@ BEGIN
 	-----------------------------------------------------------------------------
 	-- Hit Ratio
 	line_count=line_count+1;
+	WITH 
+	hit_ratio AS
+	(
+		SELECT 
+			( curr_shared_blks_hit / NULLIF(curr_shared_blks_hit + curr_shared_blks_read, 0))*100.0 as value 
+		FROM 
+			cluster_stat_median
+		WHERE 
+			curr_timestamp BETWEEN min_timestamp AND max_timestamp
+	) 
 	SELECT 
-		( curr_shared_blks_hit / NULLIF(curr_shared_blks_hit + curr_shared_blks_read, 0))*100.0 
+		MIN(value) as min_hit_ratio ,
+		MAX(value) as max_hit_ratio , 
+		(percentile_cont(0.5) within group (order by value))::numeric as median_hit_ratio
 	INTO 
-		hit_ratio
+		hit_ratio_rec
 	FROM 
-		cluster_stat_median
-	WHERE 
-		curr_timestamp = max_timestamp ;
+		hit_ratio ;
 
-    result_str[line_count] = 'Shared buffers HIT RATIO | '||REPLACE ( TO_CHAR( ROUND( hit_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+    result_str[line_count] = 'Shared buffers MIN HIT RATIO | '||REPLACE ( TO_CHAR( ROUND( hit_ratio_rec.min_hit_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
 	line_count=line_count+1;
+
+    result_str[line_count] = 'Shared buffers MAX HIT RATIO | '||REPLACE ( TO_CHAR( ROUND( hit_ratio_rec.max_hit_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+
+    result_str[line_count] = 'Shared buffers MEDIAN HIT RATIO | '||REPLACE ( TO_CHAR( ROUND( hit_ratio_rec.median_hit_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+
+
 	
-	IF hit_ratio >= 99.0 
+	IF hit_ratio_rec.median_hit_ratio >= 99.0 
 	THEN 
 		result_str[line_count] = 'OK : Идеальный результат для OLTP' ; 
 		line_count=line_count+2;
-	ELSIF hit_ratio >= 90.0 AND hit_ratio < 99.0
+	ELSIF hit_ratio_rec.median_hit_ratio >= 90.0 AND hit_ratio_rec.median_hit_ratio < 99.0
 	THEN 
 		result_str[line_count] = 'INFO: приемлемо для OLAP, особенно при работе с большими таблицами' ; 
 		line_count=line_count+2;
-	ELSIF hit_ratio >= 85.0 AND hit_ratio < 90.0
+	ELSIF hit_ratio_rec.median_hit_ratio >= 85.0 AND hit_ratio_rec.median_hit_ratio < 90.0
 	THEN 
 		result_str[line_count] = 'WARNING: низкое значение HIT RATIO' ; 
 		line_count=line_count+2;
@@ -7078,8 +7523,9 @@ BEGIN
 		line_count=line_count+2;		
 	END IF;
 	
-	
-	
+----------------------------------------------------------------------------------	
+--RESERVED FOR FUTURE	
+/* 	
 	-- корреляция shared_blks_hit - shared_blks_read
 	-----------------------------------------------------------------------------
 	
@@ -7119,6 +7565,10 @@ BEGIN
 		
 		line_count=line_count+1; 
 	END LOOP;
+*/
+--RESERVED FOR FUTURE		
+----------------------------------------------------------------------------------	
+
 		
 
 ---------------------------------------------------------------------------------
@@ -8378,7 +8828,7 @@ COMMENT ON FUNCTION reports_vmstat_meta IS 'Метаданные по VMSTAT';
 
 --------------------------------------------------------------------------------
 -- reports_vmstat_ram.sql
--- version 1.0
+-- version 6.0
 --------------------------------------------------------------------------------
 --
 -- reports_vmstat_ram Чек-лист RAM
@@ -8401,7 +8851,16 @@ DECLARE
   free_pct DOUBLE PRECISION;
   si_pct DOUBLE PRECISION;
   so_pct DOUBLE PRECISION;
-BEGIN
+  current_test_id bigint; 
+  
+  vm_settings text[];
+  
+  dirty_percent_rec record ; 
+  dirty_bg_percent_rec record ; 
+  available_mem_mb_rec record ; 
+  dirty_kb_long_rec record;
+  
+BEGIN	
 	line_count = 1 ;
 	
 	
@@ -8583,8 +9042,139 @@ BEGIN
 	END IF ;	
 	--so — swap out (из RAM в swap) > 0
 	-----------------------------------------------------------------------------
-					
+	
+	
+	line_count=line_count+1;
+	result_str[line_count] = 'СТАТИСТИКА dirty_kb/dirty_ratio/dirty_background_ratio' ;
+	line_count=line_count+1;
+	
+	--dirty pages size (KB)
+	WITH 
+	dirty_kb AS
+	(
+		SELECT 
+			dirty_kb_long as value 
+		FROM 
+			os_stat_vmstat_median
+		WHERE 
+			curr_timestamp BETWEEN min_timestamp AND max_timestamp
+	) 
+	SELECT 
+		MIN(value) as min_dirty_kb ,
+		MAX(value) as max_dirty_kb , 
+		(percentile_cont(0.5) within group (order by value))::numeric as median_dirty_kb
+	INTO 
+		dirty_kb_long_rec
+	FROM 
+		dirty_kb ;
 
+    result_str[line_count] = 'MIN dirty pages size (KB) | '||REPLACE ( TO_CHAR( ROUND( dirty_kb_long_rec.min_dirty_kb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+
+    result_str[line_count] = 'MAX dirty pages size (KB) | '||REPLACE ( TO_CHAR( ROUND( dirty_kb_long_rec.max_dirty_kb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+
+    result_str[line_count] = 'MEDIAN dirty pages size (KB) | '||REPLACE ( TO_CHAR( ROUND( dirty_kb_long_rec.median_dirty_kb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+	
+   	--vm_dirty_percent
+	WITH 
+	vm_dirty_percent AS
+	(
+		SELECT 
+			dirty_percent_long as value 
+		FROM 
+			os_stat_vmstat_median
+		WHERE 
+			curr_timestamp BETWEEN min_timestamp AND max_timestamp
+	) 
+	SELECT 
+		MIN(value) as min_dirty_percent ,
+		MAX(value) as max_dirty_percent , 
+		(percentile_cont(0.5) within group (order by value))::numeric as median_dirty_percent
+	INTO 
+		dirty_percent_rec
+	FROM 
+		vm_dirty_percent ;
+
+    result_str[line_count] = 'MIN dirty_ratio | '||REPLACE ( TO_CHAR( ROUND( dirty_percent_rec.min_dirty_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+
+    result_str[line_count] = 'MAX dirty_ratio | '||REPLACE ( TO_CHAR( ROUND( dirty_percent_rec.max_dirty_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+
+    result_str[line_count] = 'MEDIAN dirty_ratio | '||REPLACE ( TO_CHAR( ROUND( dirty_percent_rec.median_dirty_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+	
+	--vm_dirty_bg_percent
+	WITH 
+	vm_dirty_bg_percent AS
+	(
+		SELECT 
+			dirty_bg_percent_long as value 
+		FROM 
+			os_stat_vmstat_median
+		WHERE 
+			curr_timestamp BETWEEN min_timestamp AND max_timestamp
+	) 
+	SELECT 
+		MIN(value) as min_dirty_bg_percent ,
+		MAX(value) as max_dirty_bg_percent , 
+		(percentile_cont(0.5) within group (order by value))::numeric as median_dirty_bg_percent
+	INTO 
+		dirty_bg_percent_rec
+	FROM 
+		vm_dirty_bg_percent ;
+		
+	result_str[line_count] = 'MIN dirty_bg_percent | '||REPLACE ( TO_CHAR( ROUND( dirty_bg_percent_rec.min_dirty_bg_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+
+    result_str[line_count] = 'MAX dirty_bg_percent | '||REPLACE ( TO_CHAR( ROUND( dirty_bg_percent_rec.max_dirty_bg_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+
+    result_str[line_count] = 'MEDIAN dirty_bg_percent | '||REPLACE ( TO_CHAR( ROUND( dirty_bg_percent_rec.median_dirty_bg_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+		
+	--available_mem_mb
+	WITH 
+	available_mem_mb AS
+	(
+		SELECT 
+			available_mem_mb_long as value 
+		FROM 
+			os_stat_vmstat_median
+		WHERE 
+			curr_timestamp BETWEEN min_timestamp AND max_timestamp
+	) 
+	SELECT 
+		MIN(value) as min_available_mem_mb ,
+		MAX(value) as max_available_mem_mb , 
+		(percentile_cont(0.5) within group (order by value))::numeric as median_available_mem_mb
+	INTO 
+		available_mem_mb_rec
+	FROM 
+		available_mem_mb ;	
+
+    result_str[line_count] = 'MIN available_mem_mb | '||REPLACE ( TO_CHAR( ROUND( available_mem_mb_rec.min_available_mem_mb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+
+    result_str[line_count] = 'MAX available_mem_mb | '||REPLACE ( TO_CHAR( ROUND( available_mem_mb_rec.max_available_mem_mb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+
+    result_str[line_count] = 'MEDIAN available_mem_mb | '||REPLACE ( TO_CHAR( ROUND( available_mem_mb_rec.median_available_mem_mb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
+	line_count=line_count+1;
+	
+	result_str[line_count] = ' ';
+	line_count=line_count+1;
+	result_str[line_count] = ' ';
+	line_count=line_count+1;
+	
+	SELECT get_vm_params_list()
+	INTO vm_settings ; 
+	
+	SELECT result_str || vm_settings 
+	INTO result_str ; 
+	
   return result_str ; 
 END
 $$ LANGUAGE plpgsql  ;
@@ -10457,7 +11047,7 @@ COMMENT ON FUNCTION get_sql_by_queryid IS 'текст SQL запроса по qu
 
 --------------------------------------------------------------------------------
 -- reports_io_performance.sql
--- version 5.0
+-- version 6.0
 --------------------------------------------------------------------------------
 --
 -- reports_io_performance IO-performance
@@ -10612,12 +11202,11 @@ BEGIN
 		result_str[line_count] = 'Размер shared_buffers и кеширование' ; 
 		line_count=line_count+1;
 		result_str[line_count] = 'Возможно, нужны более производительные диски' ; 
-		line_count=line_count+1;
-	END IF ;
+		line_count=line_count+1;	
 	--Сценарий 1: Высокая корреляция по обоим показателям (r > 0.7)
 	
 	--Сценарий 2: Высокий IOPS-корреляция, низкий MB/s-корреляция
-	IF speed_iops_corr >= 0.7 AND (speed_mbps_corr < 0.7 AND speed_mbps_corr > 0.2 )
+	ELSIF speed_iops_corr >= 0.7 AND (speed_mbps_corr < 0.7 AND speed_mbps_corr > 0.2 )
 	THEN 
 		result_str[line_count] = 'Сценарий 2: Высокая IOPS-корреляция, низкая MB/s-корреляция' ; 
 		line_count=line_count+1;
@@ -10633,11 +11222,10 @@ BEGIN
 		line_count=line_count+1;
 		result_str[line_count] = 'SSD с высоким IOPS' ; 
 		line_count=line_count+1;
-	END IF ;
 	--Сценарий 2: Высокий IOPS-корреляция, низкий MB/s-корреляция
 	
 	--Сценарий 3: Низкий IOPS-корреляция, высокий MB/s-корреляция
-	IF speed_iops_corr <= 0.25 AND (speed_mbps_corr >= 0.7  )
+	ELSIF speed_iops_corr <= 0.25 AND (speed_mbps_corr >= 0.7  )
 	THEN 
 		result_str[line_count] = 'Сценарий 3: Низкая IOPS-корреляция, высокая MB/s-корреляция' ; 
 		line_count=line_count+1;
@@ -10653,11 +11241,10 @@ BEGIN
 		line_count=line_count+1;
 		result_str[line_count] = 'Диски с высокой пропускной способностью' ; 
 		line_count=line_count+1;
-	END IF ;
 	--Сценарий 3: Низкий IOPS-корреляция, высокий MB/s-корреляция
 	
 	--Сценарий 4: Низкая корреляция по обоим показателям (r < 0.25)
-	IF speed_iops_corr <= 0.25 AND (speed_mbps_corr <= 0.25  )
+	ELSIF speed_iops_corr <= 0.25 AND (speed_mbps_corr <= 0.25  )
 	THEN 
 		result_str[line_count] = 'Сценарий 4: Низкая корреляция по обоим показателям (r < 0.25)' ; 
 		line_count=line_count+1;
@@ -10672,9 +11259,13 @@ BEGIN
 		result_str[line_count] = 'Ожидания СУБД' ; 
 		line_count=line_count+1;
 		result_str[line_count] = 'Параметры параллелизма' ; 
-		line_count=line_count+1;
-	END IF ;
+		line_count=line_count+1;	
 	--Сценарий 4: Низкая корреляция по обоим показателям (r < 0.25)
+	ELSE
+		result_str[line_count] = 'Однозначно не определен.' ; 
+		line_count=line_count+1;		
+	END IF ;
+	line_count=line_count+1;
 	
 	-- Сценарии нагрузки 
 	-----------------------------------------------------------------------------
@@ -10703,8 +11294,9 @@ BEGIN
 	-----------------------------------------------------------------------------
 */	
 
-	
-	
+----------------------------------------------------------------------------------------------------------------------
+-- RESERVED FOR FUTURE 	
+/*
 	
 
 	DROP TABLE IF EXISTS tmp_timepoints;
@@ -10780,12 +11372,207 @@ BEGIN
 		
 		line_count=line_count+1; 			
 	END LOOP;
-								
+-- RESERVED FOR FUTURE 									
+*/
+----------------------------------------------------------------------------------------------------------------------
 
 
   return result_str ; 
 END
 $$ LANGUAGE plpgsql  ;
 COMMENT ON FUNCTION reports_io_performance IS 'IO-performance';
+-- Чек-лист IO
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- reports_shared_buffers.sql
+-- version 6.0
+--------------------------------------------------------------------------------
+--
+-- reports_shared_buffers Статистика shared_buffers
+--
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
+-- Статистика shared_buffers
+CREATE OR REPLACE FUNCTION reports_shared_buffers( start_timestamp text , finish_timestamp text   ) RETURNS text[] AS $$
+DECLARE
+ result_str text[] ;
+ line_count integer ;
+ min_timestamp timestamptz ; 
+ max_timestamp timestamptz ; 
+ 
+ counter integer ; 
+ line_counter integer ; 
+
+ shared_buffers_rec record;
+
+BEGIN
+	line_count = 1 ;
+	
+	
+	
+	
+	IF finish_timestamp = 'CURRENT_TIMESTAMP'
+	THEN 
+		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+
+		min_timestamp = max_timestamp - interval '1 hour'; 	
+	ELSE
+		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	min_timestamp ; 
+		
+		SELECT 	date_trunc('minute' ,  to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+	END IF ;
+
+
+	
+	result_str[line_count] = 'СТАТИСТИКА shared_buffers' ; 
+	line_count=line_count+1;
+		
+	
+	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+1; 
+	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+2; 
+	
+	result_str[line_count] = 	'timestamp'||'|'||  --1
+								'№'||'|'	--2
+								'shared_blk_rw_time(s)'||'|' --3
+								'shared_blks_hit'||'|' --4
+								'shared_blks_read'||'|' --5
+								'shared_blks_dirtied'||'|' --6
+								'shared_blks_written'||'|' --7												
+								;
+	line_count = line_count + 1;
+	counter = 0 ; 
+	FOR shared_buffers_rec IN
+	SELECT 
+		cls.curr_timestamp , --1
+		(cls.curr_shared_blk_read_time+cls.curr_shared_blk_write_time)/1000.0 AS shared_blks_read_write_time , --3
+		cls.curr_shared_blks_hit AS shared_blks_hit ,--4
+		cls.curr_shared_blks_read AS shared_blks_read ,--5
+		cls.curr_shared_blks_dirtied AS shared_blks_dirtied ,--6
+		cls.curr_shared_blks_written AS shared_blks_written --7		
+	FROM cluster_stat_median cls 
+	WHERE 	
+		cls.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
+    ORDER BY cls.curr_timestamp 
+	LOOP
+		counter = counter + 1 ;
+		result_str[line_count] =
+								to_char( shared_buffers_rec.curr_timestamp , 'YYYY-MM-DD HH24:MI') ||'|'|| --1
+								counter ||'|'||  --2
+								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_read_write_time::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --3
+								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_hit::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --4
+								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_read::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --5
+								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_dirtied::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --6
+								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_written::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|' --7
+								;
+		
+		line_count=line_count+1; 
+	END LOOP;
+
+
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION reports_shared_buffers IS 'Статистика shared_buffers';
+-- Чек-лист IO
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- reports_vm_dirty.sql
+-- version 6.0
+--------------------------------------------------------------------------------
+--
+-- reports_vm_dirty Статистика dirty_ratio/dirty_background_ratio
+--
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
+-- Чек-лист IO
+CREATE OR REPLACE FUNCTION reports_vm_dirty( ram_all integer , start_timestamp text , finish_timestamp text   ) RETURNS text[] AS $$
+DECLARE
+ result_str text[] ;
+ line_count integer ;
+ min_timestamp timestamptz ; 
+ max_timestamp timestamptz ; 
+ 
+ counter integer ; 
+ line_counter integer ; 
+
+ vm_dirty_rec record;
+
+BEGIN
+	line_count = 1 ;
+	
+	
+	
+	
+	IF finish_timestamp = 'CURRENT_TIMESTAMP'
+	THEN 
+		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+
+		min_timestamp = max_timestamp - interval '1 hour'; 	
+	ELSE
+		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	min_timestamp ; 
+		
+		SELECT 	date_trunc('minute' ,  to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+	END IF ;
+
+
+	
+	result_str[line_count] = 'Статистика dirty_ratio/dirty_background_ratio' ; 
+	line_count=line_count+1;
+	
+	result_str[line_count] = 'RAM (MB)| '||ram_all||'|';
+	line_count=line_count+1;		
+	
+	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+1; 
+	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+2; 
+	
+	result_str[line_count] = 	'timestamp'||'|'||  --1
+								'№'||'|'	--2
+								'dirty (KB)'||'|' --3
+								'% от dirty_ratio'||'|' --4
+								'% от dirty_background_ratio'||'|' --5
+								'free + cached memory'||'|' --6
+								;
+	line_count = line_count + 1;
+	counter = 0 ; 
+	FOR vm_dirty_rec IN
+	SELECT 
+		curr_timestamp , --1
+		dirty_kb_long ,  --3
+		dirty_percent_long , --4
+		dirty_bg_percent_long , --5
+		available_mem_mb_long  --6		
+	FROM os_stat_vmstat_median cls 
+	WHERE 	
+		curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
+    ORDER BY cls.curr_timestamp 
+	LOOP
+		counter = counter + 1 ;
+		result_str[line_count] =
+								to_char( vm_dirty_rec.curr_timestamp , 'YYYY-MM-DD HH24:MI') ||'|'|| --1
+								counter ||'|'||  --2
+								REPLACE ( TO_CHAR( ROUND( vm_dirty_rec.dirty_kb_long::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --3
+								REPLACE ( TO_CHAR( ROUND( vm_dirty_rec.dirty_percent_long::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --4
+								REPLACE ( TO_CHAR( ROUND( vm_dirty_rec.dirty_bg_percent_long::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --5
+								REPLACE ( TO_CHAR( ROUND( vm_dirty_rec.available_mem_mb_long::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'  --6								
+								;
+		
+		line_count=line_count+1; 
+	END LOOP;
+
+
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION reports_vm_dirty IS 'Статистика dirty_ratio/dirty_background_ratio';
 -- Чек-лист IO
 -------------------------------------------------------------------------------

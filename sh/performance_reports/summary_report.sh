@@ -2,7 +2,7 @@
 ########################################################################################################
 # summary_report.sh
 # Сводный отчет  производительности/ожиданиям СУБД и метрикам ОС 
-# version 5.0
+# version 6.0
 ########################################################################################################
 
 #Обработать код возврата 
@@ -219,6 +219,28 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ЧЕ�
 ##################################################################################################################################
 
 ##################################################################################################################################
+# 5.1 СТАТИСТИКА dirty_ratio/dirty_background_ratio
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_VM_DIRTY - НАЧАТ'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_VM_DIRTY  - НАЧАТ' >> $LOG_FILE
+
+REPORT_FILE=$current_path'/linux.5.1.vm_dirty.txt'
+ram_all=` free -m | head -2 | tail -1 | awk -F " " '{print $2}'`
+
+psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_vm_dirty($ram_all  , '$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+
+chmod 777 $REPORT_FILE
+mv $REPORT_FILE $REPORT_DIR
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_VM_DIRTY  - ЗАКОНЧЕН'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_VM_DIRTY  - ЗАКОНЧЕН' >> $LOG_FILE
+# 5.1 СТАТИСТИКА dirty_ratio/dirty_background_ratio
+##################################################################################################################################
+
+##################################################################################################################################
 # VMSTAT 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : МЕТАДАННЫЕ VMSTAT'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : МЕТАДАННЫЕ VMSTAT' >> $LOG_FILE
@@ -340,6 +362,28 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТ
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЯМ НА УРОВНЕ СУБД - ЗАКОНЧЕН '
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЯМ НА УРОВНЕ СУБД - ЗАКОНЧЕН ' >> $LOG_FILE
 # CLUSTER PERFORMANCE
+##################################################################################################################################
+
+##################################################################################################################################
+# 1.1 REPORTS_SHARED_BUFFERS
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_SHARED_BUFFERS - НАЧАТ'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_SHARED_BUFFERS - НАЧАТ' >> $LOG_FILE
+
+REPORT_FILE=$current_path'/postgres.1.1.shared_buffers.report.txt'
+cpu_count=`nproc --all`
+
+psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_shared_buffers('$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+
+chmod 777 $REPORT_FILE
+mv $REPORT_FILE $REPORT_DIR
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_SHARED_BUFFERS - ЗАКОНЧЕН'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_SHARED_BUFFERS - ЗАКОНЧЕН' >> $LOG_FILE
+# 1.1 REPORTS_SHARED_BUFFERS
 ##################################################################################################################################
 
 ##################################################################################################################################

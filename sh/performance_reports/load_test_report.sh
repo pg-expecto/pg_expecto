@@ -2,7 +2,7 @@
 ########################################################################################################
 # load_test_report.sh
 # Отчет по нагрузочному тестированию
-# version 5.0
+# version 6.0
 ########################################################################################################
 
 #Обработать код возврата 
@@ -148,98 +148,97 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ОТЧЕТ ПО SQL С�
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : 1.ВХОДНЫЕ ДАННЫЕ ДЛЯ НЕЙРОСЕТИ - СУБД И VMSTAT/IOSTAT '
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : 1.ВХОДНЫЕ ДАННЫЕ ДЛЯ НЕЙРОСЕТИ - СУБД И VMSTAT/IOSTAT ' >> $LOG_FILE
 REPORT_DIR='/tmp/pg_expecto_reports'
-REPORT_FILE='_1.summary.txt'
 cd $REPORT_DIR
 
 devices_list=`$current_path'/'get_reports_param.sh $current_path devices_list 2>$ERR_FILE`
 exit_code $? $LOG_FILE $ERR_FILE
 array=($devices_list)
 
-#Заголовок отчета 
-title=$1
 
-echo $title > $REPORT_FILE
-echo $(date "+%d-%m-%Y %H:%M:%S") >> $REPORT_FILE
-echo ' ' >> $REPORT_FILE
-
+REPORT_FILE='_1.settings.txt'
 
 #файл postgresql.auto.conf
-echo 'postgresql.auto.conf' >> $REPORT_FILE
 data_directory=`psql -Aqtc  'SHOW data_directory'`
 postgresql_auto_conf=$data_directory'/postgresql.auto.conf'
-cat $postgresql_auto_conf >> $REPORT_FILE
+#cat $postgresql_auto_conf >> $REPORT_FILE
+grep -vwE "(log_filename)" $postgresql_auto_conf >> $REPORT_FILE
 echo ' ' >> $REPORT_FILE
 
 #количество ядер CPU
-echo 'CPU' >> $REPORT_FILE
 lscpu >>  $REPORT_FILE
 echo ' ' >> $REPORT_FILE
 
 #размер RAM
-echo 'RAM' >> $REPORT_FILE
-free -b | awk '/^Mem:/ {printf "%.2f GB\n", $2/1024/1024/1024}' >> $REPORT_FILE
+ram=`free -b | awk '/^Mem:/ {printf "%.2f GB\n", $2/1024/1024/1024}'`
+echo 'RAM = '$ram >> $REPORT_FILE
 echo ' ' >> $REPORT_FILE
 
 #IO
-echo 'IO' >> $REPORT_FILE
 lsblk >> $REPORT_FILE
-echo 'devices='$devices_list >> $REPORT_FILE
+echo 'devices = '$devices_list >> $REPORT_FILE
+echo ' ' >> $REPORT_FILE
+
+#VM
+#################################################################################
+# ЗАФИКСИРОВАТЬ ПАРАМЕТРЫ vm
+  psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( get_vm_params_list())" >> $REPORT_FILE 2>$ERR_FILE
+  if [ $? -ne 0 ]
+  then
+	echo 'ERROR : queryid_stat TERMINATED WITH ERROR. SEE DETAILS IN '$ERR_FILE
+	echo 'ERROR : queryid_stat TERMINATED WITH ERROR. SEE DETAILS IN '$ERR_FILE >> $LOG_FILE
+	exit 100
+  fi
+
+# ЗАФИКСИРОВАТЬ ПАРАМЕТРЫ vm
+#################################################################################
+
+REPORT_FILE='_1.cluster_vmstat.txt'
+echo $title > $REPORT_FILE
+echo $(date "+%d-%m-%Y %H:%M:%S") >> $REPORT_FILE
 echo ' ' >> $REPORT_FILE
 
 cat 'postgres._load_test_loading.txt' >> $REPORT_FILE 
 echo '-------------------------------------------------------------------------' >> $REPORT_FILE
-echo 'PostgreSQL' >> $REPORT_FILE
-echo '-----------' >> $REPORT_FILE
 cat 'postgres.1.cluster_report_meta.txt' >> $REPORT_FILE 
-echo '-----------' >> $REPORT_FILE
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 cat 'postgres.1.cluster_report_4graph.txt' >> $REPORT_FILE 
-echo '-----------' >> $REPORT_FILE
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 cat 'postgres.2.wait_event.txt' >> $REPORT_FILE 
-echo '-----------' >> $REPORT_FILE
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 cat 'postgres.3.queryid.txt' >> $REPORT_FILE 
-echo '-----------' >> $REPORT_FILE
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 cat 'postgres.x.sql_list.txt' >> $REPORT_FILE 
 echo '-------------------------------------------------------------------------' >> $REPORT_FILE
-echo 'VMSTAT IOSTAT CORRELATION AND CHECKLISTS' >> $REPORT_FILE
-echo '       ' >> $REPORT_FILE
 cat 'linux.1.waitings_vmstat_corr.txt' >> $REPORT_FILE 
-echo '-----------' >> $REPORT_FILE
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 cat 'linux.3.vmstat_io.txt' >> $REPORT_FILE 
-echo '-----------' >> $REPORT_FILE
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 cat 'linux.4.vmstat_cpu.txt' >> $REPORT_FILE 
-echo '-----------' >> $REPORT_FILE
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 cat 'linux.5.vmstat_ram.txt' >> $REPORT_FILE 
 echo '-------------------------------------------------------------------------' >> $REPORT_FILE
-echo 'VMSTAT ' >> $REPORT_FILE
-echo '       ' >> $REPORT_FILE
 cat 'linux.x.vmstat_meta.txt' >> $REPORT_FILE 
-echo '-----------' >> $REPORT_FILE
-cat 'linux.x.vmstat_4graph.txt' >> $REPORT_FILE 
 echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 
-REPORT_FILE='_1.prompt.txt'
-echo 'Проанализируй данные по метрикам производительности и ожиданий СУБД , метрикам инфраструктуры vmstat/iostat. Подготовь итоговый отчет по результатам анализа.' > $REPORT_FILE
+REPORT_FILE='_1.cluster_vmstat.prompt.txt'
+echo '_1.settings.txt - конфигурация СУБД и ОС' > $REPORT_FILE
+echo '_1.cluster_vmstat.txt - базовые показатели производительности и ожиданий СУБД и метрик vmstat/iostat' >> $REPORT_FILE
+echo 'Подготовь сравнительный отчет по нагрузочного тестирования' >> $REPORT_FILE
+echo '**Общая характеристика системы **' >> $REPORT_FILE
+echo '- Тип нагрузки' >> $REPORT_FILE
+echo '**Сравнительные паттерны ожиданий и производительности СУБД**' >> $REPORT_FILE
+echo '**Сравнительные паттерны показателей vmstat/iostat**' >> $REPORT_FILE
+echo '**Рекомендации по оптимизации производительности СУБД**' >> $REPORT_FILE
+echo '**Рекомендации по оптимизации производительности инфраструктуры(ОС)**' >> $REPORT_FILE
+echo '**Итоговый вывод о характерных паттернах производительности и ожиданий СУБД и показателей vmstat/iostat**' >> $REPORT_FILE
+echo 'Сформируй отчет используя списки, без использования таблиц.' >> $REPORT_FILE
 
 ######################################################################################################
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : 2.ВХОДНЫЕ ДАННЫЕ ДЛЯ НЕЙРОСЕТИ - IO PERFORMANCE '
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : 2.ВХОДНЫЕ ДАННЫЕ ДЛЯ НЕЙРОСЕТИ - IO PERFORMANCE ' >> $LOG_FILE
 REPORT_DIR='/tmp/pg_expecto_reports'
-REPORT_FILE='_2.io_performance.txt'
 cd $REPORT_DIR
 
-#количество ядер CPU
-echo 'CPU' >> $REPORT_FILE
-lscpu >>  $REPORT_FILE
-echo ' ' >> $REPORT_FILE
-
-#IO
-echo 'IO' >> $REPORT_FILE
-lsblk >> $REPORT_FILE
-echo 'devices='$devices_list >> $REPORT_FILE
-echo ' ' >> $REPORT_FILE
-echo '-------------------------------------------------------------------------' >> $REPORT_FILE
-echo 'VMSTAT/IOSTAT - CORRELATION' >> $REPORT_FILE
-echo ' ' >> $REPORT_FILE
 let i=0
 while :
 do  
@@ -254,68 +253,43 @@ do
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  DEVICE =  '$device
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  DEVICE =  '$device >> $LOG_FILE
   
-  CURRENT_REPORT_FILE='linux.2.vmstat_iostat_'$device'.txt'
-
-  cat $CURRENT_REPORT_FILE >> $REPORT_FILE 
-  echo '-----------' >> $REPORT_FILE
+  REPORT_FILE='_2.io_performance.'$device'.txt'
   
-  let i=i+1
-done
+  CURRENT_REPORT_FILE='linux.2.vmstat_iostat_'$device'.txt'
+  cat $CURRENT_REPORT_FILE > $REPORT_FILE 
+  echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 
-echo '-----------' >> $REPORT_FILE
-cat 'linux.3.vmstat_io.txt' >> $REPORT_FILE 
-echo '-----------' >> $REPORT_FILE
+  CURRENT_REPORT_FILE='linux.x.iostat_'$device'_meta.txt'
+  cat $CURRENT_REPORT_FILE >> $REPORT_FILE 
+  echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+	
+  CURRENT_REPORT_FILE='linux.x.iostat_'$device'_4graph.txt'
+  cat $CURRENT_REPORT_FILE >> $REPORT_FILE 
 
-echo 'IOSTAT - PERFORMANCE' >> $REPORT_FILE
-echo ' ' >> $REPORT_FILE
-let i=0
-while :
-do  
-  device=${array[$i]}
-  size=${#device}
 	
-  if [ "$size" == 0 ];
-  then 
-   break
-  fi   
-	CURRENT_REPORT_FILE='linux.x.iostat_'$device'_meta.txt'
-	cat $CURRENT_REPORT_FILE >> $REPORT_FILE 
-	echo '-----------' >> $REPORT_FILE
+  CURRENT_REPORT_FILE='linux.x.iostat_'$device'_performance.txt'
+  cat $CURRENT_REPORT_FILE >> $REPORT_FILE 
+  echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 	
-	CURRENT_REPORT_FILE='linux.x.iostat_'$device'_4graph.txt'
-	cat $CURRENT_REPORT_FILE >> $REPORT_FILE 
-	echo '-----------' >> $REPORT_FILE
-	
-	CURRENT_REPORT_FILE='linux.x.iostat_'$device'_performance.txt'
-	cat $CURRENT_REPORT_FILE >> $REPORT_FILE 
-	echo '-----------' >> $REPORT_FILE
-	
-	  
+  
   let i=i+1
 done
 
 
 REPORT_FILE='_2.io_performance_prompt.txt' > $REPORT_FILE
+
 echo 'Подготовь отчет по результатам анализа производительности подсистемы IO' >> $REPORT_FILE 
-echo 'для дисковых устройств, используемых для файловых систем /data /wal' >> $REPORT_FILE
-echo '**Общая характеристика системы**' >> $REPORT_FILE
-echo '- Период анализа' >> $REPORT_FILE
-echo '- Основные устройства хранения' >> $REPORT_FILE
-echo '- Тип нагрузки' >> $REPORT_FILE
-echo 'Состав отчета по файловой системе:' >> $REPORT_FILE
-echo '**Критические проблемы производительности по файловой системе**' >> $REPORT_FILE
-echo '**Анализ корреляций и паттернов нагрузки по файловой системе**' >> $REPORT_FILE
-echo '**Диагностика узких мест IO по файловой системе**' >> $REPORT_FILE
-echo '- r_await(ms)' >> $REPORT_FILE
-echo '- w_await(ms)' >> $REPORT_FILE
-echo '- aqu_sz' >> $REPORT_FILE
-echo '- proc_b' >> $REPORT_FILE
-echo '- cpu_wa(%)' >> $REPORT_FILE
-echo '- Корреляция speed с IOPS' >> $REPORT_FILE
-echo '- Корреляция speed с пропускной способностью (MB/s)' >> $REPORT_FILE
-echo '- Вывод по диагностике узких мест IO' >> $REPORT_FILE
-echo '**Рекомендации по оптимизации файловой системы**' >> $REPORT_FILE
-echo '**Итоговый вывод по производительности IO**' >> $REPORT_FILE
+echo '**Общая характеристика системы**' >> $REPORT_FILE 
+echo '- Период анализа' >> $REPORT_FILE 
+echo '- Основные устройства хранения' >> $REPORT_FILE 
+echo '- Тип нагрузки' >> $REPORT_FILE 
+echo '**Критические проблемы производительности **' >> $REPORT_FILE 
+echo '**Анализ корреляций и паттернов нагрузки**' >> $REPORT_FILE 
+echo '**Узкие места IO **' >> $REPORT_FILE 
+echo '**Характерные паттерны показателей IO **' >> $REPORT_FILE 
+echo '**Рекомендации по оптимизации производительности IO**' >> $REPORT_FILE 
+echo '**Итоговый вывод производительности IO**' >> $REPORT_FILE 
+echo 'Сформируй отчет используя списки, без использования таблиц.' >> $REPORT_FILE 
 
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ ПО НАГРУЗОЧНОМУ ТЕСТИРОВАНИЮ - ВЫПОЛНЕН'

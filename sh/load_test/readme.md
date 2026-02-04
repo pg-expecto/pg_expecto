@@ -1,16 +1,21 @@
 # Cкрипты для выполнения нагрузочного тестирования
 ## SQL Тестовые сценарии
-- **scenario1.sql** - Сценарий-1 "Select only"
-- **scenario2.sql** - Сценарий-2 "Select + Update"
-- **scenario3.sql** - Сценарий-3 "Insert only"
+- **scenario1.oltp.sql** - Сценарий-1 "Select" для имитации нагрузки OLTP
+- **scenario2.oltp.sql** - Сценарий-2 "Insert" для имитации нагрузки OLTP
+- **scenario3.oltp.sql** - Сценарий-3 "Update" для имитации нагрузки OLTP
+- **scenario1.olap.sql** - Сценарий-1 "Select" для имитации нагрузки OLAP
+- **scenario2.olap.sql** - Сценарий-2 "Insert" для имитации нагрузки OLAP
+- **scenario3.olap.sql** - Сценарий-3 "Update" для имитации нагрузки OLAP
 ## SQL Скрипты для выполенения тестовых сценарией с помощью pgbench
-- **do_scenario1.sql** - Сценарий-1 "Select only"
-- **do_scenario2.sql** - Сценарий-2 "Select + Update"
-- **do_scenario3.sql** - Сценарий-3 "Insert only"
+- **do_scenario1.sql** - Сценарий-1 "Select"
+- **do_scenario2.sql** - Сценарий-2 "Insert"
+- **do_scenario3.sql** - Сценарий-3 "Update"
 ## Сервисные скрипты для запуска , выполнения и остановки нагрузочного тестирования
 - **load_test_start.sh** - Старт нагрузочного тестирования
 - **load_test.sh** - Выполнение итераций  нагрузочного тестирования (запускается по cron)
 - **load_test_stop.sh** - Остановка нагрузочного тестирования
+- **get_vm_values.sh** - Получить текущие значения vm_dirty
 ## Настройка нагрузочного тестирования
+- **before_start.sql** - Предварительная настройка тестовых таблиц pgbench
 - **param.conf** - Конфигурационный файт
 - **get_conf_param.sh** - Получить значение конфигурационного параметра из файла

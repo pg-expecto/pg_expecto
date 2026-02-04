@@ -1,7 +1,7 @@
 #!/bin/sh
 #####################################################################################
 # load_test_start.sh
-# version 4.0
+# version 6.0
 #####################################################################################
 # Старт нагрузочного тестирования
 #####################################################################################
@@ -61,6 +61,11 @@ then
 	exit_code $? $LOG_FILE $ERR_FILE
 	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : init_test_db = '$init_test_db
 	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : init_test_db = '$init_test_db >> $LOG_FILE	
+	
+	load_mode=`$current_path'/'get_conf_param.sh $current_path load_mode 2>$ERR_FILE`
+	exit_code $? $LOG_FILE $ERR_FILE
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : load_mode = '$load_mode
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : load_mode = '$load_mode >> $LOG_FILE	
 
 	#################################################################################
 	# ИНИЦИАЛИЗИРОВАТЬ ТЕСТОВУЮ БД
@@ -112,10 +117,24 @@ then
 			  while [ "$flag" != "0" ]
 			  do
 				
-				echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i
-				echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i >> $LOG_FILE
-				psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f  $current_path'/scenario'$i'.sql' >> $LOG_FILE 2>>$ERR_FILE
-				exit_code $? $LOG_FILE $ERR_FILE
+				# Тип нагрузки OLTP
+				if [ "$load_mode" == "oltp" ]
+				then 
+					echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i' ТИП НАГРУЗКИ = OLTP '
+					echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i' ТИП НАГРУЗКИ = OLTP ' >> $LOG_FILE
+					psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f  $current_path'/scenario'$i'.oltp.sql' >> $LOG_FILE 2>>$ERR_FILE
+					exit_code $? $LOG_FILE $ERR_FILE	
+				fi
+				
+				# Тип нагрузки OLAP
+				if [ "$load_mode" == "olap" ]
+				then 
+					echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i' ТИП НАГРУЗКИ = OLAP '
+					echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i' ТИП НАГРУЗКИ = OLAP ' >> $LOG_FILE
+					psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f  $current_path'/scenario'$i'.olap.sql' >> $LOG_FILE 2>>$ERR_FILE
+					exit_code $? $LOG_FILE $ERR_FILE	
+				fi
+				
 			  
 				echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ СКРИПТ ВЫЗОВА СЦЕНАРИЯ-'$i
 				echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ СКРИПТ ВЫЗОВА СЦЕНАРИЯ-'$i >> $LOG_FILE
@@ -160,10 +179,23 @@ then
 		  while [ "$flag" != "0" ]
 		  do
 			
-			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i
-			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i >> $LOG_FILE
-			psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f  $current_path'/scenario'$i'.sql' >> $LOG_FILE 2>>$ERR_FILE
-			exit_code $? $LOG_FILE $ERR_FILE
+				# Тип нагрузки OLTP
+				if [ "$load_mode" == "oltp" ]
+				then 
+					echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i' ТИП НАГРУЗКИ = OLTP '
+					echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i' ТИП НАГРУЗКИ = OLTP ' >> $LOG_FILE
+					psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f  $current_path'/scenario'$i'.oltp.sql' >> $LOG_FILE 2>>$ERR_FILE
+					exit_code $? $LOG_FILE $ERR_FILE	
+				fi
+				
+				# Тип нагрузки OLAP
+				if [ "$load_mode" == "olap" ]
+				then 
+					echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i' ТИП НАГРУЗКИ = OLAP '
+					echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ ФУНКЦИЮ ДЛЯ СЦЕНАРИЯ-'$i' ТИП НАГРУЗКИ = OLAP ' >> $LOG_FILE
+					psql -v ON_ERROR_STOP=on --echo-errors -v ON_ERROR_STOP=on --echo-errors -d $pgbench_db -U $expecto_user -f  $current_path'/scenario'$i'.olap.sql' >> $LOG_FILE 2>>$ERR_FILE
+					exit_code $? $LOG_FILE $ERR_FILE	
+				fi
 		  
 			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ СКРИПТ ВЫЗОВА СЦЕНАРИЯ-'$i
 			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СОЗДАТЬ СКРИПТ ВЫЗОВА СЦЕНАРИЯ-'$i >> $LOG_FILE
@@ -264,6 +296,79 @@ else
 # КАСТОМНАЯ ТЕСТОВАЯ БД
 #################################################################################
 fi 
+
+#################################################################################
+# ЗАФИКСИРОВАТЬ ПАРАМЕТРЫ vm
+VM_VALUES='/postgres/pg_expecto/vm_current_settings.txt'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ЗАФИКСИРОВАТЬ ПАРАМЕТРЫ vm'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : ЗАФИКСИРОВАТЬ ПАРАМЕТРЫ vm' >> $LOG_FILE	
+
+$current_path'/'get_vm_values.sh >$VM_VALUES 2>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+
+cat $VM_VALUES >> $LOG_FILE
+
+value=`cat $VM_VALUES | grep vm.dirty_background_ratio | awk -F ':' '{print $2}'`
+new_vales=`echo $value | sed -e "s/[[:space:]]\+/ /g" | sed 's/^[[:space:]]*//'`
+psql -d $expecto_db -U $expecto_user -c "select save_dirty_background_ratio( $new_vales )" >> $LOG_FILE 2>>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.dirty_background_ratio='$new_vales
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.dirty_background_ratio='$new_vales >> $LOG_FILE	
+
+
+value=` cat $VM_VALUES | grep vm.dirty_ratio | awk -F ':' '{print $2}'`
+new_vales=`echo $value | sed -e "s/[[:space:]]\+/ /g" | sed 's/^[[:space:]]*//'`
+psql -d $expecto_db -U $expecto_user -c "select save_dirty_ratio( $new_vales )" >> $LOG_FILE 2>>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.dirty_ratio='$new_vales
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.dirty_ratio='$new_vales >> $LOG_FILE	
+
+value=` cat $VM_VALUES | grep vm.dirty_background_bytes | awk -F ':' '{print $2}'`
+new_vales=`echo $value | sed -e "s/[[:space:]]\+/ /g" | sed 's/^[[:space:]]*//'`
+psql -d $expecto_db -U $expecto_user -c "select save_dirty_background_bytes( $new_vales )" >> $LOG_FILE 2>>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.dirty_background_bytes='$new_vales
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.dirty_background_bytes='$new_vales >> $LOG_FILE	
+
+value=` cat $VM_VALUES | grep vm.dirty_bytes | awk -F ':' '{print $2}'`
+new_vales=`echo $value | sed -e "s/[[:space:]]\+/ /g" | sed 's/^[[:space:]]*//'`
+psql -d $expecto_db -U $expecto_user -c "select save_dirty_bytes( $new_vales )" >> $LOG_FILE 2>>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.dirty_bytes='$new_vales
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.dirty_bytes='$new_vales >> $LOG_FILE	
+
+value=` cat $VM_VALUES | grep vm.dirty_expire_centisecs | awk -F ':' '{print $2}'`
+new_vales=`echo $value | sed -e "s/[[:space:]]\+/ /g" | sed 's/^[[:space:]]*//'`
+psql -d $expecto_db -U $expecto_user -c "select save_dirty_expire_centisecs( $new_vales )" >> $LOG_FILE 2>>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.dirty_expire_centisecs='$new_vales
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.dirty_expire_centisecs='$new_vales >> $LOG_FILE	
+
+value=` cat $VM_VALUES | grep vm.dirty_writeback_centisecs | awk -F ':' '{print $2}'`
+new_vales=`echo $value | sed -e "s/[[:space:]]\+/ /g" | sed 's/^[[:space:]]*//'`
+psql -d $expecto_db -U $expecto_user -c "select save_dirty_writeback_centisecs( $new_vales )" >> $LOG_FILE 2>>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.dirty_writeback_centisecs='$new_vales
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.dirty_writeback_centisecs='$new_vales >> $LOG_FILE	
+
+value=` cat $VM_VALUES | grep vm.vfs_cache_pressure | awk -F ':' '{print $2}'`
+new_vales=`echo $value | sed -e "s/[[:space:]]\+/ /g" | sed 's/^[[:space:]]*//'`
+psql -d $expecto_db -U $expecto_user -c "select save_vfs_cache_pressure( $new_vales )" >> $LOG_FILE 2>>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.vfs_cache_pressure='$new_vales
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.vfs_cache_pressure='$new_vales >> $LOG_FILE	
+
+value=` cat $VM_VALUES | grep vm.swappiness | awk -F ':' '{print $2}'`
+new_vales=`echo $value | sed -e "s/[[:space:]]\+/ /g" | sed 's/^[[:space:]]*//'`
+psql -d $expecto_db -U $expecto_user -c "select save_swappiness( $new_vales )" >> $LOG_FILE 2>>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.swappiness='$new_vales
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : vm.swappiness='$new_vales >> $LOG_FILE	
+
+# ЗАФИКСИРОВАТЬ ПАРАМЕТРЫ vm
+#################################################################################
+
+
 
 touch $current_path'/LOAD_TEST_STARTED'
 

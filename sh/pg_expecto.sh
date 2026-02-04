@@ -2,7 +2,7 @@
 ########################################################################################################
 # pg_expecto.sh
 # Корневой скрипт 
-# version 5.2
+# version 6.0
 ########################################################################################################
 
  
@@ -123,6 +123,10 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : РАСЧЕТ СТАТИ
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : РАСЧЕТ СТАТИСТИКИ VMSTAT - НАЧАТ'>> $LOG_FILE
 
 vmstat_string=`cat /postgres/pg_expecto/vmstat.log | tail -1 | sed -e "s/[[:space:]]\+/ /g" | sed 's/^[[:space:]]*//'`
+
+vm_dirty=`$current_path'/'vm_dirty_values.sh`
+
+vmstat_string=$vmstat_string' '$vm_dirty
 
 psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc "select os_stat_vmstat( '$vmstat_string' )"  >> $LOG_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE

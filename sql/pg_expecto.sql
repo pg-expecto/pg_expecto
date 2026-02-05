@@ -4555,7 +4555,7 @@ COMMENT ON FUNCTION reports_cluster_report_4graph IS 'Данные для пос
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 -- reports_cluster_report_meta.sql
--- version 5.3
+-- version 6.0
 --------------------------------------------------------------------------------
 -- Метаданные для отчета по производительности и ожиданиям на уровне СУБД
 --
@@ -4602,6 +4602,26 @@ DECLARE
   min_max_load_rec record ;
   current_test_id integer ;
   current_load_rec record ; 
+  
+  --Взвешенная корреляция ожиданий (ВКО) 
+  pct_bufferpin numeric ; 
+  pct_extension numeric  ; 
+  pct_io numeric  ; 
+  pct_ipc numeric  ; 
+  pct_lock numeric  ; 
+  pct_lwlock numeric  ; 
+  pct_timeout numeric  ; 
+  
+  score_bufferpin numeric ; 
+  score_extension numeric  ; 
+  score_io numeric  ; 
+  score_ipc numeric  ; 
+  score_lock numeric  ; 
+  score_lwlock numeric  ; 
+  score_timeout numeric  ; 
+  score_txt text[];
+  --Взвешенная корреляция ожиданий (ВКО) 
+  
 BEGIN
 	line_count = 1 ;
 	
@@ -5022,38 +5042,400 @@ BEGIN
 	line_count=line_count+1; 
 	
 	
+	--Взвешенная корреляция ожиданий (ВКО) 
+    pct_bufferpin = 	((min_max_rec.max_curr_bufferpin + min_max_rec.min_curr_bufferpin)/2.0)/
+						((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
+						
+    pct_extension = 	((min_max_rec.max_curr_extension + min_max_rec.min_curr_extension)/2.0)/
+						((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
+						
+    pct_io   		= 	((min_max_rec.max_curr_io + min_max_rec.min_curr_io)/2.0)/
+						((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
+						
+    pct_ipc  		= 	((min_max_rec.max_curr_ipc + min_max_rec.min_curr_ipc)/2.0)/
+						((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
+	
+    pct_lock  	= 	((min_max_rec.max_curr_lock + min_max_rec.min_curr_lock)/2.0)/
+						((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
+	
+    pct_lwlock  	= 	((min_max_rec.max_curr_lwlock + min_max_rec.min_curr_lwlock)/2.0)/
+						((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0 ; 
+	
+    pct_timeout  	= 	((min_max_rec.max_curr_timeout + min_max_rec.min_curr_timeout)/2.0)/
+						((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0 ;
+	--Взвешенная корреляция ожиданий (ВКО)						
+	
 	result_str[line_count] = 'SPEED - WAITINGS' ||'|'|| REPLACE ( TO_CHAR( ROUND( speed_waitings_correlation::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
 	line_count=line_count+1; 
 	result_str[line_count] = 'WAITINGS - BUFFERPIN' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_bufferpin::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( ((min_max_rec.max_curr_bufferpin + min_max_rec.min_curr_bufferpin)/2.0)/
-																					  ((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0, 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( pct_bufferpin , 2 ) , '000000000000D0000') , '.' , ',' ) ;
 	line_count=line_count+1; 
 	result_str[line_count] = 'WAITINGS - EXTENSION' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_extension::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( ((min_max_rec.max_curr_extension + min_max_rec.min_curr_extension)/2.0)/
-																					  ((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0, 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( pct_extension , 2 ) , '000000000000D0000') , '.' , ',' ) ;
 	line_count=line_count+1; 
 	result_str[line_count] = 'WAITINGS - IO' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_io::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( ((min_max_rec.max_curr_io + min_max_rec.min_curr_io)/2.0)/
-																					  ((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0, 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( pct_io , 2 ) , '000000000000D0000') , '.' , ',' ) ;
 	line_count=line_count+1; 
 	result_str[line_count] = 'WAITINGS - IPC' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_ipc::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( ((min_max_rec.max_curr_ipc + min_max_rec.min_curr_ipc)/2.0)/
-																					  ((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0, 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( pct_ipc , 2 ) , '000000000000D0000') , '.' , ',' ) ;
 	line_count=line_count+1; 
 	result_str[line_count] = 'WAITINGS - LOCK' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_lock::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( ((min_max_rec.max_curr_lock + min_max_rec.min_curr_lock)/2.0)/
-																					  ((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0, 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( pct_lock , 2 ) , '000000000000D0000') , '.' , ',' ) ;
 	line_count=line_count+1; 
 	result_str[line_count] = 'WAITINGS - LWLOCK' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_lwlock::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( ((min_max_rec.max_curr_lwlock + min_max_rec.min_curr_lwlock)/2.0)/
-																					  ((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0, 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( pct_lwlock , 2 ) , '000000000000D0000') , '.' , ',' ) ;
 	line_count=line_count+1; 
 	result_str[line_count] = 'WAITINGS - TIMEOUT' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_timeout::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( ((min_max_rec.max_curr_timeout + min_max_rec.min_curr_timeout)/2.0)/
-																					  ((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0, 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( pct_timeout , 2 ) , '000000000000D0000') , '.' , ',' ) ;
 	line_count=line_count+2; 
 	
+	--Взвешенная корреляция ожиданий (ВКО) 
+   	result_str[line_count] = 'ВЗВЕШЕННАЯ КОРРЕЛЯЦИЯ ОЖИДАНИЙ (ВКО)' ; 
+	line_count=line_count+1; 
+	result_str[line_count] = 'WAIT_EVENT_TYPE | ВКО | КРИТИЧНОСТЬ | РЕКОМЕНДУЕМЫЕ ДЕЙСТВИЯ' ; 
+	line_count=line_count+1; 
 	
+	score_bufferpin = corr_bufferpin * pct_bufferpin / 100 ;
+	score_extension = corr_extension * pct_extension  / 100 ;
+	score_io = corr_io * pct_io  / 100 ;
+	score_ipc = corr_ipc * pct_ipc  / 100 ;
+	score_lock = corr_lock * pct_lock  / 100 ;
+	score_lwlock = corr_lwlock * pct_lwlock  / 100 ;
+	score_timeout = corr_timeout * pct_timeout  / 100 ;
+	
+    score_txt[1] = 'BUFFERPIN' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_bufferpin, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ; 		
+	score_txt[2] = '';		
+	score_txt[3] = '';
+	score_txt[4] = '';
+	IF score_bufferpin > 0 
+	THEN 
+		IF score_bufferpin >= 0.2
+		THEN 
+			score_txt[1] = score_txt[1] || 'КРИТИЧЕСКАЯ | Немедленный анализ и действие. Основной фокус расследования.';
+			score_txt[2] = '| | |'||'Анализ и оптимизация запросов, выполняющих длительные операции с буферами (VACUUM, CREATE INDEX CONCURRENTLY)';		
+			score_txt[3] = '| | |'||'Мониторинг блокировок буферов через представление pg_stat_activity с фильтрацией по wait_event_type = BufferPin';
+			score_txt[4] = '| | |'||'Настройка параметра vacuum_cost_delay для уменьшения конкуренции при фоновых операциях';
+		ELSIF score_bufferpin >= 0.1 AND score_bufferpin < 0.19 
+		THEN 
+			score_txt[1] = score_txt[1] || 'ВЫСОКАЯ | Глубокий анализ и планирование оптимизации.';
+			score_txt[2] = '| | |'||'Проверка и оптимизация работы с временными таблицами и большими наборами данных';		
+			score_txt[3] = '| | |'||'Настройка maintenance_work_mem для операций обслуживания (VACUUM, индексация)';
+			score_txt[4] = '| | |'||'Анализ необходимости увеличения shared_buffers для уменьшения конкуренции';
+		ELSIF score_bufferpin >= 0.04 AND score_bufferpin < 0.09 
+		THEN 
+			score_txt[1] = score_txt[1] || 'СРЕДНЯЯ | Контекстный анализ и наблюдение. Решение по остаточному принципу.';
+			score_txt[2] = '| | |'||'Реорганизация графика обслуживания БД для выполнения ресурсоемких операций в периоды низкой нагрузки';		
+			score_txt[3] = '| | |'||'Использование табличных пространств на разных дисках для распределения нагрузки';
+			score_txt[4] = '| | |'||'Мониторинг и ограничение количества одновременных операций обслуживания';
+		ELSIF score_bufferpin >= 0.01 AND score_bufferpin < 0.03
+		THEN 
+			score_txt[1] = score_txt[1] || 'НИЗКАЯ | Наблюдение и документирование. Действия только при ухудшении.';
+			score_txt[2] = '| | |'||'Обновление PostgreSQL до версии с улучшенными алгоритмами работы с буферами';		
+			score_txt[3] = '| | |'||'Рассмотрение возможности использования расширений для управления памятью';
+			score_txt[4] = '| | |'||'Документирование случаев возникновения проблем для будущего анализа';
+		ELSE
+			score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
+		END IF;
+	ELSE
+		score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';	
+	END IF;	
+	result_str[line_count] = score_txt[1] ; 
+	line_count=line_count+1; 
+	IF length(score_txt[2]) > 0 
+	THEN 
+		result_str[line_count] = score_txt[2] ; 
+		line_count=line_count+1; 
+		result_str[line_count] = score_txt[3] ; 
+		line_count=line_count+1; 
+		result_str[line_count] = score_txt[4] ; 		
+	END IF;
+	line_count=line_count+2;
+	
+	score_txt[1] = 'EXTENSION' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_extension, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ; 
+	score_txt[2] = '';		
+	score_txt[3] = '';
+	score_txt[4] = '';	
+	IF score_extension > 0 
+	THEN 
+		IF score_extension >= 0.2
+		THEN 
+			score_txt[1] = score_txt[1] || 'КРИТИЧЕСКАЯ | Немедленный анализ и действие. Основной фокус расследования.';
+			score_txt[2] = '| | |'||'Идентификация проблемных расширений через анализ pg_stat_activity и логов';		
+			score_txt[3] = '| | |'||'Обновление расширений до последних стабильных версий';
+			score_txt[4] = '| | |'||'Временное отключение расширений для диагностики причин ожиданий';
+		ELSIF score_extension >= 0.1 AND score_extension < 0.19 
+		THEN 
+			score_txt[1] = score_txt[1] || 'ВЫСОКАЯ | Глубокий анализ и планирование оптимизации.';
+			score_txt[2] = '| | |'||'Анализ конфигурации расширений на соответствие рекомендациям раз';		
+			score_txt[3] = '| | |'||'Мониторинг производительности расширений в пиковые периоды нагрузки';
+			score_txt[4] = '| | |'||'Оптимизация запросов, использующих функции проблемных расширений';
+		ELSIF score_extension >= 0.04 AND score_extension < 0.09 
+		THEN 
+			score_txt[1] = score_txt[1] || 'СРЕДНЯЯ | Контекстный анализ и наблюдение. Решение по остаточному принципу.';
+			score_txt[2] = '| | |'||'Консультации с сообществом или разработчиками проблемных расширений';		
+			score_txt[3] = '| | |'||'Настройка параметров расширений под конкретную нагрузку';
+			score_txt[4] = '| | |'||'Создание индексов для ускорения работы функций расширений';	
+		ELSIF score_extension >= 0.01 AND score_extension < 0.03
+		THEN 
+			score_txt[1] = score_txt[1] || 'НИЗКАЯ | Наблюдение и документирование. Действия только при ухудшении.';
+			score_txt[2] = '| | |'||'Рассмотрение альтернативных расширений с аналогичной функциональностью';		
+			score_txt[3] = '| | |'||'Кастомизация кода расширений';
+			score_txt[4] = '| | |'||'Разделение нагрузки между разными экземплярами PostgreSQL';		
+		ELSE
+			score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
+		END IF;
+	ELSE
+		score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.'	;
+	END IF;	
+	result_str[line_count] = score_txt[1] ; 
+	line_count=line_count+1; 
+	IF length(score_txt[2]) > 0 
+	THEN 
+		result_str[line_count] = score_txt[2] ; 
+		line_count=line_count+1; 
+		result_str[line_count] = score_txt[3] ; 
+		line_count=line_count+1; 
+		result_str[line_count] = score_txt[4] ; 		
+	END IF;
+	line_count=line_count+2;
+	
+	score_txt[1] = 'IO' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_io, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ;
+	score_txt[2] = '';		
+	score_txt[3] = '';
+	score_txt[4] = '';		
+	IF score_io > 0 
+	THEN 
+		IF score_io >= 0.2
+		THEN 
+			score_txt[1] = score_txt[1] || 'КРИТИЧЕСКАЯ | Немедленный анализ и действие. Основной фокус расследования.';
+			score_txt[2] = '| | |'||'Анализ и оптимизация топ-запросов по времени ожидания IO';
+			score_txt[3] = '| | |'||'Проверка и оптимизация индексов (добавление недостающих, удаление неиспользуемых)';
+			score_txt[4] = '| | |'||'Настройка параметров effective_io_concurrency и random_page_cost для используемого оборудования';
+		ELSIF score_io >= 0.1 AND score_io < 0.19 
+		THEN 
+			score_txt[1] = score_txt[1] || 'ВЫСОКАЯ | Глубокий анализ и планирование оптимизации.';
+			score_txt[2] = '| | |'||'Оптимизация autovacuum для горячих таблиц (настройка агрессивности, порогов)';
+			score_txt[3] = '| | |'||'Разделение таблиц и индексов по разным табличным пространствам на разных дисках';
+			score_txt[4] = '| | |'||'Использование табличных пространств на быстрых накопителях для горячих данных';
+		ELSIF score_io >= 0.04 AND score_io < 0.09 
+		THEN 
+			score_txt[1] = score_txt[1] || 'СРЕДНЯЯ | Контекстный анализ и наблюдение. Решение по остаточному принципу.';
+			score_txt[2] = '| | |'||'Настройка параметров shared_buffers и work_mem для уменьшения физических чтений';
+			score_txt[3] = '| | |'||'Применение расширения pg_prewarm для предзагрузки часто используемых данных';
+			score_txt[4] = '| | |'||'Оптимизация размера WAL и параметров контрольных точек (checkpoint)';
+		ELSIF score_io >= 0.01 AND score_io < 0.03
+		THEN 
+			score_txt[1] = score_txt[1] || 'НИЗКАЯ | Наблюдение и документирование. Действия только при ухудшении.';
+			score_txt[2] = '| | |'||'Внедрение мониторинга задержек дискового ввода-вывода на уровне ОС';
+			score_txt[3] = '| | |'||'Рассмотрение использования сжатия на уровне СУБД или файловой системы';
+			score_txt[4] = '| | |'||'Оптимизация файловой системы и параметров монтирования';
+		ELSE
+			score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
+		END IF;
+	ELSE
+		score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.'	;
+	END IF;	
+	result_str[line_count] = score_txt[1] ; 
+	line_count=line_count+1; 
+	IF length(score_txt[2]) > 0 
+	THEN 
+		result_str[line_count] = score_txt[2] ; 
+		line_count=line_count+1; 
+		result_str[line_count] = score_txt[3] ; 
+		line_count=line_count+1; 
+		result_str[line_count] = score_txt[4] ; 		
+	END IF;
+	line_count=line_count+2;  
+	
+	score_txt[1] = 'IPC' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_ipc, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ;
+	score_txt[2] = '';		
+	score_txt[3] = '';
+	score_txt[4] = '';		
+	IF score_ipc > 0 
+	THEN 
+		IF score_ipc >= 0.2
+		THEN 
+			score_txt[1] = score_txt[1] || 'КРИТИЧЕСКАЯ | Немедленный анализ и действие. Основной фокус расследования.';
+			score_txt[2] = '| | |'||'Анализ и настройка параллельных запросов (max_parallel_workers_per_gather, max_parallel_workers)';
+			score_txt[3] = '| | |'||'Мониторинг и оптимизация фоновых процессов (autovacuum, background writer, checkpointer)';
+			score_txt[4] = '| | |'||'Настройка параметра shared_buffers для уменьшения конкуренции между процессами';
+		ELSIF score_ipc >= 0.1 AND score_ipc < 0.19 
+		THEN 
+			score_txt[1] = score_txt[1] || 'ВЫСОКАЯ | Глубокий анализ и планирование оптимизации.';
+			score_txt[2] = '| | |'||'Оптимизация параметров репликации (max_wal_senders, wal_keep_size, max_replication_slots)';
+			score_txt[3] = '| | |'||'Балансировка подключений между экземплярами или использование пулеров соединений';
+			score_txt[4] = '| | |'||'Мониторинг и ограничение количества одновременных подключений';
+		ELSIF score_ipc >= 0.04 AND score_ipc < 0.09 
+		THEN 
+			score_txt[1] = score_txt[1] || 'СРЕДНЯЯ | Контекстный анализ и наблюдение. Решение по остаточному принципу.';
+			score_txt[2] = '| | |'||'Настройка параметров shared memory и semaphores на уровне ОС';
+			score_txt[3] = '| | |'||'Оптимизация параметров wal_buffers и commit_delay/commit_siblings';
+			score_txt[4] = '| | |'||'Анализ и устранение конфликтов между сессиями за общие ресурсы';
+		ELSIF score_ipc >= 0.01 AND score_ipc < 0.03
+		THEN 
+			score_txt[1] = score_txt[1] || 'НИЗКАЯ | Наблюдение и документирование. Действия только при ухудшении.';
+			score_txt[2] = '| | |'||'Обновление до актуальной версии PostgreSQL с улучшенными IPC-механизмами';
+			score_txt[3] = '| | |'||'Внедрение пулеров соединений (pgbouncer, pgpool-II) для уменьшения количества процессов';
+			score_txt[4] = '| | |'||'Разделение БД на логические части с выделением отдельных экземпляров';
+		ELSE
+			score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
+		END IF;
+	ELSE
+		score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
+	END IF;	
+	result_str[line_count] = score_txt[1] ; 
+	line_count=line_count+1; 
+	IF length(score_txt[2]) > 0 
+	THEN 
+		result_str[line_count] = score_txt[2] ; 
+		line_count=line_count+1; 
+		result_str[line_count] = score_txt[3] ; 
+		line_count=line_count+1; 
+		result_str[line_count] = score_txt[4] ; 		
+	END IF;
+	line_count=line_count+2; 
+	
+	score_txt[1] = 'LOCK' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_lock, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ;
+	score_txt[2] = '';		
+	score_txt[3] = '';
+	score_txt[4] = '';	
+	IF score_lock > 0 
+	THEN 
+		IF score_lock >= 0.2
+		THEN 
+			score_txt[1] = score_txt[1] || 'КРИТИЧЕСКАЯ | Немедленный анализ и действие. Основной фокус расследования.';
+			score_txt[2] = '| | |'||'Выявление и устранение блокирующих транзакций';
+			score_txt[3] = '| | |'||'Оптимизация времени выполнения транзакций (разделение больших транзакций на меньшие)';
+			score_txt[4] = '| | |'||'Установка разумных значений lock_timeout и idle_in_transaction_session_timeout';
+		ELSIF score_lock >= 0.1 AND score_lock < 0.19 
+		THEN 
+			score_txt[1] = score_txt[1] || 'ВЫСОКАЯ | Глубокий анализ и планирование оптимизации.';
+			score_txt[2] = '| | |'||'Изменение логики приложения для уменьшения времени удерживания блокировок';
+			score_txt[3] = '| | |'||'Применение стратегий оптимистичной блокировки (version/timestamp поля)';
+			score_txt[4] = '| | |'||'Реструктуризация запросов для минимизации конкуренции за объекты';
+		ELSIF score_lock >= 0.04 AND score_lock < 0.09 
+		THEN 
+			score_txt[1] = score_txt[1] || 'СРЕДНЯЯ | Контекстный анализ и наблюдение. Решение по остаточному принципу.';
+			score_txt[2] = '| | |'||'Анализ и оптимизация уровней изоляции транзакций';
+			score_txt[3] = '| | |'||'Внедрение retry-логики в приложении для обработки deadlocks и таймаутов';
+			score_txt[4] = '| | |'||'Использование advisory locks для нестандартных сценариев синхронизации';
+		ELSIF score_lock >= 0.01 AND score_lock < 0.03
+		THEN 
+			score_txt[1] = score_txt[1] || 'НИЗКАЯ | Наблюдение и документирование. Действия только при ухудшении.';
+			score_txt[2] = '| | |'||'Изменение архитектуры приложения: внедрение очередей для асинхронной обработки';
+			score_txt[3] = '| | |'||'Пересмотр схемы БД для минимизации точек конкуренции (нормализация/денормализация)';
+			score_txt[4] = '| | |'||'Использование таблиц-очередей на основе SKIP LOCKED';
+		ELSE
+			score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
+		END IF;
+	ELSE
+		score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';	
+	END IF;	
+	result_str[line_count] = score_txt[1] ; 
+	line_count=line_count+1; 
+	IF length(score_txt[2]) > 0 
+	THEN 
+		result_str[line_count] = score_txt[2] ; 
+		line_count=line_count+1; 
+		result_str[line_count] = score_txt[3] ; 
+		line_count=line_count+1; 
+		result_str[line_count] = score_txt[4] ; 		
+	END IF;
+	line_count=line_count+2; 
+	
+	score_txt[1] = 'LWLOCK' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_lwlock, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ;
+	score_txt[2] = '';		
+	score_txt[3] = '';
+	score_txt[4] = '';		
+	IF score_lwlock > 0 
+	THEN 
+		IF score_lwlock >= 0.2
+		THEN 
+			score_txt[1] = score_txt[1] || 'КРИТИЧЕСКАЯ | Немедленный анализ и действие. Основной фокус расследования.';
+			
+		ELSIF score_lwlock >= 0.1 AND score_lwlock < 0.19 
+		THEN 
+			score_txt[1] = score_txt[1] || 'ВЫСОКАЯ | Глубокий анализ и планирование оптимизации.';
+			score_txt[2] = '| | |'||'Мониторинг точек конкуренции';
+			score_txt[3] = '| | |'||'Оптимизация конкурентных DDL-операций (перенос в периоды низкой нагрузки)';
+			score_txt[4] = '| | |'||'Настройка параметров памяти: work_mem, maintenance_work_mem, shared_buffers';
+		ELSIF score_lwlock >= 0.04 AND score_lwlock < 0.09 
+		THEN 
+			score_txt[1] = score_txt[1] || 'СРЕДНЯЯ | Контекстный анализ и наблюдение. Решение по остаточному принципу.';
+			score_txt[2] = '| | |'||'Оптимизация параллельных операций обслуживания (max_parallel_maintenance_workers)';
+			score_txt[3] = '| | |'||'Балансировка нагрузки во времени для ресурсоемких операций';
+			score_txt[4] = '| | |'||'Тонкая настройка autovacuum для уменьшения конфликтов';
+		ELSIF score_lwlock >= 0.01 AND score_lwlock < 0.03
+		THEN 
+			score_txt[1] = score_txt[1] || 'НИЗКАЯ | Наблюдение и документирование. Действия только при ухудшении.';
+			score_txt[2] = '| | |'||'Обновление PostgreSQL до версии с улучшенными алгоритмами LWLock';
+			score_txt[3] = '| | |'||'Архитектурные изменения: выделение специализированных инстансов для разных типов нагрузки';
+			score_txt[4] = '| | |'||'Консультации с экспертами PostgreSQL по тонкой настройке';
+		ELSE
+			score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
+		END IF;
+	ELSE
+		score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.'	;
+	END IF;	
+	result_str[line_count] = score_txt[1] ; 
+	line_count=line_count+1; 
+	IF length(score_txt[2]) > 0 
+	THEN 
+		result_str[line_count] = score_txt[2] ; 
+		line_count=line_count+1; 
+		result_str[line_count] = score_txt[3] ; 
+		line_count=line_count+1; 
+		result_str[line_count] = score_txt[4] ; 		
+	END IF;
+	line_count=line_count+2; 
+	
+	score_txt[1] = 'TIMEOUT' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_timeout, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ;
+	score_txt[2] = '';		
+	score_txt[3] = '';
+	score_txt[4] = '';		
+	IF score_timeout > 0 
+	THEN 
+		IF score_timeout >= 0.2
+		THEN 
+			score_txt[1] = score_txt[1] || 'КРИТИЧЕСКАЯ | Немедленный анализ и действие. Основной фокус расследования.';
+			score_txt[2] = '| | |'||'Анализ логов PostgreSQL на предмет сообщений о таймаутах';
+			score_txt[3] = '| | |'||'Определение типов таймаутов (statement_timeout, lock_timeout, idle_timeout) и их источников';
+			score_txt[4] = '| | |'||'Настройка параметров таймаутов в соответствии с требованиями приложения';
+		ELSIF score_timeout >= 0.1 AND score_timeout < 0.19 
+		THEN 
+			score_txt[1] = score_txt[1] || 'ВЫСОКАЯ | Глубокий анализ и планирование оптимизации.';
+			score_txt[2] = '| | |'||'Оптимизация запросов, регулярно превышающих statement_timeout';
+			score_txt[3] = '| | |'||'Ревизия логики приложения на предмет длительных транзакций и блокировок';
+			score_txt[4] = '| | |'||'Внедрение механизмов отслеживания прогресса длительных операций';
+		ELSIF score_timeout >= 0.04 AND score_timeout < 0.09 
+		THEN 
+			score_txt[1] = score_txt[1] || 'СРЕДНЯЯ | Контекстный анализ и наблюдение. Решение по остаточному принципу.';
+			score_txt[2] = '| | |'||'Настройка мониторинга для алертов по таймаутам';
+			score_txt[3] = '| | |'||'Создание дашбордов для отслеживания динамики таймаутов';
+			score_txt[4] = '| | |'||'Разработка скриптов для автоматического анализа причин таймаутов';
+		ELSIF score_timeout >= 0.01 AND score_timeout < 0.03
+		THEN 
+			score_txt[1] = score_txt[1] || 'НИЗКАЯ | Наблюдение и документирование. Действия только при ухудшении.';
+			score_txt[2] = '| | |'||'Архитектурные изменения для уменьшения необходимости в длинных транзакциях';
+			score_txt[3] = '| | |'||'Внедрение механизмов ретраев с экспоненциальным откатом в приложении';
+			score_txt[4] = '| | |'||'Обучение разработчиков работе с асинхронными операциями';
+		ELSE
+			score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
+		END IF;
+	ELSE
+		score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';	
+	END IF;	
+	result_str[line_count] = score_txt[1] ; 
+	line_count=line_count+1; 
+	IF length(score_txt[2]) > 0 
+	THEN 
+		result_str[line_count] = score_txt[2] ; 
+		line_count=line_count+1; 
+		result_str[line_count] = score_txt[3] ; 
+		line_count=line_count+1; 
+		result_str[line_count] = score_txt[4] ; 		
+	END IF;
+	line_count=line_count+2; 
 	
 		
 

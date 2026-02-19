@@ -59,4 +59,4 @@ shared_preload_libraries=‘pg_stat_statements , pg_wait_sampling’
 - [PG_EXPECTO : Использование нейросети для анализа результатов нагрузочного тестирования СУБД PostgreSQL](https://dzen.ru/a/aVkK0LKXRRwLXNu3?share_to=link)
 - [PG_EXPECTO: Анализ производительности подсистемы IO по результатам нагрузочного тестирования СУБД PostgreSQL](https://dzen.ru/a/aVpK0FifsUtYkQa1?share_to=link)
 - [PG_EXPECTO: Чек-лист проверки инфраструктуры Linux по результатам нагрузочного тестирования PostgreSQL](https://dzen.ru/a/aV9ygh51Ij69nyLY?share_to=link)
-- [PG_EXPECTO v.6 : имитация OLTP/OLAP , дополненные чек-листы IO и RAM, статистика vm_dirty и shared_buffers.](https://dzen.ru/a/aYIY9tsuOVYutPS3?share_to=link)
+- [PG_EXPECTO v.7: Нейросеть DeepSeek в роли эксперта по PostgreSQL](https://dzen.ru/a/aZclG3DdMxbLg_ra?share_to=link)

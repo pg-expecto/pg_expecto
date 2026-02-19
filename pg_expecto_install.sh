@@ -2,7 +2,7 @@
 ########################################################################################################
 # pg_expecto_install.sh
 # Инсталлятор
-# version 5.0
+# version 7.0
 # Исходная папка /tmp/pg_expecto
 # mkdir /postgres/pg_expecto
 # cp /tmp/pg_expecto/pg_expecto_install.sh /postgres/pg_expecto/
@@ -95,15 +95,6 @@ done
 cp -n /tmp/pg_expecto/sh/performance_reports/*.* $current_path'/sh/performance_reports/' >>$LOG_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
 for file in $current_path/sh/performance_reports/*.sh; do
-    if [ -f "$file" ]; then
-        chmod 750 "$file" >>$LOG_FILE 2>$ERR_FILE
-        exit_code $? $LOG_FILE $ERR_FILE
-    fi
-done
-
-cp -n /tmp/pg_expecto/sh/wait_event_kb/*.* $current_path'/sh/wait_event_kb/' >>$LOG_FILE 2>$ERR_FILE
-exit_code $? $LOG_FILE $ERR_FILE
-for file in $current_path/sh/wait_event_kb/*.sh; do
     if [ -f "$file" ]; then
         chmod 750 "$file" >>$LOG_FILE 2>$ERR_FILE
         exit_code $? $LOG_FILE $ERR_FILE
@@ -209,14 +200,21 @@ exit_code $? $LOG_FILE $ERR_FILE
 
 psql -d $expecto_db -U $expecto_user -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select default_configuration()' >>$LOG_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : default_configuration'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : default_configuration' >>$LOG_FILE
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ЗАПОЛНЕНИЕ KB'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ЗАПОЛНЕНИЕ KB' >>$LOG_FILE
-#psql -d $expecto_db -v ON_ERROR_STOP=on --echo-errors -f $current_path'/sh/wait_event_kb/load_to_wait_event_kb.sql' >>$LOG_FILE 2>$ERR_FILE
-kb_path=$current_path'/sh/wait_event_kb/kb.txt'
-psql -d $expecto_db -v ON_ERROR_STOP=on --echo-errors -c "COPY wait_event_knowledge_base (wait_event , advice ) FROM '$kb_path' WITH ( FORMAT text, DELIMITER '|', ENCODING 'UTF8' ) " >>$LOG_FILE 2>$ERR_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : МЕРОПРИЯТИЯ ВКО ПО ТИПАМ ОЖИДАНИЙ'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : МЕРОПРИЯТИЯ ВКО ПО ТИПАМ ОЖИДАНИЙ' >>$LOG_FILE
+psql -d $expecto_db -v ON_ERROR_STOP=on --echo-errors -c "CALL fill_in_wce_activities()" >>$LOG_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
-rm -rf $current_path'/sh/wait_event_kb'
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : РАСЧЕТ ВЕСОВ КРИТЕРИЕВ ДЛЯ wait_event_type'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : РАСЧЕТ ВЕСОВ КРИТЕРИЕВ ДЛЯ wait_event_type' >>$LOG_FILE
+psql -d $expecto_db -v ON_ERROR_STOP=on --echo-errors -c "CALL calc_wait_event_type_criteria_weight()" >>$LOG_FILE 2>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+
+
+
 # НАСТРОЙКА pg_expecto
 ################################################################################################
 
@@ -264,6 +262,23 @@ echo 'iostat started '
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : IOSTAT - IN PROCESS'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : IOSTAT - IN PROCESS' >>$LOG_FILE
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : VM_DIRTY - START '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : VM_DIRTY - START ' >>$LOG_FILE
+
+echo 'kill vm_dirty'
+
+pkill -u postgres -x "vm_dirty.sh"
+
+echo 'start vm_dirty'
+
+/postgres/pg_expecto/sh/vm_dirty.sh &
+exit_code $? $LOG_FILE $ERR_FILE
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : VM_DIRTY - IN PROGRESS '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : VM_DIRTY - IN PROGRESS ' >>$LOG_FILE
+
+
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНСТАЛЛЯЦИЯ pg_expecto - ЗАВЕРШЕНА'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНСТАЛЛЯЦИЯ pg_expecto - ЗАВЕРШЕНА' >>$LOG_FILE

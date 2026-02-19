@@ -2,7 +2,7 @@
 ########################################################################################################
 # summary_report.sh
 # Сводный отчет  производительности/ожиданиям СУБД и метрикам ОС 
-# version 6.0
+# version 7.0
 ########################################################################################################
 
 #Обработать код возврата 
@@ -33,6 +33,8 @@ timestamp_label=$(date "+%Y%m%d")'T'$(date "+%H%M")
 
 expecto_db='expecto_db'
 expecto_user='expecto_user'
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : СТАРТ ' > $LOG_FILE
 
 if [ $# -eq 0 ]
 then
@@ -91,14 +93,34 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK' >> $LOG_FILE
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : *** ОТЧЕТЫ ПО МЕТРИКАМ VMSTAT/IOSTAT '
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : *** ОТЧЕТЫ ПО МЕТРИКАМ VMSTAT/IOSTAT ' >> $LOG_FILE
 
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : *** ОТЧЕТЫ ПО ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЯМ СУБД '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : *** ОТЧЕТЫ ПО ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЯМ СУБД ' >> $LOG_FILE
+
 ##################################################################################################################################
-# 1. OS - VMSTAT CORRELATION
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО КОРРЕЛЯЦИИ ОЖИДАНИЙ СУБД И МЕТРИК VMSTAT - НАЧАТ '
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО КОРРЕЛЯЦИИ ОЖИДАНИЙ СУБД И МЕТРИК VMSTAT - НАЧАТ ' >> $LOG_FILE
+# CLUSTER PERFORMANCE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЯМ НА УРОВНЕ СУБД - НАЧАТ '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЯМ НА УРОВНЕ СУБД - НАЧАТ ' >> $LOG_FILE
 
-REPORT_FILE=$current_path'/linux.1.waitings_vmstat_corr.txt'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : КОМПЛЕКСНЫЙ СТАТИСТИЧЕСКИЙ ОТЧЕТ ПО ОЖИДАНИЯМ СУБД'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : КОМПЛЕКСНЫЙ СТАТИСТИЧЕСКИЙ ОТЧЕТ ПО ОЖИДАНИЯМ СУБД' >> $LOG_FILE
+REPORT_FILE=$current_path'/1.1.postgresql.wait_event_type.txt'
+psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_postgresql_wait_event_type('$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
 
-psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_waitings_os_corr('$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
+chmod 777 $REPORT_FILE
+mv $REPORT_FILE $REPORT_DIR
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
+# CLUSTER PERFORMANCE
+##################################################################################################################################
+
+##################################################################################################################################
+# VMSTAT PERFORMANCE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ VMSTAT - НАЧАТ '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ VMSTAT - НАЧАТ ' >> $LOG_FILE
+REPORT_FILE=$current_path'/1.2.vmstat.performance.txt'
+psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_vmstat_performance('$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
 
 chmod 777 $REPORT_FILE
@@ -107,15 +129,32 @@ mv $REPORT_FILE $REPORT_DIR
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО КОРРЕЛЯЦИИ ОЖИДАНИЙ СУБД И МЕТРИК VMSTAT - НАЧАТ '
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО КОРРЕЛЯЦИИ ОЖИДАНИЙ СУБД И МЕТРИК VMSTAT - НАЧАТ ' >> $LOG_FILE
-# 1. OS - VMSTAT CORRELATION
+# CLUSTER PERFORMANCE
 ##################################################################################################################################
 
 ##################################################################################################################################
-# 2. VMSTAT/IOSTAT
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО КОРРЕЛЯЦИИ МЕТРИК VMSTAT И IOSTAT - НАЧАТ '
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО КОРРЕЛЯЦИИ МЕТРИК VMSTAT И IOSTAT - НАЧАТ ' >> $LOG_FILE
+# КОРРЕЛЯЦИЯ ОЖИДАНИЙ СУБД и vmstat
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ VMSTAT - НАЧАТ '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ VMSTAT - НАЧАТ ' >> $LOG_FILE
+cpu_count=`nproc --all`
+ram_all=` free -m | head -2 | tail -1 | awk -F " " '{print $2}'`
+REPORT_FILE=$current_path'/1.3.wait_event_type_vmstat.txt'
+psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_wait_event_type_vmstat($cpu_count , $ram_all , '$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+
+chmod 777 $REPORT_FILE
+mv $REPORT_FILE $REPORT_DIR
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
+
+# КОРРЕЛЯЦИЯ СУБД и vmstat
+##################################################################################################################################
+
+##################################################################################################################################
+# IOSTAT КОРРЕЛЯЦИЯ
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО IOSTAT - НАЧАТ '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО IOSTAT - НАЧАТ ' >> $LOG_FILE
 
 array=($devices_list)
 
@@ -133,34 +172,30 @@ do
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  DEVICE =  '$device
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  DEVICE =  '$device >> $LOG_FILE
   
-  REPORT_FILE=$current_path'/linux.2.vmstat_iostat_'$device'.txt'
-  
-  psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_vmstat_iostat('$start_timestamp' , '$finish_timestamp' , '$device'))" > $REPORT_FILE 2>$ERR_FILE
+  REPORT_FILE=$current_path'/2.1.vmstat_iostat_'$device'.txt'
+  psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_vmstat_iostat('$start_timestamp' , '$finish_timestamp' , '$device'))" > $REPORT_FILE 2>$ERR_FILE
   exit_code $? $LOG_FILE $ERR_FILE
-  
   chmod 777 $REPORT_FILE
   mv $REPORT_FILE $REPORT_DIR
-
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
 
   let i=i+1
 done
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО КОРРЕЛЯЦИИ МЕТРИК VMSTAT И IOSTAT - ЗАКОНЧЕН '
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО КОРРЕЛЯЦИИ МЕТРИК VMSTAT И IOSTAT - ЗАКОНЧЕН ' >> $LOG_FILE
-# 2. VMSTAT/IOSTAT
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО IOSTAT - ЗАКОНЧЕН '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО IOSTAT - ЗАКОНЧЕН ' >> $LOG_FILE
+# IOSTAT КОРРЕЛЯЦИЯ
 ##################################################################################################################################
 
 ##################################################################################################################################
-# 3. IO CHECK
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ЧЕК-ЛИСТ IO - НАЧАТ'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ЧЕК-ЛИСТ IO - НАЧАТ' >> $LOG_FILE
-
-REPORT_FILE=$current_path'/linux.3.vmstat_io.txt'
-cpu_count=`nproc --all`
-
-psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_vmstat_io($cpu_count , '$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
+# ИСХОДНЫЕ ДАННЫЕ
+######################################################################################################
+#ИСХОДНЫЕ ДАННЫЕ ПО ОЖИДАНИЯМ И ПРОИЗВОДИТЕЛЬНОСТИ
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ИСХОДНЫЕ ДАННЫЕ ПО ОЖИДАНИЯМ И ПРОИЗВОДИТЕЛЬНОСТИ PostgreSQL'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ИСХОДНЫЕ ДАННЫЕ ПО ОЖИДАНИЯМ И ПРОИЗВОДИТЕЛЬНОСТИ PostgreSQL' >> $LOG_FILE
+REPORT_FILE=$current_path'/x.postgresql.cluster_performance.txt'
+psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_postgresql_cluster_performance('$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
 
 chmod 777 $REPORT_FILE
@@ -168,96 +203,15 @@ mv $REPORT_FILE $REPORT_DIR
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ЧЕК-ЛИСТ IO - ЗАКОНЧЕН'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ЧЕК-ЛИСТ IO - ЗАКОНЧЕН' >> $LOG_FILE
-# 3. IO CHECK
-##################################################################################################################################
-
-##################################################################################################################################
-# 4. CPU CHECK
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ЧЕК-ЛИСТ CPU - НАЧАТ'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ЧЕК-ЛИСТ CPU - НАЧАТ' >> $LOG_FILE
-
-REPORT_FILE=$current_path'/linux.4.vmstat_cpu.txt'
-cpu_count=`nproc --all`
-
-psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_vmstat_cpu($cpu_count , '$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
-exit_code $? $LOG_FILE $ERR_FILE
-
-chmod 777 $REPORT_FILE
-mv $REPORT_FILE $REPORT_DIR
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ЧЕК-ЛИСТ CPU - ЗАКОНЧЕН'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ЧЕК-ЛИСТ CPU - ЗАКОНЧЕН' >> $LOG_FILE
-# 4. CPU CHECK
-##################################################################################################################################
-
-##################################################################################################################################
-# 5. RAM CHECK
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ЧЕК-ЛИСТ RAM - НАЧАТ'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ЧЕК-ЛИСТ RAM - НАЧАТ' >> $LOG_FILE
-
-REPORT_FILE=$current_path'/linux.5.vmstat_ram.txt'
-ram_all=` free -m | head -2 | tail -1 | awk -F " " '{print $2}'`
-
-psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_vmstat_ram($ram_all  , '$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
-exit_code $? $LOG_FILE $ERR_FILE
-
-chmod 777 $REPORT_FILE
-mv $REPORT_FILE $REPORT_DIR
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ЧЕК-ЛИСТ RAM - ЗАКОНЧЕН'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ЧЕК-ЛИСТ RAM - ЗАКОНЧЕН' >> $LOG_FILE
-# 5. RAM CHECK
-##################################################################################################################################
-
-##################################################################################################################################
-# 5.1 СТАТИСТИКА dirty_ratio/dirty_background_ratio
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_VM_DIRTY - НАЧАТ'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_VM_DIRTY  - НАЧАТ' >> $LOG_FILE
-
-REPORT_FILE=$current_path'/linux.5.1.vm_dirty.txt'
-ram_all=` free -m | head -2 | tail -1 | awk -F " " '{print $2}'`
-
-psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_vm_dirty($ram_all  , '$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
-exit_code $? $LOG_FILE $ERR_FILE
-
-chmod 777 $REPORT_FILE
-mv $REPORT_FILE $REPORT_DIR
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_VM_DIRTY  - ЗАКОНЧЕН'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_VM_DIRTY  - ЗАКОНЧЕН' >> $LOG_FILE
-# 5.1 СТАТИСТИКА dirty_ratio/dirty_background_ratio
-##################################################################################################################################
+#ИСХОДНЫЕ ДАННЫЕ ПО ОЖИДАНИЯМ И ПРОИЗВОДИТЕЛЬНОСТИ
+######################################################################################################
 
 ##################################################################################################################################
 # VMSTAT 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : МЕТАДАННЫЕ VMSTAT'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : МЕТАДАННЫЕ VMSTAT' >> $LOG_FILE
-REPORT_FILE=$current_path'/linux.x.vmstat_meta.txt'
-psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_vmstat_meta('$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
-exit_code $? $LOG_FILE $ERR_FILE
-
-chmod 777 $REPORT_FILE
-mv $REPORT_FILE $REPORT_DIR
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
-
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ДАННЫЕ ДЛЯ ГРАФИКОВ VMSTAT'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ДАННЫЕ ДЛЯ ГРАФИКОВ VMSTAT' >> $LOG_FILE
-REPORT_FILE=$current_path'/linux.x.vmstat_4graph.txt'
-psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_vmstat_4graph('$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
+REPORT_FILE=$current_path'/x.vmstat.txt'
+psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_vmstat('$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
 
 chmod 777 $REPORT_FILE
@@ -267,12 +221,13 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТ
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
 # VMSTAT 
 ##################################################################################################################################
-
 
 ##################################################################################################################################
 # IOSTAT
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ИСХОДЫЕ ДАННЫЕ IOSTAT '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ИСХОДЫЕ ДАННЫЕ IOSTAT ' >> $LOG_FILE
+
 array=($devices_list)
-cpu_count=`nproc --all`
 
 let i=0
 while :
@@ -285,60 +240,35 @@ do
    break
   fi 
   
-	  REPORT_FILE=$current_path'/linux.x.iostat_'$device'_meta.txt'
-	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : МЕТАДАННЫЕ IOSTAT : '$device
-	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : МЕТАДАННЫЕ IOSTAT : '$device >> $LOG_FILE
-	  psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_iostat_device_meta('$start_timestamp' , '$finish_timestamp' , '$device'))" > $REPORT_FILE 2>$ERR_FILE
-	  exit_code $? $LOG_FILE $ERR_FILE
-	  chmod 777 $REPORT_FILE
-	  mv $REPORT_FILE $REPORT_DIR
-	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
-	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
-	  
-	  REPORT_FILE=$current_path'/linux.x.iostat_'$device'_4graph.txt'
-	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ДАННЫЕ ДЛЯ ГРАФИКОВ IOSTAT : '$device
-	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ДАННЫЕ ДЛЯ ГРАФИКОВ IOSTAT : '$device >> $LOG_FILE
-	  psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_iostat_device_4graph('$start_timestamp' , '$finish_timestamp' , '$device'))" > $REPORT_FILE 2>$ERR_FILE
-	  exit_code $? $LOG_FILE $ERR_FILE
-	  chmod 777 $REPORT_FILE
-	  mv $REPORT_FILE $REPORT_DIR
-	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
-	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
-	  
-	  
-	  REPORT_FILE=$current_path'/linux.x.iostat_'$device'_performance.txt'
-	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ПРОИЗВОДИТЕЛЬНОСТЬ IO : '$device
-	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ПРОИЗВОДИТЕЛЬНОСТЬ IO : '$device >> $LOG_FILE
-	  psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_io_performance($cpu_count , '$device' , '$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
-	  exit_code $? $LOG_FILE $ERR_FILE
-	  chmod 777 $REPORT_FILE
-	  mv $REPORT_FILE $REPORT_DIR
-	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
-	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
-	  
-	  
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  DEVICE =  '$device
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  DEVICE =  '$device >> $LOG_FILE
+  
+  REPORT_FILE=$current_path'/x.iostat_'$device'.txt'
+  
+  psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_iostat('$start_timestamp' , '$finish_timestamp' , '$device'))" > $REPORT_FILE 2>$ERR_FILE
+  exit_code $? $LOG_FILE $ERR_FILE
+  
+  chmod 777 $REPORT_FILE
+  mv $REPORT_FILE $REPORT_DIR
+
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
 
   let i=i+1
 done
-# IOSTAT
+# IOSTAT КОРРЕЛЯЦИЯ
 ##################################################################################################################################
 
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK '
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK ' >> $LOG_FILE
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : *** ОТЧЕТЫ ПО ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЯМ СУБД '
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : *** ОТЧЕТЫ ПО ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЯМ СУБД ' >> $LOG_FILE
+######################################################################################################
+#СТАТИСТИКА dirty_ratio/dirty_background_ratio
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORT_VM_DIRTY'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORT_VM_DIRTY' >> $LOG_FILE
+REPORT_FILE=$current_path'/x.vm_dirty.txt'
+ram_all=` free -m | head -2 | tail -1 | awk -F " " '{print $2}'`
 
-##################################################################################################################################
-# 1. CLUSTER PERFORMANCE
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЯМ НА УРОВНЕ СУБД - НАЧАТ '
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЯМ НА УРОВНЕ СУБД - НАЧАТ ' >> $LOG_FILE
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : МЕТАДАННЫЕ ПО ОЖИДАНИЯМ И ПРОИЗВОДИТЕЛЬНОСТИ'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : МЕТАДАННЫЕ ПО ОЖИДАНИЯМ И ПРОИЗВОДИТЕЛЬНОСТИ' >> $LOG_FILE
-REPORT_FILE=$current_path'/postgres.1.cluster_report_meta.txt'
-psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_cluster_report_meta('$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
+psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_vm_dirty($ram_all  , '$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
 
 chmod 777 $REPORT_FILE
@@ -346,11 +276,17 @@ mv $REPORT_FILE $REPORT_DIR
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
+#СТАТИСТИКА dirty_ratio/dirty_background_ratio
+##################################################################################################################################
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ДАННЫЕ ДЛЯ ГРАФИКОВ ПО ОЖИДАНИЯМ И ПРОИЗВОДИТЕЛЬНОСТИ'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ДАННЫЕ ДЛЯ ГРАФИКОВ ПО ОЖИДАНИЯМ И ПРОИЗВОДИТЕЛЬНОСТИ' >> $LOG_FILE
-REPORT_FILE=$current_path'/postgres.1.cluster_report_4graph.txt'
-psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_cluster_report_4graph('$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
+######################################################################################################
+#СТАТИСТИКА shared_buffers
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORT_SHARED_BUFFERS'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORT_SHARED_BUFFERS' >> $LOG_FILE
+REPORT_FILE=$current_path'/x.shared_buffers.txt'
+ram_all=` free -m | head -2 | tail -1 | awk -F " " '{print $2}'`
+
+psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_shared_buffers('$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
 
 chmod 777 $REPORT_FILE
@@ -358,32 +294,7 @@ mv $REPORT_FILE $REPORT_DIR
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЯМ НА УРОВНЕ СУБД - ЗАКОНЧЕН '
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЯМ НА УРОВНЕ СУБД - ЗАКОНЧЕН ' >> $LOG_FILE
-# CLUSTER PERFORMANCE
-##################################################################################################################################
-
-##################################################################################################################################
-# 1.1 REPORTS_SHARED_BUFFERS
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_SHARED_BUFFERS - НАЧАТ'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_SHARED_BUFFERS - НАЧАТ' >> $LOG_FILE
-
-REPORT_FILE=$current_path'/postgres.1.1.shared_buffers.report.txt'
-cpu_count=`nproc --all`
-
-psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( reports_shared_buffers('$start_timestamp' , '$finish_timestamp' ))" > $REPORT_FILE 2>$ERR_FILE
-exit_code $? $LOG_FILE $ERR_FILE
-
-chmod 777 $REPORT_FILE
-mv $REPORT_FILE $REPORT_DIR
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_SHARED_BUFFERS - ЗАКОНЧЕН'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : REPORTS_SHARED_BUFFERS - ЗАКОНЧЕН' >> $LOG_FILE
-# 1.1 REPORTS_SHARED_BUFFERS
+#СТАТИСТИКА shared_buffers
 ##################################################################################################################################
 
 ##################################################################################################################################
@@ -404,9 +315,9 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : РА�
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО WAIT_EVENT(ДИАГРАММА ПАРЕТО) - НАЧАТ'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО WAIT_EVENT(ДИАГРАММА ПАРЕТО) - НАЧАТ' >> $LOG_FILE
 
-REPORT_FILE=$current_path'/postgres.2.wait_event.txt'
+REPORT_FILE=$current_path'/1.4.wait_event_type_pareto.txt.txt'
 
-psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_wait_event_for_pareto( '$start_timestamp' , '$finish_timestamp' )) " >>$REPORT_FILE 2>$ERR_FILE
+psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_wait_event_type_for_pareto( '$start_timestamp' , '$finish_timestamp' )) " >>$REPORT_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
 
 chmod 777 $REPORT_FILE
@@ -415,80 +326,15 @@ mv $REPORT_FILE $REPORT_DIR
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО WAIT_EVENT(ДИАГРАММА ПАРЕТО)  - ЗАКОНЧЕН'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО WAIT_EVENT(ДИАГРАММА ПАРЕТО)  - ЗАКОНЧЕН' >> $LOG_FILE
-
 # WAIT_EVENT FOR PARETO
 ####################################################################################################################################
-
-####################################################################################################################################
-# СЕМАНТИЧЕСКИЙ АНАЛИЗ ПО WAIT_EVENT
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : summary_report : ПОДГОТОВКА ПРОМПТОВ ПО WAIT_EVENT  '
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : summary_report : ПОДГОТОВКА ПРОМПТОВ ПО WAIT_EVENT  ' >> $LOG_FILE
-
-PROMPT_FILE=$current_path'/net.1.wait_event.prompt.txt' 
-echo 'Выдели общие части из текста и найти смысловые совпадения. Сформируй краткий итог по необходимым мероприятиям в виде сводной таблицы.' > $PROMPT_FILE  
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : PROMPT FILE = '$PROMPT_FILE
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : PROMPT FILE = '$PROMPT_FILE >> $LOG_FILE
-chmod 777 $PROMPT_FILE
-mv $PROMPT_FILE $REPORT_DIR
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  FILE '$PROMPT_FILE' HAS BEEN MOVED to '$REPORT_DIR
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  FILE '$PROMPT_FILE' HAS BEEN MOVED to '$REPORT_DIR >> $LOG_FILE		
-
-for wait_event_type in 'BufferPin' 'Extension' 'IO' 'IPC' 'Lock' 'LWLock' 'Timeout'
-do 
-echo  'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : '$wait_event_type
-echo  'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : '$wait_event_type >> $LOG_FILE
-
-  WAIT_EVENT_ADVICE_FILE=$current_path'/net.1.wait_event.'$wait_event_type'.txt'
-  let min_id=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT get_min_id_4_tmp_wait_events('$wait_event_type')"` 2>$ERR_FILE
-  let max_id=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT get_max_id_4_tmp_wait_events('$wait_event_type')"` 2>$ERR_FILE
-  
-  if [ $min_id -gt 0 ]
-  then   
-   
-    for ((curr_id=$min_id; curr_id <= $max_id; curr_id++))
-    do
-      curr_wait_event=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT wait_event FROM tmp_wait_events WHERE id = $curr_id AND wait_event_type='$wait_event_type'"`
-	  
-      advice_text=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT advice_for_wait_event_by_id( $curr_id ) "` 2>$ERR_FILE
-	  if [ "$advice_text" == "NEW" ]
-	  then 
-	    NEW_PROMPT_FILE=$current_path'/net.1.wait_event.new_prompt.'$curr_wait_event'.txt' 
-		echo 'Как уменьшить количество событий ожидания wait_event= '$curr_wait_event' для СУБД PostgreSQL?' > $NEW_PROMPT_FILE    
-		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : NEW_PROMPT FILE = '$NEW_PROMPT_FILE
-        echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : NEW_PROMPT FILE = '$NEW_PROMPT_FILE >> $LOG_FILE
-		chmod 777 $NEW_PROMPT_FILE
-        mv $NEW_PROMPT_FILE $REPORT_DIR
-        echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  REPORT FILE '$NEW_PROMPT_FILE' HAS BEEN MOVED to '$REPORT_DIR
-        echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  REPORT FILE '$NEW_PROMPT_FILE' HAS BEEN MOVED to '$REPORT_DIR >> $LOG_FILE		
-	  else 
-	   echo $advice_text >> $WAIT_EVENT_ADVICE_FILE
-	   echo ' ' >> $WAIT_EVENT_ADVICE_FILE
-	  fi 
-    done	
-	
-   chmod 777 $WAIT_EVENT_ADVICE_FILE
-   mv $WAIT_EVENT_ADVICE_FILE $REPORT_DIR
-  
-   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  FILE '$WAIT_EVENT_ADVICE_FILE' HAS BEEN MOVED to '$REPORT_DIR
-   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  FILE '$WAIT_EVENT_ADVICE_FILE' HAS BEEN MOVED to '$REPORT_DIR >> $LOG_FILE		
-  fi  
-
-done
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ПОДГОТОВКА ПРОМПТОВ ПО WAIT_EVENT - ЗАКОНЧЕНА'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ПОДГОТОВКА ПРОМПТОВ ПО WAIT_EVENT - ЗАКОНЧЕНА' >> $LOG_FILE
-# СЕМАНТИЧЕСКИЙ АНАЛИЗ ПО WAIT_EVENT
-####################################################################################################################################
-
 
 ##################################################################################################################################
 # QUERYID FOR PARETO
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО SQL(ДИАГРАММА ПАРЕТО) - НАЧАТ'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО SQL(ДИАГРАММА ПАРЕТО) - НАЧАТ' >> $LOG_FILE
 
-REPORT_FILE=$current_path'/postgres.3.queryid.txt'
+REPORT_FILE=$current_path'/1.5.queryid_pareto.txt'
 
 psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_queryid_for_pareto( '$start_timestamp' , '$finish_timestamp' )) " >>$REPORT_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
@@ -499,69 +345,60 @@ mv $REPORT_FILE $REPORT_DIR
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО SQL(ДИАГРАММА ПАРЕТО)  - ЗАКОНЧЕН'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО SQL(ДИАГРАММА ПАРЕТО)  - ЗАКОНЧЕН' >> $LOG_FILE
-
 # QUERYID FOR PARETO
 ####################################################################################################################################
 
-####################################################################################################################################
-# СЕМАНТИЧЕСКИЙ АНАЛИЗ ПО SQL ЗАПРОСАМ
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : summary_report : ПОДГОТОВКА ПРОМПТОВ ПО SQL ЗАПРОСАМ '
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : summary_report : ПОДГОТОВКА ПРОМПТОВ ПО SQL ЗАПРОСАМ  ' >> $LOG_FILE
+##################################################################################################################################
+# SCENARIO REPORT
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ОТЧЕТ ПО SQL СЦЕНАРИЯМ - НАЧАТ '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ОТЧЕТ ПО SQL СЦЕНАРИЯМ - НАЧАТ ' >> $LOG_FILE
 
-PROMPT_FILE=$current_path'/net.2.sql.prompt.txt' 
-echo 'Выдели ключевые паттерны SQL запросов , с уточнением - сколько раз встречается паттерн. Сформируй итоговую таблицу - какие паттерны используются для каждого queryid. Выдели ключевые особенности SQL запроса, использующего наибольшее количество паттернов.' > $PROMPT_FILE  
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : PROMPT FILE = '$PROMPT_FILE
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : PROMPT FILE = '$PROMPT_FILE >> $LOG_FILE
-chmod 777 $PROMPT_FILE
-mv $PROMPT_FILE $REPORT_DIR
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  FILE '$PROMPT_FILE' HAS BEEN MOVED to '$REPORT_DIR
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  FILE '$PROMPT_FILE' HAS BEEN MOVED to '$REPORT_DIR >> $LOG_FILE	
+current_test_id=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT load_test_get_current_test_id()"` 2>$ERR_FILE
+max_sc_count=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT count(id) FROM testing_scenarios WHERE test_id = $current_test_id"` 2>$ERR_FILE
 
-for wait_event_type in 'BufferPin' 'Extension' 'IO' 'IPC' 'Lock' 'LWLock' 'Timeout'
+for ((sc_count=1; sc_count <= $max_sc_count; sc_count++ )) 
 do 
-echo  'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : '$wait_event_type
-echo  'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : '$wait_event_type >> $LOG_FILE
-  
-  QUERYID_ADVICE_FILE=$current_path'/net.2.sql.'$wait_event_type'.txt'
-  let min_id=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT get_min_id_tmp_queryid('$wait_event_type')"` 2>$ERR_FILE
-  let max_id=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT get_max_id_tmp_queryid('$wait_event_type')"` 2>$ERR_FILE
-  
-  if [ $min_id -gt 0 ]
-  then     
-     
-    for ((curr_id=$min_id; curr_id <= $max_id; curr_id++))
-    do
-		query_id=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT get_queryid_by_id("$curr_id")"` 2>$ERR_FILE
-        SQL_QUERY=`psql -d $expecto_db -U $expecto_user -Aqtc  "SELECT get_sql_by_queryid($query_id)" 2>$ERR_FILE`
-		echo ' ' >> $QUERYID_ADVICE_FILE 
-		echo $query_id >> $QUERYID_ADVICE_FILE 
-		echo ' ' >> $QUERYID_ADVICE_FILE 
-		echo "$SQL_QUERY" >> $QUERYID_ADVICE_FILE 		
-    done
-	
-	chmod 777 $QUERYID_ADVICE_FILE
-    mv $QUERYID_ADVICE_FILE $REPORT_DIR
+	queryid=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT queryid FROM testing_scenarios WHERE id = $sc_count AND  test_id = $current_test_id"` 2>$ERR_FILE
+		
+	#####################################################################################################
+	## ОЖИДАНИЯ ПО queryid
+	for wait_event_type in 'BufferPin' 'Extension' 'IO' 'IPC' 'Lock' 'LWLock' 'Timeout'
+	do 
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СЦЕНАРИЙ-'$sc_count' WAIT_EVENT_TYPE='$wait_event_type
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СЦЕНАРИЙ-'$sc_count' WAIT_EVENT_TYPE='$wait_event_type >> $LOG_FILE
+	  
+	  REPORT_FILE=$current_path'/scenario.'$sc_count'.'$queryid'.'$wait_event_type'.txt'
+	  
+	  psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_queryid_stat("$queryid" , '$wait_event_type' , '$start_timestamp' , '$finish_timestamp'))" > $REPORT_FILE 2>$ERR_FILE
+	  if [ $? -ne 0 ]
+	  then
+		echo 'ERROR : queryid_stat TERMINATED WITH ERROR. SEE DETAILS IN '$ERR_FILE
+		echo 'ERROR : queryid_stat TERMINATED WITH ERROR. SEE DETAILS IN '$ERR_FILE >> $LOG_FILE
+		exit 100
+	  fi
 
-    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  REPORT FILE '$QUERYID_ADVICE_FILE' HAS BEEN MOVED to '$REPORT_DIR
-    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  REPORT FILE '$QUERYID_ADVICE_FILE' HAS BEEN MOVED to '$REPORT_DIR >> $LOG_FILE
-  fi
+		chmod 777 $REPORT_FILE
+		mv $REPORT_FILE $REPORT_DIR
+
+		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
+		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
+	done  
+	## ОЖИДАНИЯ ПО queryid
+	#####################################################################################################
+	
 done
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ПОДГОТОВКА ПРОМПТОВ ПО SQL ЗАПРОСАМ - ЗАКОНЧЕНА'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ПОДГОТОВКА ПРОМПТОВ ПО SQL ЗАПРОСАМ - ЗАКОНЧЕНА' >> $LOG_FILE
-# СЕМАНТИЧЕСКИЙ АНАЛИЗ ПО SQL ЗАПРОСАМ
-####################################################################################################################################
-
-
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ОТЧЕТ ПО SQL СЦЕНАРИЯМ - ЗАКОНЧЕН '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ОТЧЕТ ПО SQL СЦЕНАРИЯМ - ЗАКОНЧЕН ' >> $LOG_FILE
+# SCENARIO REPORT
+##################################################################################################################################
 
 ##################################################################################################################################
 # SQL LIST 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ФОРМИРОВАНИЕ СПИСКА SQL - НАЧАТО'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ФОРМИРОВАНИЕ СПИСКА SQL - НАЧАТО' >> $LOG_FILE
 
-REPORT_FILE=$current_path'/postgres.x.sql_list.txt'
+REPORT_FILE=$current_path'/x.sql_list.txt'
 
 psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_sql_list( '$start_timestamp' , '$finish_timestamp' )) " >>$REPORT_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
@@ -579,6 +416,5 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK ' >> $LOG_FILE
 
 # SQL LIST 
 ####################################################################################################################################
-
 
 exit 0 

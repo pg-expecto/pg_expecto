@@ -1828,7 +1828,7 @@ CREATE UNLOGGED TABLE os_stat_vmstat_median
 	swap_so_long numeric , -- so — swap out (из RAM в swap)
 	
 	io_bi_long numeric, -- bi — блоки, считанные с устройств
-	io_bo_long numeric, -- bo — записанные на устройства 
+	io_bo_long numeric, -- bo — блоки, записанные на устройства 
 	
 	system_in_long numeric, -- in — прерывания
 	system_cs_long numeric, -- cs — переключения контекста
@@ -3810,1704 +3810,202 @@ COMMENT ON COLUMN testing_scenarios.test_id IS 'ID нагурзочного те
 
 
 --------------------------------------------------------------------------------
--- report_queryid_for_pareto.sql
--- version 3.0
+-- report_queryid_stat.sql
+-- version 7.0
 --------------------------------------------------------------------------------
+-- Статистика по отдельному SQL запросу
 --
--- report_queryid_for_pareto Диаграмма Парето по queryid
---
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- Сформировать диаграмму Парето по queryid
-CREATE OR REPLACE FUNCTION report_queryid_for_pareto(  start_timestamp text , finish_timestamp text ) RETURNS text[] AS $$
-DECLARE
- result_str text[] ;
- line_count integer ;
- min_timestamp timestamptz ; 
- max_timestamp timestamptz ;   
- 
- wait_event_type_rec record ;
- wait_event_rec record ;
- 
- total_wait_event_count integer ;
- pct_for_80 numeric ;
- 
- 
- corr_bufferpin DOUBLE PRECISION ; 
- corr_extension DOUBLE PRECISION ; 
- corr_io DOUBLE PRECISION ; 
- corr_ipc DOUBLE PRECISION ; 
- corr_lock DOUBLE PRECISION ; 
- corr_lwlock DOUBLE PRECISION ; 
- corr_timeout DOUBLE PRECISION ; 
- 
- wait_event_type_corr_rec  record ; 
-  
- tmp_queryid_index integer ; 
- wait_event_list text ;
- wait_event_list_rec record ;
- 
- curr_calls numeric; 
-BEGIN
-	line_count = 1 ;
-	
-	result_str[line_count] = 'ОТЧЕТ ПО QUERYID ДЛЯ ДИАГРАММЫ ПАРЕТО';	
-	line_count=line_count+1;
-	
-	line_count=line_count+1;
-	SELECT date_trunc( 'minute' , to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) )
-	INTO    min_timestamp ; 
-  
-	SELECT date_trunc( 'minute' , to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) )
-	INTO    max_timestamp ; 
-	
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+2; 
-	
-	result_str[line_count] = 'SQL ВЫРАЖЕНИЯ, ВЫЗЫВАЮЩИЕ 80% ОЖИДАНИЙ,';	
-	line_count=line_count+1;	
-	result_str[line_count] = 'C КОЭФФИЦИЕНТОМ КОРРЕЛЯЦИЯ МЕЖДУ ';
-	line_count=line_count+1;	
-	result_str[line_count] = 'ТИПОМ ОЖИДАНИЯ И ОЖИДАНИЯМИ СУБД';	
-	line_count=line_count+1;	
-	result_str[line_count] = '0.7 и ВЫШЕ';	
-	line_count=line_count+2;	
-	
-	result_str[line_count] =' QUERYID - идентификатор SQL выражения  |';
-	line_count=line_count+1;
-	result_str[line_count] =' CALLS - количество выполнений |';
-	line_count=line_count+1;
-	result_str[line_count] =' WAITINGS - Ожидания wait_event_type по данному queryid |';
-	line_count=line_count+1;
-	result_str[line_count] =' PCT - отношение ожиданий wait_event_type по данному queryid |';
-	line_count=line_count+1;
-	result_str[line_count] =' к общему количество ожиданий wait_event_type |';
-	line_count=line_count+1;
-	result_str[line_count] =' DBNAME ROLENAME - Наименование БД и Роли  |';
-	line_count=line_count+1;
-	result_str[line_count] =' WAIT_EVENT LIST - Список событий ожиданий  |';
-	line_count=line_count+2;
-	
-	
-	DROP TABLE IF EXISTS wait_event_type_corr;
-	CREATE TEMPORARY TABLE wait_event_type_corr
-	(
-		wait_event_type text  ,   
-		corr_value DOUBLE PRECISION 
-	);
-	
-	----------------------------------------------
-	-- ВНУТРЕННЯЯ ТАБЛИЦА ОТЧЕТА 
-	TRUNCATE TABLE tmp_queryid_for_pareto;
-	-- ВНУТРЕННЯЯ ТАБЛИЦА ОТЧЕТА 
-	----------------------------------------------	
-
-
-	tmp_queryid_index = 0 ; 
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - bufferpin
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		bufferpin_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_bufferpin  AS curr_bufferpin 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_bufferpin > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_bufferpin ) , 0 ) AS correlation_value 
-		INTO corr_bufferpin
-		FROM
-			waitings os JOIN bufferpin_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;	
-			
-		INSERT INTO wait_event_type_corr ( wait_event_type , corr_value )
-		VALUES ( 'BufferPin' , corr_bufferpin );
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - bufferpin 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - extension
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		extension_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_extension  AS curr_extension 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_extension > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_extension ) , 0 ) AS correlation_value 
-		INTO corr_extension
-		FROM
-			waitings os JOIN extension_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;
-		
-		INSERT INTO wait_event_type_corr ( wait_event_type , corr_value )
-		VALUES ( 'Extension' , corr_extension );			
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - extension 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - io
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		io_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_io  AS curr_io 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_io > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_io ) , 0 ) AS correlation_value 
-		INTO corr_io
-		FROM
-			waitings os JOIN io_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;	
-			
-		INSERT INTO wait_event_type_corr ( wait_event_type , corr_value )
-		VALUES ( 'IO' , corr_io );			
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - io 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - ipc
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		ipc_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_ipc  AS curr_ipc 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_ipc > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_ipc ) , 0 ) AS correlation_value 
-		INTO corr_ipc
-		FROM
-			waitings os JOIN ipc_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;
-	
-		INSERT INTO wait_event_type_corr ( wait_event_type , corr_value )
-		VALUES ( 'IPC' , corr_ipc );
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - ipc 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - lock
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		lock_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_lock  AS curr_lock 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_lock > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_lock ) , 0 ) AS correlation_value 
-		INTO corr_lock
-		FROM
-			waitings os JOIN lock_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;
-
-		INSERT INTO wait_event_type_corr ( wait_event_type , corr_value )
-		VALUES ( 'Lock' , corr_lock );			
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - lock 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - lwlock
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_waitings > 0				
-		) ,
-		lwlock_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_lwlock  AS curr_lwlock 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_lwlock > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_lwlock ) , 0 ) AS correlation_value 
-		INTO corr_lwlock
-		FROM
-			waitings os JOIN lwlock_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;
-			
-		INSERT INTO wait_event_type_corr ( wait_event_type , corr_value )
-		VALUES ( 'LWLock' , corr_lwlock );
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - lwlock 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - timeout
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_waitings > 0				
-		) ,
-		timeout_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_timeout  AS curr_timeout 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_timeout > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_timeout ) , 0 ) AS correlation_value 
-		INTO corr_timeout
-		FROM
-			waitings os JOIN timeout_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;
-		
-		INSERT INTO wait_event_type_corr ( wait_event_type , corr_value )
-		VALUES ( 'Timeout' , corr_timeout );
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - timeout 
-	----------------------------------------------------------------------------------------------------
-	
-	
-	-----------------------------------------------------------------------------
-	
-	
-	FOR wait_event_type_rec IN 
-	SELECT 	
-		wait_event_type 
-	FROM 	
-		statement_stat_waitings_median
-	WHERE 
-		curr_timestamp  BETWEEN min_timestamp AND max_timestamp
-	GROUP BY 
-		wait_event_type 
-	ORDER BY 
-		wait_event_type 
-	LOOP 
-		SELECT *
-		INTO wait_event_type_corr_rec
-		FROM wait_event_type_corr
-		WHERE wait_event_type = wait_event_type_rec.wait_event_type ;
-		
-		IF wait_event_type_corr_rec.corr_value < 0.7 
-		THEN 
-			CONTINUE;
-		END IF ; 
-		
-	    line_count=line_count+1;
-		result_str[line_count] =' WAIT_EVENT_TYPE = '||wait_event_type_rec.wait_event_type||'|';
-		line_count=line_count+1;	
-		
-		
-		result_str[line_count] =' QUERYID  '||'|'||	
-								' CALLS '||'|' ||
-								' WAITINGS '||'|' ||  --Всего ожидания wait_event_type по данному queryid
-								' PCT '||'|' ||       --отношение ожиданий wait_event_type по данному queryid к общему количество ожиданий wait_event_type
-								' DBNAME ROLENAME '||'|'||
-								' WAIT_EVENT LIST '||'|'
-								;	
-		line_count=line_count+1;
-		
-		pct_for_80 = 0;
-		
-		FOR wait_event_rec IN 
-		SELECT 	
-			queryid , dbname , username ,
-			SUM(curr_value_long) AS count 
-		FROM 	
-			statement_stat_waitings_median
-		WHERE 
-			curr_timestamp  BETWEEN min_timestamp AND max_timestamp
-			AND wait_event_type = wait_event_type_rec.wait_event_type 
-		GROUP BY 
-			queryid , dbname , username 
-		ORDER BY 
-			4 desc 
-		LOOP	
-			WITH report_wait_event_for_pareto AS
-			(
-			SELECT 					
-				SUM(curr_value_long) AS counter 
-			FROM 	
-				statement_stat_waitings_median
-			WHERE 
-				curr_timestamp  BETWEEN min_timestamp AND max_timestamp
-				AND wait_event_type = wait_event_type_rec.wait_event_type
-			GROUP BY 				
-				queryid , dbname , username 
-			)
-			SELECT SUM(counter) 
-			INTO total_wait_event_count 
-			FROM report_wait_event_for_pareto ; 
-			
-			IF pct_for_80 = 0 
-			THEN 
-				pct_for_80 = (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric ; 
-			ELSE
-			    pct_for_80 = pct_for_80 + (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric ; 
-			END IF;
-			
-			SELECT 
-				SUM(calls_long)
-			INTO
-				curr_calls
-			FROM 
-				statement_stat_median
-			WHERE
-				curr_timestamp  BETWEEN min_timestamp AND max_timestamp
-				AND queryid = wait_event_rec.queryid  
-				AND dbname = wait_event_rec.dbname ; 
-			
-			result_str[line_count] =  wait_event_rec.queryid  ||'|'||
-									  REPLACE ( TO_CHAR( ROUND( curr_calls::numeric , 0 ) , '000000000000D0000') , '.' , ',' ) ||'|'||
-									  wait_event_rec.count  ||'|'||
-									  REPLACE ( TO_CHAR( ROUND( (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ||'|'||
-									  wait_event_rec.dbname||' '||wait_event_rec.username||'|'
-									  ;
-									  
-			FOR wait_event_list_rec IN 
-			SELECT 
-				DISTINCT wait_event
-			FROM 
-				statement_stat_waitings_median
-			WHERE 
-				curr_timestamp  BETWEEN min_timestamp AND max_timestamp
-				AND wait_event_type = wait_event_type_rec.wait_event_type
-				AND queryid = wait_event_rec.queryid 
-			LOOP
-				result_str[line_count] = result_str[line_count] || wait_event_list_rec.wait_event ||' ';
-			END LOOP ;
-			result_str[line_count] = result_str[line_count] ||'|';
- 
-			line_count=line_count+1; 
-			
-			tmp_queryid_index = tmp_queryid_index + 1 ;
-			INSERT INTO  tmp_queryid_for_pareto 
-			( id , wait_event_type , queryid )
-			VALUES 
-			( tmp_queryid_index ,  wait_event_type_rec.wait_event_type , wait_event_rec.queryid );
-			
-			IF pct_for_80 > 80.0 
-			THEN 
-				EXIT;
-			END IF;
-			
-		END LOOP ;		
-		--FOR wait_event_rec IN 
-	END LOOP;
-	--FOR wait_event_type_rec IN 
-
-return result_str ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION report_queryid_for_pareto IS 'Диаграмма Парето по queryid';
--- Диаграмма Парето по queryid
--------------------------------------------------------------------------------
-
-
-	
---------------------------------------------------------------------------------
--- report_sql_list.sql
--- version 1.0
---------------------------------------------------------------------------------
---
--- report_sql_list Список SQL выражений за период
---
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- Список SQL выражений за период
-CREATE OR REPLACE FUNCTION report_sql_list(  start_timestamp text , finish_timestamp text ) RETURNS text[] AS $$
-DECLARE
- result_str text[] ;
- line_count integer ;
- min_timestamp timestamptz ; 
- max_timestamp timestamptz ;   
- sql_rec record ; 
- 
-BEGIN
-	line_count = 1 ;
-	
-	result_str[line_count] = 'СПИСОК SQL ВЫРАЖЕНИЙ';	
-	line_count=line_count+1;
-	
-	line_count=line_count+1;
-	SELECT date_trunc( 'minute' , to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) )
-	INTO    min_timestamp ; 
-  
-	SELECT date_trunc( 'minute' , to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) )
-	INTO    max_timestamp ; 
-	
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+2; 
-	
-	result_str[line_count] = 'QUERYID | SQL TEXT |';	
-	line_count=line_count+1;	
-	
-	FOR sql_rec IN 
-	WITH ssm AS
-	(
-		SELECT 
-			queryid
-		FROM
-			statement_stat_median
-		WHERE 
-			curr_timestamp BETWEEN min_timestamp AND max_timestamp
-		GROUP BY 
-			queryid			
-	)
-	SELECT 
-		sss.* 
-	FROM 
-		statement_stat_sql sss
-		JOIN  ssm ON ( sss.queryid = ssm.queryid )
-	LOOP
-		result_str[line_count] = sql_rec.queryid||'|'|| sql_rec.query;	
-	    line_count=line_count+1;
-	END LOOP ;	
-	
-	
-return result_str ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION report_queryid_for_pareto IS 'Список SQL выражений за период';
--- Список SQL выражений за период
--------------------------------------------------------------------------------
---------------------------------------------------------------------------------
--- reports_cluster_report_4graph.sql
--- version 1.0
---------------------------------------------------------------------------------
--- Данные для построения графиков по производительности и ожиданиям  СУБД
---
--- reports_cluster_report_4graph Данные для построения графиков по производительности и ожиданиям  СУБД
+-- report_queryid_stat История выполения и ожиданий по отдельному SQL запросу
 --
 --------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
--- Данные для построения графиков по производительности и ожиданиям  СУБД
-CREATE OR REPLACE FUNCTION reports_cluster_report_4graph(  cluster_performance_start_timestamp text , cluster_performance_finish_timestamp text   ) RETURNS text[] AS $$
+--История выполения и ожиданий по отдельному SQL запросу
+CREATE OR REPLACE FUNCTION report_queryid_stat(  current_queryid bigint  , current_wait_event_type text , start_timestamp text , finish_timestamp text  ) RETURNS text[] AS $$
 DECLARE
  result_str text[] ;
  line_count integer ;
  min_timestamp timestamptz ; 
  max_timestamp timestamptz ; 
- 
- counter integer ; 
- min_max_rec record ;
- 
- cluster_stat_median_rec record ; 	
- 
-BEGIN
-	line_count = 1 ;
-	
-	
-	IF cluster_performance_finish_timestamp = 'CURRENT_TIMESTAMP'
-	THEN 
-		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-
-		min_timestamp = max_timestamp - interval '1 hour'; 	
-	ELSE
-		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	min_timestamp ; 
-		
-		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-	END IF ;
-
-
-	
-	result_str[line_count] = 'ПРОИЗВОДИТЕЛЬНОСТЬ И ОЖИДАНИЯ СУБД' ; 
-	line_count=line_count+1;
-	
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+2; 
-	
-	DROP TABLE IF EXISTS tmp_timepoints;
-	CREATE TEMPORARY TABLE tmp_timepoints
-	(
-		curr_timestamp timestamptz  ,   
-		curr_timepoint integer 
-	);
-
-
-	INSERT INTO tmp_timepoints
-	(
-		curr_timestamp ,	
-		curr_timepoint 
-	)
-	SELECT 
-		curr_timestamp , 
-		row_number() over (order by curr_timestamp) AS x
-	FROM
-	cluster_stat_median
-	WHERE 
-		curr_timestamp BETWEEN min_timestamp AND max_timestamp  
-	ORDER BY curr_timestamp	;
-		
-	SELECT 
-		MIN( cl.curr_op_speed) AS min_curr_op_speed , MAX( cl.curr_op_speed) AS max_curr_op_speed , 
-		MIN( cl.curr_waitings) AS min_curr_waitings , MAX( cl.curr_waitings) AS max_curr_waitings , 
-		MIN( cl.curr_bufferpin) AS min_curr_bufferpin , MAX( cl.curr_bufferpin) AS max_curr_bufferpin , 
-		MIN( cl.curr_extension) AS min_curr_extension , MAX( cl.curr_extension) AS max_curr_extension , 
-		MIN( cl.curr_io) AS min_curr_io , MAX( cl.curr_io) AS max_curr_io , 
-		MIN( cl.curr_ipc) AS min_curr_ipc , MAX( cl.curr_ipc) AS max_curr_ipc , 
-		MIN( cl.curr_lock) AS min_curr_lock , MAX( cl.curr_lock) AS max_curr_lock , 
-		MIN( cl.curr_lwlock) AS min_curr_lwlock , MAX( cl.curr_lwlock) AS max_curr_lwlock ,
-		MIN( cl.curr_timeout) AS min_curr_timeout , MAX( cl.curr_timeout) AS max_curr_timeout 
-	INTO  	min_max_rec
-	FROM 
-		cluster_stat_median cl 
-	WHERE 	
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	;
-
-	
-	result_str[line_count] = 	'timestamp'||'|'||  --1
-									'№'||'|'||--2	
-									'SPEED '||'|'|| --3
-									'WAITINGS' ||'|' --4
-									;
-							
-								
-	IF min_max_rec.max_curr_bufferpin > 0 
-	THEN 
-		result_str[line_count] = result_str[line_count] || 
-								 'BUFFERPIN ' ||'|' ;
-	END IF ;
-	
-	IF min_max_rec.max_curr_extension > 0 
-	THEN 
-		result_str[line_count] = result_str[line_count] || 
-								 'EXTENSION ' ||'|' ;
-	END IF ;
-	
-	IF min_max_rec.max_curr_io > 0 
-	THEN 
-		result_str[line_count] = result_str[line_count] || 
-								 'IO ' ||'|' ;
-	END IF ;
-	
-	IF min_max_rec.max_curr_ipc > 0 
-	THEN 
-		result_str[line_count] = result_str[line_count] || 
-								 'IPC ' ||'|' ;
-	END IF ;
-	
-	IF min_max_rec.max_curr_lock > 0 
-	THEN 
-		result_str[line_count] = result_str[line_count] || 
-								 'LOCK ' ||'|' ;
-	END IF ;
-	
-	IF min_max_rec.max_curr_lwlock > 0 
-	THEN 
-		result_str[line_count] = result_str[line_count] || 
-								 'LWLOCK ' ||'|' ;
-	END IF ;
-	
-	IF min_max_rec.max_curr_timeout > 0 
-	THEN 
-		result_str[line_count] = result_str[line_count] || 
-								 'TIMEOUT ' ||'|' ;
-	END IF ;
-								
-	line_count=line_count+1; 
-	
-	counter = 0 ; 
-	FOR cluster_stat_median_rec IN
-	SELECT 
-		cl.curr_timestamp , --1
-		cl.curr_op_speed AS curr_op_speed ,  --2
-		cl.curr_waitings AS curr_waitings  ,--3
-		cl.curr_bufferpin AS curr_bufferpin , --4
-		cl.curr_extension AS curr_extension , --5
-		cl.curr_io AS curr_io , --8
-		cl.curr_ipc AS curr_ipc , --7
-		cl.curr_lock AS curr_lock , --9
-		cl.curr_lwlock AS curr_lwlock, 	 --9
-		cl.curr_timeout AS curr_timeout 	 --10
-	FROM 
-		cluster_stat_median cl
-	WHERE 	
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
-    ORDER BY cl.curr_timestamp 
-	LOOP
-		counter = counter + 1 ;
-
-		----------------------------------------------------------------------------------------------------
-		result_str[line_count] = 	to_char( cluster_stat_median_rec.curr_timestamp , 'YYYY-MM-DD HH24:MI') ||'|'|| --1
-									counter ||'|'||
-									REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_op_speed::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'|| --2
-									REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_waitings::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'  --3
-									;
-							
-								
-		IF min_max_rec.max_curr_bufferpin > 0 
-		THEN 
-			result_str[line_count] = result_str[line_count] || 
-									 REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_bufferpin::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|';  --4 
-		END IF ;
-		
-		IF min_max_rec.max_curr_extension > 0 
-		THEN 
-			result_str[line_count] = result_str[line_count] || 
-									 REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_extension::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|';  --5 
-		END IF ;
-		
-		IF min_max_rec.max_curr_io > 0 
-		THEN 
-			result_str[line_count] = result_str[line_count] || 
-									 REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_io::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|';  --6 ;
-		END IF ;
-		
-		IF min_max_rec.max_curr_ipc > 0 
-		THEN 
-			result_str[line_count] = result_str[line_count] || 
-									 REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_ipc::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'; --7;
-		END IF ;
-		
-		IF min_max_rec.max_curr_lock > 0 
-		THEN 
-			result_str[line_count] = result_str[line_count] || 
-									 REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_lock::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|';  --8;
-		END IF ;
-		
-		IF min_max_rec.max_curr_lwlock > 0 
-		THEN 
-			result_str[line_count] = result_str[line_count] || 
-									 REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_lwlock::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'; --9
-		END IF ;
-		
-		IF min_max_rec.max_curr_timeout > 0 
-		THEN 
-			result_str[line_count] = result_str[line_count] || 
-									 REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_timeout::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|';  --10
-		END IF ;	
-		
-	  line_count=line_count+1; 			
-	END LOOP;
-
-  return result_str ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_cluster_report_4graph IS 'Данные для построения графиков по производительности и ожиданиям  СУБД';
--- Данные для построения графиков по производительности и ожиданиям  СУБД
---------------------------------------------------------------------------------
---------------------------------------------------------------------------------
--- reports_cluster_report_meta.sql
--- version 6.0
---------------------------------------------------------------------------------
--- Метаданные для отчета по производительности и ожиданиям на уровне СУБД
---
--- reports_cluster_report_meta Метаданные для отчета по производительности и ожиданиям на уровне СУБД
---
---------------------------------------------------------------------------------
-
---------------------------------------------------------------------------------
--- Отчет по производительности и ожиданиям на уровне СУБД
-CREATE OR REPLACE FUNCTION reports_cluster_report_meta(  cluster_performance_start_timestamp text , cluster_performance_finish_timestamp text   ) RETURNS text[] AS $$
-DECLARE
- result_str text[] ;
- line_count integer ;
- min_timestamp timestamptz ; 
- max_timestamp timestamptz ; 
+ current_timepoint timestamptz ; 
+ statement_stat_median_rec record ;
  
  counter integer ; 
  min_max_rec record ;
  line_counter integer ; 
  
+ min_max_pct_rec record ;
  
-  
-  min_max_pct_rec record ;
  
-  cluster_stat_median_rec record ; 	
-  current_test_queryid bigint ;
+ waitings_calls  DOUBLE PRECISION;
+ statement_stat_waitings_median_rec record ;
+ 
+  wait_event_count_rec record  ;
   
-  active_speed_correlation DOUBLE PRECISION;
-  speed_waitings_correlation DOUBLE PRECISION;
+  temp_wait_event_names_rec record ; 
   
-  corr_bufferpin DOUBLE PRECISION ; 
-  corr_extension DOUBLE PRECISION ; 
-  corr_io DOUBLE PRECISION ; 
-  corr_ipc DOUBLE PRECISION ; 
-  corr_lock DOUBLE PRECISION ; 
-  corr_lwlock DOUBLE PRECISION ; 
-  corr_timeout DOUBLE PRECISION ; 
-  	
-  speed_regr_rec record ;
-  waitings_regr_rec record ; 
-    
-  column_count integer ;
-  stress_flag BOOLEAN; --TRUE - если отчет составляется по результатам НТ
-  min_max_load_rec record ;
-  current_test_id integer ;
-  current_load_rec record ; 
+  corr_value DOUBLE PRECISION;  
   
-  --Взвешенная корреляция ожиданий (ВКО) 
-  pct_bufferpin numeric ; 
-  pct_extension numeric  ; 
-  pct_io numeric  ; 
-  pct_ipc numeric  ; 
-  pct_lock numeric  ; 
-  pct_lwlock numeric  ; 
-  pct_timeout numeric  ; 
+  waitings_calls_rec record ;
   
-  score_bufferpin numeric ; 
-  score_extension numeric  ; 
-  score_io numeric  ; 
-  score_ipc numeric  ; 
-  score_lock numeric  ; 
-  score_lwlock numeric  ; 
-  score_timeout numeric  ; 
-  score_txt text[];
-  --Взвешенная корреляция ожиданий (ВКО) 
+  curr_calls numeric;
+  curr_waitings numeric;
+  curr_wait_event_type  numeric;
+
   
+  distinct_wait_event_rec record;
+  wait_event_rec record;
 BEGIN
 	line_count = 1 ;
-	
-	SELECT load_test_get_current_test_id()
-	INTO current_test_id; 
-	
-	
-	IF cluster_performance_finish_timestamp = 'CURRENT_TIMESTAMP'
-	THEN 
-		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
 
+	IF finish_timestamp = 'CURRENT_TIMESTAMP'
+	THEN 
+		SELECT 	to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) 
+		INTO 	max_timestamp ; 
+	
 		min_timestamp = max_timestamp - interval '1 hour'; 	
 	ELSE
-		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		SELECT 	to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' )
 		INTO 	min_timestamp ; 
 		
-		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
+		SELECT 	to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) 
+		INTO 	max_timestamp ; 		
 	END IF ;
-
-
 	
-	result_str[line_count] = 'ПРОИЗВОДИТЕЛЬНОСТЬ И ОЖИДАНИЯ СУБД' ; 
+	result_str[line_count] = 'ИСТОРИЯ ВЫПОЛНЕНИЯ И СОБЫТИЙ ОЖИДАНИЯ' ; 
+	line_count=line_count+1; 
+	result_str[line_count] = 'QUERYID'; 
+	line_count=line_count+1; 		
+	result_str[line_count] = current_queryid; 
+	line_count=line_count+1; 		
+	
+	result_str[line_count] = 'WAIT_EVENT_TYPE' ; 
+	line_count=line_count+1; 	
+	result_str[line_count] = current_wait_event_type ; 
+	line_count=line_count+1; 	
+	
+	
+	result_str[line_count] = to_char( min_timestamp , 'YYYY-MM-DD HH24:MI' ) ; 
+	line_count=line_count+1; 
+	
+	result_str[line_count] = to_char( max_timestamp , 'YYYY-MM-DD HH24:MI' ); 
+	line_count=line_count+2; 
+	
+	result_str[line_count] = 	'timestamp'||'|'|| 
+                                'dbname'||'|'||
+								'username'||'|'||
+								'calls'||'|'
+								;		
+	
+	FOR distinct_wait_event_rec IN 
+	SELECT
+		DISTINCT wait_event
+	FROM 
+		statement_stat_waitings_median
+	WHERE 
+		queryid = current_queryid AND 
+		wait_event_type = current_wait_event_type AND 
+		curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+	ORDER BY 1
+	LOOP
+		result_str[line_count] = result_str[line_count] || 	distinct_wait_event_rec.wait_event ||'|' ;
+	END LOOP ;
+	
 	line_count=line_count+1;
 	
 	
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+2; 
-
 	
-	DROP TABLE IF EXISTS tmp_timepoints;
-	CREATE TEMPORARY TABLE tmp_timepoints
-	(
-		curr_timestamp timestamptz  ,   
-		curr_timepoint integer 
-	);
-
-
-	INSERT INTO tmp_timepoints
-	(
-		curr_timestamp ,	
-		curr_timepoint 
-	)
-	SELECT 
-		curr_timestamp , 
-		row_number() over (order by curr_timestamp) AS x
-	FROM
-	cluster_stat_median
-	WHERE 
-		curr_timestamp BETWEEN min_timestamp AND max_timestamp  
-	ORDER BY curr_timestamp	;
-
-
---------------------------------------
--- Cтандартизация z-score
--- 	линия регрессии  скорости  : Y = a + bX
-	BEGIN
-		WITH stats AS 
-		(
-		  SELECT 
-			AVG(t.curr_timepoint::DOUBLE PRECISION) as avg1, 
-			STDDEV(t.curr_timepoint::DOUBLE PRECISION) as std1,
-			AVG(s.curr_op_speed::DOUBLE PRECISION) as avg2, 
-			STDDEV(s.curr_op_speed::DOUBLE PRECISION) as std2
-		  FROM
-			cluster_stat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp )
-		  WHERE 
-			t.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-		),
-		standardized_data AS 
-		(
-			SELECT 
-				(t.curr_timepoint::DOUBLE PRECISION - avg1) / std1 as x_z,
-				(s.curr_op_speed::DOUBLE PRECISION - avg2) / std2 as y_z
-			FROM
-				cluster_stat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp ) , stats
+	current_timepoint = min_timestamp;
+	WHILE current_timepoint <= max_timestamp
+	LOOP
+		result_str[line_count] = to_char(current_timepoint , 'YYYY-MM-DD HH24:MI')  ||'|';
+		
+		FOR statement_stat_median_rec IN 
+		SELECT 
+			dbname , 
+			username ,
+			SUM( calls_long  ) AS calls_long 	
+		FROM 
+			statement_stat_median
+		WHERE 
+			curr_timestamp = current_timepoint AND  queryid = current_queryid
+		GROUP BY 
+			dbname , username
+		LOOP
+			result_str[line_count] =	result_str[line_count] ||										
+										statement_stat_median_rec.dbname   ||'|'||
+										statement_stat_median_rec.username   ||'|'||
+										REPLACE ( TO_CHAR( ROUND( statement_stat_median_rec.calls_long::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )||'|';
+			FOR distinct_wait_event_rec IN 
+			SELECT
+				DISTINCT wait_event
+			FROM 
+				statement_stat_waitings_median
 			WHERE 
-				t.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-		)	
-		SELECT
-			REGR_SLOPE(y_z, x_z) as slope, --b
-			ATAN(REGR_SLOPE(y_z, x_z)) * 180 / PI() as slope_angle_degrees, --угол наклона
-			REGR_R2(y_z, x_z) as r_squared -- Коэффициент детерминации
-		INTO 
-			speed_regr_rec
-		FROM standardized_data;
-	EXCEPTION
-	  --STDDEV(s.curr_op_speed::DOUBLE PRECISION) = 0  
-	  WHEN division_by_zero THEN  -- Конкретное исключение для деления на ноль
-	    SELECT 
-			1.0 as slope, --b
-			0.0  as slope_angle_degrees, --угол наклона
-			0.0  as r_squared -- Коэффициент детерминации
-		INTO 
-		speed_regr_rec ;
-	END;
--- 	линия регрессии  скорости  : Y = a + bX
-
--- 	линия регрессии  ожиданий  : Y = a + bX
-	BEGIN
-		WITH stats AS 
-		(
-		  SELECT 
-			AVG(t.curr_timepoint::DOUBLE PRECISION) as avg1, 
-			STDDEV(t.curr_timepoint::DOUBLE PRECISION) as std1,
-			AVG(s.curr_waitings::DOUBLE PRECISION) as avg2, 
-			STDDEV(s.curr_waitings::DOUBLE PRECISION) as std2
-		  FROM
-			cluster_stat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp )
-		  WHERE 
-			t.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-		),
-		standardized_data AS 
-		(
-			SELECT 
-				(t.curr_timepoint::DOUBLE PRECISION - avg1) / std1 as x_z,
-				(s.curr_waitings::DOUBLE PRECISION - avg2) / std2 as y_z
-			FROM
-				cluster_stat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp ) , stats
-			WHERE 
-				t.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-		)	
-		SELECT
-			REGR_SLOPE(y_z, x_z) as slope, --b
-			ATAN(REGR_SLOPE(y_z, x_z)) * 180 / PI() as slope_angle_degrees, --угол наклона		
-			REGR_R2(y_z, x_z) as r_squared -- Коэффициент детерминации
-		INTO 
-			waitings_regr_rec
-		FROM standardized_data;
-	EXCEPTION
-	  --STDDEV(s.curr_waitings::DOUBLE PRECISION) = 0  
-	  WHEN division_by_zero THEN  -- Конкретное исключение для деления на ноль
-	    SELECT 
-			1.0 as slope, --b
-			0.0  as slope_angle_degrees, --угол наклона
-			0.0  as r_squared -- Коэффициент детерминации
-		INTO 
-		waitings_regr_rec ;
-	END;
--- 	линия регрессии  ожиданий  : Y = a + bX
-
--- Cтандартизация z-score
---------------------------------------
-		
-	result_str[line_count] = 'ЛИНИЯ РЕГРЕССИИ: Y = a + bX ' ; 
-	line_count=line_count+1; 
-	result_str[line_count] = 'ОПЕРАЦИОННАЯ СКОРОСТЬ' ; 
-	line_count=line_count+1; 
-	result_str[line_count] = 'Коэффициент детерминации R^2 ' ||'|'|| REPLACE ( TO_CHAR( ROUND( speed_regr_rec.r_squared::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 	
-	result_str[line_count] = 'угол наклона ' ||'|'|| REPLACE ( TO_CHAR( ROUND( speed_regr_rec.slope_angle_degrees::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	line_count=line_count+1; 
-	
-	
-	result_str[line_count] = 'ОЖИДАНИЯ СУБД' ; 
-	line_count=line_count+1; 
-	result_str[line_count] = 'Коэффициент детерминации R^2 ' ||'|'|| REPLACE ( TO_CHAR( ROUND( waitings_regr_rec.r_squared::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 	
-	result_str[line_count] = 'угол наклона ' ||'|'|| REPLACE ( TO_CHAR( ROUND( waitings_regr_rec.slope_angle_degrees::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	line_count=line_count+1; 
-
-	
-
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ СКОРОСТЬ - ОЖИДАНИЯ		
-		WITH 
-		operating_speed AS
-		(
-			SELECT 
-				curr_timestamp , curr_op_speed  AS operating_speed_long  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 						
-		) ,
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_curr_waitings 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_waitings > 0 
-		) 
-		SELECT COALESCE( corr( operating_speed_long , curr_curr_waitings ) , 0 ) AS correlation_value 
-		INTO speed_waitings_correlation
-		FROM
-			operating_speed os JOIN waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;	
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ СКОРОСТЬ - ОЖИДАНИЯ 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - bufferpin
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		bufferpin_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_bufferpin  AS curr_bufferpin 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_bufferpin > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_bufferpin ) , 0 ) AS correlation_value 
-		INTO corr_bufferpin
-		FROM
-			waitings os JOIN bufferpin_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;	
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - bufferpin 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - extension
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		extension_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_extension  AS curr_extension 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_extension > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_extension ) , 0 ) AS correlation_value 
-		INTO corr_extension
-		FROM
-			waitings os JOIN extension_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;	
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - extension 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - io
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		io_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_io  AS curr_io 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_io > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_io ) , 0 ) AS correlation_value 
-		INTO corr_io
-		FROM
-			waitings os JOIN io_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;	
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - io 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - ipc
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		ipc_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_ipc  AS curr_ipc 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_ipc > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_ipc ) , 0 ) AS correlation_value 
-		INTO corr_ipc
-		FROM
-			waitings os JOIN ipc_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;	
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - ipc 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - lock
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		lock_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_lock  AS curr_lock 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_lock > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_lock ) , 0 ) AS correlation_value 
-		INTO corr_lock
-		FROM
-			waitings os JOIN lock_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;	
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - lock 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - lwlock
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_waitings > 0				
-		) ,
-		lwlock_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_lwlock  AS curr_lwlock 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_lwlock > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_lwlock ) , 0 ) AS correlation_value 
-		INTO corr_lwlock
-		FROM
-			waitings os JOIN lwlock_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;	
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - lwlock 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - timeout
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_waitings > 0				
-		) ,
-		timeout_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_timeout  AS curr_timeout 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_timeout > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_timeout ) , 0 ) AS correlation_value 
-		INTO corr_timeout
-		FROM
-			waitings os JOIN timeout_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;	
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - timeout 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	-- Граничные значения
-	SELECT 
-		MIN( cl.curr_op_speed) AS min_curr_op_speed , MAX( cl.curr_op_speed) AS max_curr_op_speed , 
-		MIN( cl.curr_waitings) AS min_curr_waitings , MAX( cl.curr_waitings) AS max_curr_waitings , 
-		MIN( cl.curr_bufferpin) AS min_curr_bufferpin , MAX( cl.curr_bufferpin) AS max_curr_bufferpin , 
-		MIN( cl.curr_extension) AS min_curr_extension , MAX( cl.curr_extension) AS max_curr_extension , 
-		MIN( cl.curr_io) AS min_curr_io , MAX( cl.curr_io) AS max_curr_io , 
-		MIN( cl.curr_ipc) AS min_curr_ipc , MAX( cl.curr_ipc) AS max_curr_ipc , 
-		MIN( cl.curr_lock) AS min_curr_lock , MAX( cl.curr_lock) AS max_curr_lock , 
-		MIN( cl.curr_lwlock) AS min_curr_lwlock , MAX( cl.curr_lwlock) AS max_curr_lwlock ,
-		MIN( cl.curr_timeout) AS min_curr_timeout , MAX( cl.curr_timeout) AS max_curr_timeout 
-	INTO  	min_max_rec
-	FROM 
-		cluster_stat_median cl 
-	WHERE 	
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	;
-	-- Граничные значения
-	----------------------------------------------------------------------------------------------------
-		
-	
-	result_str[line_count] = 'КОРРЕЛЯЦИЯ | КОЭФФИЦИЕНТ | %(среднее количество ' ; 
-	line_count=line_count+1; 
-	result_str[line_count] = ' |  | ожиданий данного типа ' ; 
-	line_count=line_count+1; 
-	result_str[line_count] = ' |  | к общему количеству) ' ; 
-	line_count=line_count+1; 
-	
-	
-	--Взвешенная корреляция ожиданий (ВКО) 
-    pct_bufferpin = 	((min_max_rec.max_curr_bufferpin + min_max_rec.min_curr_bufferpin)/2.0)/
-						((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
-						
-    pct_extension = 	((min_max_rec.max_curr_extension + min_max_rec.min_curr_extension)/2.0)/
-						((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
-						
-    pct_io   		= 	((min_max_rec.max_curr_io + min_max_rec.min_curr_io)/2.0)/
-						((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
-						
-    pct_ipc  		= 	((min_max_rec.max_curr_ipc + min_max_rec.min_curr_ipc)/2.0)/
-						((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
-	
-    pct_lock  	= 	((min_max_rec.max_curr_lock + min_max_rec.min_curr_lock)/2.0)/
-						((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
-	
-    pct_lwlock  	= 	((min_max_rec.max_curr_lwlock + min_max_rec.min_curr_lwlock)/2.0)/
-						((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0 ; 
-	
-    pct_timeout  	= 	((min_max_rec.max_curr_timeout + min_max_rec.min_curr_timeout)/2.0)/
-						((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0 ;
-	--Взвешенная корреляция ожиданий (ВКО)						
-	
-	result_str[line_count] = 'SPEED - WAITINGS' ||'|'|| REPLACE ( TO_CHAR( ROUND( speed_waitings_correlation::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAITINGS - BUFFERPIN' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_bufferpin::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( pct_bufferpin , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAITINGS - EXTENSION' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_extension::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( pct_extension , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAITINGS - IO' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_io::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( pct_io , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAITINGS - IPC' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_ipc::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( pct_ipc , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAITINGS - LOCK' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_lock::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( pct_lock , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAITINGS - LWLOCK' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_lwlock::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( pct_lwlock , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAITINGS - TIMEOUT' ||'|'|| REPLACE ( TO_CHAR( ROUND( corr_timeout::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	result_str[line_count] = result_str[line_count] ||'|'|| REPLACE ( TO_CHAR( ROUND( pct_timeout , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+2; 
-	
-	--Взвешенная корреляция ожиданий (ВКО) 
-   	result_str[line_count] = 'ВЗВЕШЕННАЯ КОРРЕЛЯЦИЯ ОЖИДАНИЙ (ВКО)' ; 
-	line_count=line_count+1; 
-	result_str[line_count] = 'WAIT_EVENT_TYPE | ВКО | КРИТИЧНОСТЬ | РЕКОМЕНДУЕМЫЕ ДЕЙСТВИЯ' ; 
-	line_count=line_count+1; 
-	
-	score_bufferpin = corr_bufferpin * pct_bufferpin / 100 ;
-	score_extension = corr_extension * pct_extension  / 100 ;
-	score_io = corr_io * pct_io  / 100 ;
-	score_ipc = corr_ipc * pct_ipc  / 100 ;
-	score_lock = corr_lock * pct_lock  / 100 ;
-	score_lwlock = corr_lwlock * pct_lwlock  / 100 ;
-	score_timeout = corr_timeout * pct_timeout  / 100 ;
-	
-    score_txt[1] = 'BUFFERPIN' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_bufferpin, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ; 		
-	score_txt[2] = '';		
-	score_txt[3] = '';
-	score_txt[4] = '';
-	IF score_bufferpin > 0 
-	THEN 
-		IF score_bufferpin >= 0.2
-		THEN 
-			score_txt[1] = score_txt[1] || 'КРИТИЧЕСКАЯ | Немедленный анализ и действие. Основной фокус расследования.';
-			score_txt[2] = '| | |'||'Анализ и оптимизация запросов, выполняющих длительные операции с буферами (VACUUM, CREATE INDEX CONCURRENTLY)';		
-			score_txt[3] = '| | |'||'Мониторинг блокировок буферов через представление pg_stat_activity с фильтрацией по wait_event_type = BufferPin';
-			score_txt[4] = '| | |'||'Настройка параметра vacuum_cost_delay для уменьшения конкуренции при фоновых операциях';
-		ELSIF score_bufferpin >= 0.1 AND score_bufferpin < 0.19 
-		THEN 
-			score_txt[1] = score_txt[1] || 'ВЫСОКАЯ | Глубокий анализ и планирование оптимизации.';
-			score_txt[2] = '| | |'||'Проверка и оптимизация работы с временными таблицами и большими наборами данных';		
-			score_txt[3] = '| | |'||'Настройка maintenance_work_mem для операций обслуживания (VACUUM, индексация)';
-			score_txt[4] = '| | |'||'Анализ необходимости увеличения shared_buffers для уменьшения конкуренции';
-		ELSIF score_bufferpin >= 0.04 AND score_bufferpin < 0.09 
-		THEN 
-			score_txt[1] = score_txt[1] || 'СРЕДНЯЯ | Контекстный анализ и наблюдение. Решение по остаточному принципу.';
-			score_txt[2] = '| | |'||'Реорганизация графика обслуживания БД для выполнения ресурсоемких операций в периоды низкой нагрузки';		
-			score_txt[3] = '| | |'||'Использование табличных пространств на разных дисках для распределения нагрузки';
-			score_txt[4] = '| | |'||'Мониторинг и ограничение количества одновременных операций обслуживания';
-		ELSIF score_bufferpin >= 0.01 AND score_bufferpin < 0.03
-		THEN 
-			score_txt[1] = score_txt[1] || 'НИЗКАЯ | Наблюдение и документирование. Действия только при ухудшении.';
-			score_txt[2] = '| | |'||'Обновление PostgreSQL до версии с улучшенными алгоритмами работы с буферами';		
-			score_txt[3] = '| | |'||'Рассмотрение возможности использования расширений для управления памятью';
-			score_txt[4] = '| | |'||'Документирование случаев возникновения проблем для будущего анализа';
-		ELSE
-			score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
-		END IF;
-	ELSE
-		score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';	
-	END IF;	
-	result_str[line_count] = score_txt[1] ; 
-	line_count=line_count+1; 
-	IF length(score_txt[2]) > 0 
-	THEN 
-		result_str[line_count] = score_txt[2] ; 
-		line_count=line_count+1; 
-		result_str[line_count] = score_txt[3] ; 
-		line_count=line_count+1; 
-		result_str[line_count] = score_txt[4] ; 		
-	END IF;
-	line_count=line_count+2;
-	
-	score_txt[1] = 'EXTENSION' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_extension, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ; 
-	score_txt[2] = '';		
-	score_txt[3] = '';
-	score_txt[4] = '';	
-	IF score_extension > 0 
-	THEN 
-		IF score_extension >= 0.2
-		THEN 
-			score_txt[1] = score_txt[1] || 'КРИТИЧЕСКАЯ | Немедленный анализ и действие. Основной фокус расследования.';
-			score_txt[2] = '| | |'||'Идентификация проблемных расширений через анализ pg_stat_activity и логов';		
-			score_txt[3] = '| | |'||'Обновление расширений до последних стабильных версий';
-			score_txt[4] = '| | |'||'Временное отключение расширений для диагностики причин ожиданий';
-		ELSIF score_extension >= 0.1 AND score_extension < 0.19 
-		THEN 
-			score_txt[1] = score_txt[1] || 'ВЫСОКАЯ | Глубокий анализ и планирование оптимизации.';
-			score_txt[2] = '| | |'||'Анализ конфигурации расширений на соответствие рекомендациям раз';		
-			score_txt[3] = '| | |'||'Мониторинг производительности расширений в пиковые периоды нагрузки';
-			score_txt[4] = '| | |'||'Оптимизация запросов, использующих функции проблемных расширений';
-		ELSIF score_extension >= 0.04 AND score_extension < 0.09 
-		THEN 
-			score_txt[1] = score_txt[1] || 'СРЕДНЯЯ | Контекстный анализ и наблюдение. Решение по остаточному принципу.';
-			score_txt[2] = '| | |'||'Консультации с сообществом или разработчиками проблемных расширений';		
-			score_txt[3] = '| | |'||'Настройка параметров расширений под конкретную нагрузку';
-			score_txt[4] = '| | |'||'Создание индексов для ускорения работы функций расширений';	
-		ELSIF score_extension >= 0.01 AND score_extension < 0.03
-		THEN 
-			score_txt[1] = score_txt[1] || 'НИЗКАЯ | Наблюдение и документирование. Действия только при ухудшении.';
-			score_txt[2] = '| | |'||'Рассмотрение альтернативных расширений с аналогичной функциональностью';		
-			score_txt[3] = '| | |'||'Кастомизация кода расширений';
-			score_txt[4] = '| | |'||'Разделение нагрузки между разными экземплярами PostgreSQL';		
-		ELSE
-			score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
-		END IF;
-	ELSE
-		score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.'	;
-	END IF;	
-	result_str[line_count] = score_txt[1] ; 
-	line_count=line_count+1; 
-	IF length(score_txt[2]) > 0 
-	THEN 
-		result_str[line_count] = score_txt[2] ; 
-		line_count=line_count+1; 
-		result_str[line_count] = score_txt[3] ; 
-		line_count=line_count+1; 
-		result_str[line_count] = score_txt[4] ; 		
-	END IF;
-	line_count=line_count+2;
-	
-	score_txt[1] = 'IO' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_io, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ;
-	score_txt[2] = '';		
-	score_txt[3] = '';
-	score_txt[4] = '';		
-	IF score_io > 0 
-	THEN 
-		IF score_io >= 0.2
-		THEN 
-			score_txt[1] = score_txt[1] || 'КРИТИЧЕСКАЯ | Немедленный анализ и действие. Основной фокус расследования.';
-			score_txt[2] = '| | |'||'Анализ и оптимизация топ-запросов по времени ожидания IO';
-			score_txt[3] = '| | |'||'Проверка и оптимизация индексов (добавление недостающих, удаление неиспользуемых)';
-			score_txt[4] = '| | |'||'Настройка параметров effective_io_concurrency и random_page_cost для используемого оборудования';
-		ELSIF score_io >= 0.1 AND score_io < 0.19 
-		THEN 
-			score_txt[1] = score_txt[1] || 'ВЫСОКАЯ | Глубокий анализ и планирование оптимизации.';
-			score_txt[2] = '| | |'||'Оптимизация autovacuum для горячих таблиц (настройка агрессивности, порогов)';
-			score_txt[3] = '| | |'||'Разделение таблиц и индексов по разным табличным пространствам на разных дисках';
-			score_txt[4] = '| | |'||'Использование табличных пространств на быстрых накопителях для горячих данных';
-		ELSIF score_io >= 0.04 AND score_io < 0.09 
-		THEN 
-			score_txt[1] = score_txt[1] || 'СРЕДНЯЯ | Контекстный анализ и наблюдение. Решение по остаточному принципу.';
-			score_txt[2] = '| | |'||'Настройка параметров shared_buffers и work_mem для уменьшения физических чтений';
-			score_txt[3] = '| | |'||'Применение расширения pg_prewarm для предзагрузки часто используемых данных';
-			score_txt[4] = '| | |'||'Оптимизация размера WAL и параметров контрольных точек (checkpoint)';
-		ELSIF score_io >= 0.01 AND score_io < 0.03
-		THEN 
-			score_txt[1] = score_txt[1] || 'НИЗКАЯ | Наблюдение и документирование. Действия только при ухудшении.';
-			score_txt[2] = '| | |'||'Внедрение мониторинга задержек дискового ввода-вывода на уровне ОС';
-			score_txt[3] = '| | |'||'Рассмотрение использования сжатия на уровне СУБД или файловой системы';
-			score_txt[4] = '| | |'||'Оптимизация файловой системы и параметров монтирования';
-		ELSE
-			score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
-		END IF;
-	ELSE
-		score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.'	;
-	END IF;	
-	result_str[line_count] = score_txt[1] ; 
-	line_count=line_count+1; 
-	IF length(score_txt[2]) > 0 
-	THEN 
-		result_str[line_count] = score_txt[2] ; 
-		line_count=line_count+1; 
-		result_str[line_count] = score_txt[3] ; 
-		line_count=line_count+1; 
-		result_str[line_count] = score_txt[4] ; 		
-	END IF;
-	line_count=line_count+2;  
-	
-	score_txt[1] = 'IPC' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_ipc, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ;
-	score_txt[2] = '';		
-	score_txt[3] = '';
-	score_txt[4] = '';		
-	IF score_ipc > 0 
-	THEN 
-		IF score_ipc >= 0.2
-		THEN 
-			score_txt[1] = score_txt[1] || 'КРИТИЧЕСКАЯ | Немедленный анализ и действие. Основной фокус расследования.';
-			score_txt[2] = '| | |'||'Анализ и настройка параллельных запросов (max_parallel_workers_per_gather, max_parallel_workers)';
-			score_txt[3] = '| | |'||'Мониторинг и оптимизация фоновых процессов (autovacuum, background writer, checkpointer)';
-			score_txt[4] = '| | |'||'Настройка параметра shared_buffers для уменьшения конкуренции между процессами';
-		ELSIF score_ipc >= 0.1 AND score_ipc < 0.19 
-		THEN 
-			score_txt[1] = score_txt[1] || 'ВЫСОКАЯ | Глубокий анализ и планирование оптимизации.';
-			score_txt[2] = '| | |'||'Оптимизация параметров репликации (max_wal_senders, wal_keep_size, max_replication_slots)';
-			score_txt[3] = '| | |'||'Балансировка подключений между экземплярами или использование пулеров соединений';
-			score_txt[4] = '| | |'||'Мониторинг и ограничение количества одновременных подключений';
-		ELSIF score_ipc >= 0.04 AND score_ipc < 0.09 
-		THEN 
-			score_txt[1] = score_txt[1] || 'СРЕДНЯЯ | Контекстный анализ и наблюдение. Решение по остаточному принципу.';
-			score_txt[2] = '| | |'||'Настройка параметров shared memory и semaphores на уровне ОС';
-			score_txt[3] = '| | |'||'Оптимизация параметров wal_buffers и commit_delay/commit_siblings';
-			score_txt[4] = '| | |'||'Анализ и устранение конфликтов между сессиями за общие ресурсы';
-		ELSIF score_ipc >= 0.01 AND score_ipc < 0.03
-		THEN 
-			score_txt[1] = score_txt[1] || 'НИЗКАЯ | Наблюдение и документирование. Действия только при ухудшении.';
-			score_txt[2] = '| | |'||'Обновление до актуальной версии PostgreSQL с улучшенными IPC-механизмами';
-			score_txt[3] = '| | |'||'Внедрение пулеров соединений (pgbouncer, pgpool-II) для уменьшения количества процессов';
-			score_txt[4] = '| | |'||'Разделение БД на логические части с выделением отдельных экземпляров';
-		ELSE
-			score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
-		END IF;
-	ELSE
-		score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
-	END IF;	
-	result_str[line_count] = score_txt[1] ; 
-	line_count=line_count+1; 
-	IF length(score_txt[2]) > 0 
-	THEN 
-		result_str[line_count] = score_txt[2] ; 
-		line_count=line_count+1; 
-		result_str[line_count] = score_txt[3] ; 
-		line_count=line_count+1; 
-		result_str[line_count] = score_txt[4] ; 		
-	END IF;
-	line_count=line_count+2; 
-	
-	score_txt[1] = 'LOCK' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_lock, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ;
-	score_txt[2] = '';		
-	score_txt[3] = '';
-	score_txt[4] = '';	
-	IF score_lock > 0 
-	THEN 
-		IF score_lock >= 0.2
-		THEN 
-			score_txt[1] = score_txt[1] || 'КРИТИЧЕСКАЯ | Немедленный анализ и действие. Основной фокус расследования.';
-			score_txt[2] = '| | |'||'Выявление и устранение блокирующих транзакций';
-			score_txt[3] = '| | |'||'Оптимизация времени выполнения транзакций (разделение больших транзакций на меньшие)';
-			score_txt[4] = '| | |'||'Установка разумных значений lock_timeout и idle_in_transaction_session_timeout';
-		ELSIF score_lock >= 0.1 AND score_lock < 0.19 
-		THEN 
-			score_txt[1] = score_txt[1] || 'ВЫСОКАЯ | Глубокий анализ и планирование оптимизации.';
-			score_txt[2] = '| | |'||'Изменение логики приложения для уменьшения времени удерживания блокировок';
-			score_txt[3] = '| | |'||'Применение стратегий оптимистичной блокировки (version/timestamp поля)';
-			score_txt[4] = '| | |'||'Реструктуризация запросов для минимизации конкуренции за объекты';
-		ELSIF score_lock >= 0.04 AND score_lock < 0.09 
-		THEN 
-			score_txt[1] = score_txt[1] || 'СРЕДНЯЯ | Контекстный анализ и наблюдение. Решение по остаточному принципу.';
-			score_txt[2] = '| | |'||'Анализ и оптимизация уровней изоляции транзакций';
-			score_txt[3] = '| | |'||'Внедрение retry-логики в приложении для обработки deadlocks и таймаутов';
-			score_txt[4] = '| | |'||'Использование advisory locks для нестандартных сценариев синхронизации';
-		ELSIF score_lock >= 0.01 AND score_lock < 0.03
-		THEN 
-			score_txt[1] = score_txt[1] || 'НИЗКАЯ | Наблюдение и документирование. Действия только при ухудшении.';
-			score_txt[2] = '| | |'||'Изменение архитектуры приложения: внедрение очередей для асинхронной обработки';
-			score_txt[3] = '| | |'||'Пересмотр схемы БД для минимизации точек конкуренции (нормализация/денормализация)';
-			score_txt[4] = '| | |'||'Использование таблиц-очередей на основе SKIP LOCKED';
-		ELSE
-			score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
-		END IF;
-	ELSE
-		score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';	
-	END IF;	
-	result_str[line_count] = score_txt[1] ; 
-	line_count=line_count+1; 
-	IF length(score_txt[2]) > 0 
-	THEN 
-		result_str[line_count] = score_txt[2] ; 
-		line_count=line_count+1; 
-		result_str[line_count] = score_txt[3] ; 
-		line_count=line_count+1; 
-		result_str[line_count] = score_txt[4] ; 		
-	END IF;
-	line_count=line_count+2; 
-	
-	score_txt[1] = 'LWLOCK' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_lwlock, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ;
-	score_txt[2] = '';		
-	score_txt[3] = '';
-	score_txt[4] = '';		
-	IF score_lwlock > 0 
-	THEN 
-		IF score_lwlock >= 0.2
-		THEN 
-			score_txt[1] = score_txt[1] || 'КРИТИЧЕСКАЯ | Немедленный анализ и действие. Основной фокус расследования.';
+				queryid = current_queryid AND 
+				wait_event_type = current_wait_event_type AND 
+				curr_timestamp BETWEEN min_timestamp AND max_timestamp  
+			ORDER BY 1
+			LOOP
+				SELECT
+					SUM(curr_value_long) AS wait_event_count 
+				INTO 
+					wait_event_rec
+				FROM 
+					statement_stat_waitings_median
+				WHERE 
+					curr_timestamp = current_timepoint AND 
+					dbname = statement_stat_median_rec.dbname AND 
+					username = statement_stat_median_rec.username AND 
+					queryid = current_queryid AND 
+					wait_event_type = current_wait_event_type AND 
+					wait_event = distinct_wait_event_rec.wait_event 
+				GROUP BY 
+					curr_timestamp ,
+					dbname ,
+					username ,
+					queryid ,
+					wait_event_type
+				; 
+				
+				IF wait_event_rec.wait_event_count IS NULL OR wait_event_rec.wait_event_count = 0 
+				THEN 
+					result_str[line_count] = result_str[line_count] || 	'0' ||'|' ;
+				ELSE
+					result_str[line_count] = result_str[line_count] || 	
+											REPLACE ( TO_CHAR( ROUND( wait_event_rec.wait_event_count::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )||'|' ;
+				END IF;
+			END LOOP;
 			
-		ELSIF score_lwlock >= 0.1 AND score_lwlock < 0.19 
-		THEN 
-			score_txt[1] = score_txt[1] || 'ВЫСОКАЯ | Глубокий анализ и планирование оптимизации.';
-			score_txt[2] = '| | |'||'Мониторинг точек конкуренции';
-			score_txt[3] = '| | |'||'Оптимизация конкурентных DDL-операций (перенос в периоды низкой нагрузки)';
-			score_txt[4] = '| | |'||'Настройка параметров памяти: work_mem, maintenance_work_mem, shared_buffers';
-		ELSIF score_lwlock >= 0.04 AND score_lwlock < 0.09 
-		THEN 
-			score_txt[1] = score_txt[1] || 'СРЕДНЯЯ | Контекстный анализ и наблюдение. Решение по остаточному принципу.';
-			score_txt[2] = '| | |'||'Оптимизация параллельных операций обслуживания (max_parallel_maintenance_workers)';
-			score_txt[3] = '| | |'||'Балансировка нагрузки во времени для ресурсоемких операций';
-			score_txt[4] = '| | |'||'Тонкая настройка autovacuum для уменьшения конфликтов';
-		ELSIF score_lwlock >= 0.01 AND score_lwlock < 0.03
-		THEN 
-			score_txt[1] = score_txt[1] || 'НИЗКАЯ | Наблюдение и документирование. Действия только при ухудшении.';
-			score_txt[2] = '| | |'||'Обновление PostgreSQL до версии с улучшенными алгоритмами LWLock';
-			score_txt[3] = '| | |'||'Архитектурные изменения: выделение специализированных инстансов для разных типов нагрузки';
-			score_txt[4] = '| | |'||'Консультации с экспертами PostgreSQL по тонкой настройке';
-		ELSE
-			score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
-		END IF;
-	ELSE
-		score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.'	;
-	END IF;	
-	result_str[line_count] = score_txt[1] ; 
-	line_count=line_count+1; 
-	IF length(score_txt[2]) > 0 
-	THEN 
-		result_str[line_count] = score_txt[2] ; 
-		line_count=line_count+1; 
-		result_str[line_count] = score_txt[3] ; 
-		line_count=line_count+1; 
-		result_str[line_count] = score_txt[4] ; 		
-	END IF;
-	line_count=line_count+2; 
-	
-	score_txt[1] = 'TIMEOUT' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_timeout, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ;
-	score_txt[2] = '';		
-	score_txt[3] = '';
-	score_txt[4] = '';		
-	IF score_timeout > 0 
-	THEN 
-		IF score_timeout >= 0.2
-		THEN 
-			score_txt[1] = score_txt[1] || 'КРИТИЧЕСКАЯ | Немедленный анализ и действие. Основной фокус расследования.';
-			score_txt[2] = '| | |'||'Анализ логов PostgreSQL на предмет сообщений о таймаутах';
-			score_txt[3] = '| | |'||'Определение типов таймаутов (statement_timeout, lock_timeout, idle_timeout) и их источников';
-			score_txt[4] = '| | |'||'Настройка параметров таймаутов в соответствии с требованиями приложения';
-		ELSIF score_timeout >= 0.1 AND score_timeout < 0.19 
-		THEN 
-			score_txt[1] = score_txt[1] || 'ВЫСОКАЯ | Глубокий анализ и планирование оптимизации.';
-			score_txt[2] = '| | |'||'Оптимизация запросов, регулярно превышающих statement_timeout';
-			score_txt[3] = '| | |'||'Ревизия логики приложения на предмет длительных транзакций и блокировок';
-			score_txt[4] = '| | |'||'Внедрение механизмов отслеживания прогресса длительных операций';
-		ELSIF score_timeout >= 0.04 AND score_timeout < 0.09 
-		THEN 
-			score_txt[1] = score_txt[1] || 'СРЕДНЯЯ | Контекстный анализ и наблюдение. Решение по остаточному принципу.';
-			score_txt[2] = '| | |'||'Настройка мониторинга для алертов по таймаутам';
-			score_txt[3] = '| | |'||'Создание дашбордов для отслеживания динамики таймаутов';
-			score_txt[4] = '| | |'||'Разработка скриптов для автоматического анализа причин таймаутов';
-		ELSIF score_timeout >= 0.01 AND score_timeout < 0.03
-		THEN 
-			score_txt[1] = score_txt[1] || 'НИЗКАЯ | Наблюдение и документирование. Действия только при ухудшении.';
-			score_txt[2] = '| | |'||'Архитектурные изменения для уменьшения необходимости в длинных транзакциях';
-			score_txt[3] = '| | |'||'Внедрение механизмов ретраев с экспоненциальным откатом в приложении';
-			score_txt[4] = '| | |'||'Обучение разработчиков работе с асинхронными операциями';
-		ELSE
-			score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';
-		END IF;
-	ELSE
-		score_txt[1] = score_txt[1] || 'МИНИМАЛЬНАЯ | Игнорировать в текущем анализе.';	
-	END IF;	
-	result_str[line_count] = score_txt[1] ; 
-	line_count=line_count+1; 
-	IF length(score_txt[2]) > 0 
-	THEN 
-		result_str[line_count] = score_txt[2] ; 
-		line_count=line_count+1; 
-		result_str[line_count] = score_txt[3] ; 
-		line_count=line_count+1; 
-		result_str[line_count] = score_txt[4] ; 		
-	END IF;
-	line_count=line_count+2; 
-	
+			line_count = line_count + 1 ;
 		
-
-	result_str[line_count] = 	' '||'|'||
-									'№'||'|'||		
-									'SPEED '||'|'||
-									'WAITINGS' ||'|'||
-									'BUFFERPIN ' ||'|'||
-									'EXTENSION ' ||'|'||
-									'IO ' ||'|'||
-									'IPC ' ||'|'||
-									'LOCK ' ||'|'||
-									'LWLOCK ' ||'|'||
-									'TIMEOUT ' ||'|'
-									;							
-	line_count=line_count+1; 
+		END LOOP ;			
 		
-	result_str[line_count] = 	'MIN'||'|'||
-									1 ||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_op_speed::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_waitings::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_bufferpin::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_extension::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_io::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_ipc::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_lock::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_lwlock::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_timeout::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
-									;							
-		line_count=line_count+1; 	
-
+		current_timepoint = current_timepoint + interval '1 minute';
+	END LOOP ;
 	
-	SELECT 
-		count(curr_timestamp)
-	INTO line_counter
-	FROM 
-		cluster_stat_median
-	WHERE 	
-		curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
 	
-			
-	result_str[line_count] = 	'MAX'||'|'||
-									line_counter||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_op_speed::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_waitings::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_bufferpin::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_extension::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_io::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_ipc::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_lock::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_lwlock::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_timeout::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
-									;								
-
+	
   return result_str ; 
 END
 $$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_cluster_report_meta IS 'Метаданные для отчета по производительности и ожиданиям на уровне СУБД';
--- Метаданные для отчета по производительности и ожиданиям на уровне СУБД
+COMMENT ON FUNCTION report_queryid_stat IS 'История выполения и ожиданий по отдельному SQL запросу';
+--История выполения и ожиданий по отдельному SQL запросу
 --------------------------------------------------------------------------------
+	
+	
 --------------------------------------------------------------------------------
--- reports_iostat_device_4graph.sql
--- version 1.0
+-- report_iostat.sql
+-- version 7.0
 --------------------------------------------------------------------------------
 --
--- reports_iostat_device_4graph Данные для графиков по IOSTAT
+-- report_iostat Данные для графиков по IOSTAT
 --
 -------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------
 -- Данные для графиков по IOSTAT
-CREATE OR REPLACE FUNCTION reports_iostat_device_4graph(  start_timestamp text , finish_timestamp text  , device_name text  ) RETURNS text[] AS $$
+CREATE OR REPLACE FUNCTION report_iostat(  start_timestamp text , finish_timestamp text  , device_name text  ) RETURNS text[] AS $$
 DECLARE
  result_str text[] ;
  line_count integer ;
@@ -5975,391 +4473,22 @@ BEGIN
 return result_str ; 	
 END
 $$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_iostat_device_4graph IS 'Данные для графиков по IOSTAT';
+COMMENT ON FUNCTION report_iostat IS 'Данные для графиков по IOSTAT';
 -- Данные для графиков по IOSTAT
 -------------------------------------------------------------------------------
---------------------------------------------------------------------------------
--- reports_iostat_device_meta.sql
--- version 1.0
---------------------------------------------------------------------------------
---
--- reports_iostat_device_meta Метаданные IOSTAT
---
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- Метаданные IOSTAT
-CREATE OR REPLACE FUNCTION reports_iostat_device_meta(  start_timestamp text , finish_timestamp text  , device_name text  ) RETURNS text[] AS $$
-DECLARE
- result_str text[] ;
- line_count integer ;
- min_timestamp timestamptz ; 
- max_timestamp timestamptz ; 
- 
- counter integer ; 
- min_max_rec record ;
- line_counter integer ; 
-   
-  min_max_pct_rec record ;
- 
-  cluster_stat_median_rec record ; 	
-  os_stat_iostat_device_median_rec record ; 
-  
-  
-BEGIN
-	line_count = 1 ;	
-	
-	IF finish_timestamp = 'CURRENT_TIMESTAMP'
-	THEN 
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-
-		min_timestamp = max_timestamp - interval '1 hour'; 	
-	ELSE
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	min_timestamp ; 
-		
-		SELECT 	date_trunc('minute' ,  to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-	END IF ;
-
-
-	
-	result_str[line_count] = 'Метаданные IOSTAT' ; 
-	line_count=line_count+1;
-	
-	
-	result_str[line_count] = 'DEVICE = '||device_name ; 
-	line_count=line_count+1;
-	
-		
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+2;   
-	
-	
-		
-	SELECT 
-		MIN( cl.dev_rps_long) AS min_dev_rps_long , MAX( cl.dev_rps_long) AS max_dev_rps_long,
-		MIN( cl.dev_rmbs_long) AS min_dev_rmbs_long , MAX( cl.dev_rmbs_long) AS max_dev_rmbs_long ,
-		MIN( cl.dev_rrqmps_long) AS min_dev_rrqmps_long , MAX( cl.dev_rrqmps_long) AS max_dev_rrqmps_long ,
-		MIN( cl.dev_rrqm_pct_long) AS min_dev_rrqm_pct_long , MAX( cl.dev_rrqm_pct_long) AS max_dev_rrqm_pct_long ,
-		MIN( cl.dev_r_await_long) AS min_dev_r_await_long , MAX( cl.dev_r_await_long) AS max_dev_r_await_long ,
-		MIN( cl.dev_rareq_sz_long) AS min_dev_rareq_sz_long , MAX( cl.dev_rareq_sz_long) AS max_dev_rareq_sz_long ,
-		MIN( cl.dev_wps_long) AS min_dev_wps_long , MAX( cl.dev_wps_long) AS max_dev_wps_long ,
-		MIN( cl.dev_wmbps_long) AS min_dev_wmbps_long , MAX( cl.dev_wmbps_long) AS max_dev_wmbps_long,
-		MIN( cl.dev_wrqmps_long) AS min_dev_wrqmps_long , MAX( cl.dev_wrqmps_long) AS max_dev_wrqmps_long ,
-		MIN( cl.dev_wrqm_pct_long) AS min_dev_wrqm_pct_long , MAX( cl.dev_wrqm_pct_long) AS max_dev_wrqm_pct_long,
-		MIN( cl.dev_w_await_long) AS min_dev_w_await_long , MAX( cl.dev_w_await_long) AS max_dev_w_await_long,
-		MIN( cl.dev_wareq_sz_long) AS min_dev_wareq_sz_long , MAX( cl.dev_wareq_sz_long) AS max_dev_wareq_sz_long,
-		MIN( cl.dev_dps_long) AS min_dev_dps_long , MAX( cl.dev_dps_long) AS max_dev_dps_long,
-		MIN( cl.dev_dmbps_long) AS min_dev_dmbps_long , MAX( cl.dev_dmbps_long) AS max_dev_dmbps_long ,
-		MIN( cl.dev_drqmps_long) AS min_dev_drqmps_long, MAX( cl.dev_drqmps_long) AS max_dev_drqmps_long ,		
-		MIN( cl.dev_drqm_pct_long) AS min_dev_drqm_pct_long , MAX( cl.dev_drqm_pct_long) AS max_dev_drqm_pct_long ,		
-		MIN( cl.dev_d_await_long) AS min_dev_d_await_long , MAX( cl.dev_d_await_long) AS max_dev_d_await_long ,
-		MIN( cl.dev_dareq_sz_long) AS min_dev_dareq_sz_long , MAX( cl.dev_dareq_sz_long) AS max_dev_dareq_sz_long ,
-		MIN( cl.dev_aqu_sz_long) AS min_dev_aqu_sz_long , MAX( cl.dev_aqu_sz_long) AS max_dev_aqu_sz_long ,
-		MIN( cl.dev_util_pct_long) AS min_dev_util_pct_long , MAX( cl.dev_util_pct_long) AS max_dev_util_pct_long ,
-		MIN( cl.dev_fps_long) AS min_dev_fps_long , MAX( cl.dev_fps_long) AS max_dev_fps_long ,
-		MIN( cl.dev_f_await_long) AS min_dev_f_await_long , MAX( cl.dev_f_await_long) AS max_dev_f_await_long		
-	INTO  	min_max_rec
-	FROM 
-		os_stat_iostat_device_median cl 
-	WHERE 	
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
-		AND cl.device = device_name ;
-
-
-	DROP TABLE IF EXISTS tmp_timepoints;
-	CREATE TEMPORARY TABLE tmp_timepoints
-	(
-		curr_timestamp timestamptz  ,   
-		curr_timepoint integer 
-	);
-
-
-	INSERT INTO tmp_timepoints
-	(
-		curr_timestamp ,	
-		curr_timepoint 
-	)
-	SELECT 
-		curr_timestamp , 
-		row_number() over (order by curr_timestamp) AS x
-	FROM
-	os_stat_iostat_device_median
-	WHERE 
-		curr_timestamp BETWEEN min_timestamp AND max_timestamp  
-	ORDER BY curr_timestamp	;
-	
-	
-
-	result_str[line_count] = 	' '||'|'||
-								'№'||'|'||		
-								'r/s' ||'|'||
-								'rMB/s' ||'|'||
-								'rrqm/s' ||'|'||
-								'%rrqm' ||'|'||
-								'r_await' ||'|'||
-								'rareq_sz' ||'|'||
-								'w/s' ||'|'||
-								'wMB/s' ||'|'||
-								'wrqm/s' ||'|'||
-								'%wrqm' ||'|'||
-								'w_await' ||'|'||
-								'wareq_sz' ||'|'||
-								'd/s' ||'|'||
-								'dMB/s' ||'|'||
-								'drqm/s' ||'|'||
-								'%drqm' ||'|'||
-								'd_await' ||'|'||
-								'dareq_sz' ||'|'||
-								'aqu_sz' ||'|'||
-								'%util' ||'|'||
-								'f/s' ||'|'||
-								'f_await' ||'|'
-								;							
-	line_count=line_count+1; 
-	
-	result_str[line_count] = 	'MIN'||'|'||
-								1 ||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_rps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_rmbs_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_rrqmps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_rrqm_pct_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_r_await_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_rareq_sz_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_wps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_wmbps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_wrqmps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_wrqm_pct_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_w_await_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_wareq_sz_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_dps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_dmbps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_drqmps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_drqm_pct_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_d_await_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_dareq_sz_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_aqu_sz_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_util_pct_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_fps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_f_await_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
-								;							
-	line_count=line_count+1; 	
-	
-	SELECT 
-		count(curr_timestamp)
-	INTO line_counter
-	FROM 
-		os_stat_iostat_device_median
-	WHERE 	
-		curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
-	
-	result_str[line_count] = 	'MAX'||'|'||
-								line_counter||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_rps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_rmbs_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_rrqmps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_rrqm_pct_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_r_await_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_rareq_sz_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_wps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_wmbps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_wrqmps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_wrqm_pct_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_w_await_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_wareq_sz_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_dps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_dmbps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_drqmps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_drqm_pct_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_d_await_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_dareq_sz_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_aqu_sz_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_util_pct_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_fps_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_dev_f_await_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
-								;							
-	
-
-return result_str ; 	
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_iostat_device_meta IS 'Метаданные IOSTAT';
--- Метаданные IOSTAT
--------------------------------------------------------------------------------
-
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
--- reports_load_test.sql
--- version 4.0
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
--- Отчет по нагрузочному тестированию
---
--- reports_load_test() Отчет по нагрузочному тестированию
---
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
---Сформировать отчет по нагрузочному тестированию
-CREATE OR REPLACE FUNCTION reports_load_test() RETURNS text[] AS $$
-DECLARE
- result_str text[] ;
- line_count integer ;
-
- current_test_id bigint;
- load_test_pass_rec record ;
- 
- current_speed_short DOUBLE PRECISION;
- current_speed_long DOUBLE PRECISION;
- current_median_short DOUBLE PRECISION;
- current_median_long DOUBLE PRECISION;
- 
- min_max_rec record ; 
- testing_scenarios_rec record ;
-BEGIN
-    line_count = 1 ;	
-	
-	result_str[line_count] = 'ОТЧЕТ ПО РЕЗУЛЬТАТАМ НАГРУЗОЧНОГО ТЕСТИРОВАНИЯ ' ; 
-	line_count=line_count+2; 
-	
-	------------------------------------------------------
-	-- ТЕСТОВЫЕ ЗАПРОСЫ
-	SELECT load_test_get_current_test_id()
-	INTO current_test_id; 		
-
-	FOR testing_scenarios_rec IN
-	SELECT 
-	  *
-	FROM 
-	  testing_scenarios 
-	WHERE 
-	   test_id = current_test_id
-	ORDER BY
-		id 
-	LOOP
-		result_str[line_count] = 'СЦЕНАРИЙ-'||testing_scenarios_rec.id; 
-		line_count=line_count+1; 
-		result_str[line_count] = testing_scenarios_rec.queryid ; 
-		line_count=line_count+2; 
-	END LOOP ;
-	-- ТЕСТОВЫЕ ЗАПРОСЫ
-	------------------------------------------------------  
-
-	SELECT 
-	  MIN(c.curr_op_speed) , 
-	  MAX(c.curr_op_speed)  
-	INTO 
-		min_max_rec 
-	FROM cluster_stat_median c
-	WHERE 
-	curr_timestamp between 
-	(SELECT MIN(p.start_timestamp) 
-	 FROM   load_test_pass p
-	 WHERE  p.test_id = current_test_id AND
-	 p.pass_counter >= 6) 
-	AND 
-	(SELECT MAX(p.finish_timestamp) 
-	 FROM   load_test_pass p
-	 WHERE  p.test_id = current_test_id AND
-	 p.pass_counter >= 6) 
-	;
-
-    line_count=line_count+1;
-	result_str[line_count] = '| MIN SPEED |' || REPLACE ( TO_CHAR( ROUND( (min_max_rec.min::numeric)::numeric , 4 ) , '000000000000D0000') , '.' , ',' ) ||'|'; 
-	line_count=line_count+1; 
-	result_str[line_count] = '| MIN SPEED |' || REPLACE ( TO_CHAR( ROUND( (min_max_rec.max::numeric)::numeric , 4 ) , '000000000000D0000') , '.' , ',' ) ||'|'; 
-	line_count=line_count+2; 
-
-	result_str[line_count] = 	'start timestamp'||'|'||
-								'finish timestamp'||'|'||
-								'PASS'||'|'||
-								'LOAD'||'|'||								
-								'open'||'|'||
-								'high'||'|'||
-								'low'||'|'||
-								'close'||'|'								
-								;							
-	line_count=line_count+1; 
-
-	
-	FOR load_test_pass_rec IN 
-	SELECT 		
-		p.pass_counter , 
-		p.load_connections ,
-		p.start_timestamp ,
-		p.finish_timestamp , 
-		(SELECT c.curr_op_speed 
-		FROM cluster_stat_median c
-		WHERE 
-		curr_timestamp =  
-		 ( SELECT MIN(pc.curr_timestamp) 
-		   FROM cluster_stat_median pc
-		   WHERE pc.curr_timestamp between p.start_timestamp AND p.finish_timestamp         
-		 )   
-		) AS "open" ,
-		(SELECT MAX(c.curr_op_speed) 
-		FROM cluster_stat_median c
-		WHERE 
-		curr_timestamp between p.start_timestamp AND p.finish_timestamp
-		) AS "high" ,
-		(SELECT MIN(c.curr_op_speed) 
-		FROM cluster_stat_median c
-		WHERE 
-		curr_timestamp between p.start_timestamp AND p.finish_timestamp
-		) AS "low" ,
-		(SELECT c.curr_op_speed 
-		FROM cluster_stat_median c
-		WHERE 
-		curr_timestamp =  
-		 ( SELECT MAX(pc.curr_timestamp) 
-		   FROM cluster_stat_median pc
-		   WHERE pc.curr_timestamp between p.start_timestamp AND p.finish_timestamp         
-		 )   
-		) AS "close" 
-		FROM   load_test_pass p
-		WHERE  p.test_id = current_test_id AND
-		p.pass_counter >= 6
-		order by 1  
-	LOOP
-		  
-		result_str[line_count] = 	to_char( load_test_pass_rec.start_timestamp , 'YYYY-MM-DD HH24:MI') ||'|'||
-									to_char( load_test_pass_rec.finish_timestamp , 'YYYY-MM-DD HH24:MI') ||'|'||
-									load_test_pass_rec.pass_counter ||'|'||
-									ROUND( load_test_pass_rec.load_connections::numeric , 0 ) ||'|'||
-									REPLACE ( TO_CHAR( ROUND( (load_test_pass_rec.open::numeric)::numeric , 0 ) , '000000000000D0000') , '.' , ',' ) ||'|'||
-									REPLACE ( TO_CHAR( ROUND( (load_test_pass_rec.high::numeric)::numeric , 0 ) , '000000000000D0000') , '.' , ',' ) ||'|'||
-									REPLACE ( TO_CHAR( ROUND( (load_test_pass_rec.low::numeric)::numeric , 0 ) , '000000000000D0000') , '.' , ',' ) ||'|'||
-									REPLACE ( TO_CHAR( ROUND( (load_test_pass_rec.close::numeric)::numeric , 0 ) , '000000000000D0000') , '.' , ',' ) ||'|'
-								;	
-		
-	  line_count=line_count+1; 	
-
-	
-	END LOOP ;		
-	
-  return result_str ; 
-END
-$$ LANGUAGE plpgsql STABLE ;
-COMMENT ON FUNCTION reports_load_test IS 'Сформировать отчет по нагрузочному тестированию';
---Сформировать отчет по нагрузочному тестированию
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
--- reports_load_test_loading.sql
+-- report_load_test_loading.sql
 -- version 1.0
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- График изменения нагрузки в ходе нагрузочного тестирования
 --
--- reports_load_test_loading() Отчет по нагрузочному тестированию
+-- report_load_test_loading() Отчет по нагрузочному тестированию
 --
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- График изменения нагрузки в ходе нагрузочного тестирования
-CREATE OR REPLACE FUNCTION reports_load_test_loading() RETURNS text[] AS $$
+CREATE OR REPLACE FUNCTION report_load_test_loading() RETURNS text[] AS $$
 DECLARE
  result_str text[] ;
  line_count integer ;
@@ -6439,208 +4568,1324 @@ BEGIN
   return result_str ; 
 END
 $$ LANGUAGE plpgsql STABLE ;
-COMMENT ON FUNCTION reports_load_test_loading IS ' График изменения нагрузки в ходе нагрузочного тестирования';
+COMMENT ON FUNCTION report_load_test_loading IS ' График изменения нагрузки в ходе нагрузочного тестирования';
 -- График изменения нагрузки в ходе нагрузочного тестирования
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
--- reports_queryid_stat.sql
--- version 1.0.1
+-- report_postgresql_cluster_performance.sql
+-- version 7.0
 --------------------------------------------------------------------------------
--- Статистика по отдельному SQL запросу
---
--- reports_queryid_stat История выполения и ожиданий по отдельному SQL запросу
---
+-- report_postgresql_cluster_performance Данные для построения графиков по производительности и ожиданиям  СУБД
 --------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
---История выполения и ожиданий по отдельному SQL запросу
-CREATE OR REPLACE FUNCTION reports_queryid_stat(  current_queryid bigint  , current_wait_event_type text , start_timestamp text , finish_timestamp text  ) RETURNS text[] AS $$
+-- Данные для построения графиков по производительности и ожиданиям  СУБД
+CREATE OR REPLACE FUNCTION report_postgresql_cluster_performance(  cluster_performance_start_timestamp text , cluster_performance_finish_timestamp text   ) RETURNS text[] AS $$
 DECLARE
  result_str text[] ;
  line_count integer ;
  min_timestamp timestamptz ; 
  max_timestamp timestamptz ; 
- current_timepoint timestamptz ; 
- statement_stat_median_rec record ;
+ 
+ counter integer ; 
+ min_max_rec record ;
+ 
+ cluster_stat_median_rec record ; 	
+ 
+BEGIN
+	line_count = 1 ;
+	
+	
+	IF cluster_performance_finish_timestamp = 'CURRENT_TIMESTAMP'
+	THEN 
+		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+
+		min_timestamp = max_timestamp - interval '1 hour'; 	
+	ELSE
+		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	min_timestamp ; 
+		
+		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+	END IF ;
+
+
+	
+	result_str[line_count] = 'ИСХОДНЫЕ ДАННЫЕ ПРОИЗВОДИТЕЛЬНОСТИ И ОЖИДАНИЙ СУБД' ; 
+	line_count=line_count+1;
+	
+	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+1; 
+	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+2; 
+	
+	DROP TABLE IF EXISTS tmp_timepoints;
+	CREATE TEMPORARY TABLE tmp_timepoints
+	(
+		curr_timestamp timestamptz  ,   
+		curr_timepoint integer 
+	);
+
+
+	INSERT INTO tmp_timepoints
+	(
+		curr_timestamp ,	
+		curr_timepoint 
+	)
+	SELECT 
+		curr_timestamp , 
+		row_number() over (order by curr_timestamp) AS x
+	FROM
+	cluster_stat_median
+	WHERE 
+		curr_timestamp BETWEEN min_timestamp AND max_timestamp  
+	ORDER BY curr_timestamp	;
+		
+	SELECT 
+		MIN( cl.curr_op_speed) AS min_curr_op_speed , MAX( cl.curr_op_speed) AS max_curr_op_speed , 
+		MIN( cl.curr_waitings) AS min_curr_waitings , MAX( cl.curr_waitings) AS max_curr_waitings , 
+		MIN( cl.curr_bufferpin) AS min_curr_bufferpin , MAX( cl.curr_bufferpin) AS max_curr_bufferpin , 
+		MIN( cl.curr_extension) AS min_curr_extension , MAX( cl.curr_extension) AS max_curr_extension , 
+		MIN( cl.curr_io) AS min_curr_io , MAX( cl.curr_io) AS max_curr_io , 
+		MIN( cl.curr_ipc) AS min_curr_ipc , MAX( cl.curr_ipc) AS max_curr_ipc , 
+		MIN( cl.curr_lock) AS min_curr_lock , MAX( cl.curr_lock) AS max_curr_lock , 
+		MIN( cl.curr_lwlock) AS min_curr_lwlock , MAX( cl.curr_lwlock) AS max_curr_lwlock ,
+		MIN( cl.curr_timeout) AS min_curr_timeout , MAX( cl.curr_timeout) AS max_curr_timeout 
+	INTO  	min_max_rec
+	FROM 
+		cluster_stat_median cl 
+	WHERE 	
+		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	;
+
+	
+	result_str[line_count] = 	'timestamp'||'|'||  --1
+									'№'||'|'||--2	
+									'SPEED '||'|'|| --3
+									'WAITINGS' ||'|' --4
+									;
+							
+								
+	IF min_max_rec.max_curr_bufferpin > 0 
+	THEN 
+		result_str[line_count] = result_str[line_count] || 
+								 'BUFFERPIN ' ||'|' ;
+	END IF ;
+	
+	IF min_max_rec.max_curr_extension > 0 
+	THEN 
+		result_str[line_count] = result_str[line_count] || 
+								 'EXTENSION ' ||'|' ;
+	END IF ;
+	
+	IF min_max_rec.max_curr_io > 0 
+	THEN 
+		result_str[line_count] = result_str[line_count] || 
+								 'IO ' ||'|' ;
+	END IF ;
+	
+	IF min_max_rec.max_curr_ipc > 0 
+	THEN 
+		result_str[line_count] = result_str[line_count] || 
+								 'IPC ' ||'|' ;
+	END IF ;
+	
+	IF min_max_rec.max_curr_lock > 0 
+	THEN 
+		result_str[line_count] = result_str[line_count] || 
+								 'LOCK ' ||'|' ;
+	END IF ;
+	
+	IF min_max_rec.max_curr_lwlock > 0 
+	THEN 
+		result_str[line_count] = result_str[line_count] || 
+								 'LWLOCK ' ||'|' ;
+	END IF ;
+	
+	IF min_max_rec.max_curr_timeout > 0 
+	THEN 
+		result_str[line_count] = result_str[line_count] || 
+								 'TIMEOUT ' ||'|' ;
+	END IF ;
+								
+	line_count=line_count+1; 
+	
+	counter = 0 ; 
+	FOR cluster_stat_median_rec IN
+	SELECT 
+		cl.curr_timestamp , --1
+		cl.curr_op_speed AS curr_op_speed ,  --2
+		cl.curr_waitings AS curr_waitings  ,--3
+		cl.curr_bufferpin AS curr_bufferpin , --4
+		cl.curr_extension AS curr_extension , --5
+		cl.curr_io AS curr_io , --8
+		cl.curr_ipc AS curr_ipc , --7
+		cl.curr_lock AS curr_lock , --9
+		cl.curr_lwlock AS curr_lwlock, 	 --9
+		cl.curr_timeout AS curr_timeout 	 --10
+	FROM 
+		cluster_stat_median cl
+	WHERE 	
+		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
+    ORDER BY cl.curr_timestamp 
+	LOOP
+		counter = counter + 1 ;
+
+		----------------------------------------------------------------------------------------------------
+		result_str[line_count] = 	to_char( cluster_stat_median_rec.curr_timestamp , 'YYYY-MM-DD HH24:MI') ||'|'|| --1
+									counter ||'|'||
+									REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_op_speed::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'|| --2
+									REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_waitings::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'  --3
+									;
+							
+								
+		IF min_max_rec.max_curr_bufferpin > 0 
+		THEN 
+			result_str[line_count] = result_str[line_count] || 
+									 REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_bufferpin::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|';  --4 
+		END IF ;
+		
+		IF min_max_rec.max_curr_extension > 0 
+		THEN 
+			result_str[line_count] = result_str[line_count] || 
+									 REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_extension::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|';  --5 
+		END IF ;
+		
+		IF min_max_rec.max_curr_io > 0 
+		THEN 
+			result_str[line_count] = result_str[line_count] || 
+									 REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_io::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|';  --6 ;
+		END IF ;
+		
+		IF min_max_rec.max_curr_ipc > 0 
+		THEN 
+			result_str[line_count] = result_str[line_count] || 
+									 REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_ipc::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'; --7;
+		END IF ;
+		
+		IF min_max_rec.max_curr_lock > 0 
+		THEN 
+			result_str[line_count] = result_str[line_count] || 
+									 REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_lock::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|';  --8;
+		END IF ;
+		
+		IF min_max_rec.max_curr_lwlock > 0 
+		THEN 
+			result_str[line_count] = result_str[line_count] || 
+									 REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_lwlock::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'; --9
+		END IF ;
+		
+		IF min_max_rec.max_curr_timeout > 0 
+		THEN 
+			result_str[line_count] = result_str[line_count] || 
+									 REPLACE ( TO_CHAR( ROUND( cluster_stat_median_rec.curr_timeout::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|';  --10
+		END IF ;	
+		
+	  line_count=line_count+1; 			
+	END LOOP;
+
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION report_postgresql_cluster_performance IS 'Данные для построения графиков по производительности и ожиданиям  СУБД';
+-- Данные для построения графиков по производительности и ожиданиям  СУБД
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- report_postgresql_wait_event_type.sql
+-- version 7.0
+--------------------------------------------------------------------------------
+-- report_postgresql_wait_event_type КОРРЕЛЯЦИЯ ОЖИДАНИЙ СУБД и vmstat
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Отчет по производительности и ожиданиям на уровне СУБД
+CREATE OR REPLACE FUNCTION report_postgresql_wait_event_type(  cluster_performance_start_timestamp text , cluster_performance_finish_timestamp text   ) RETURNS text[] AS $$
+DECLARE
+ result_str text[] ;
+ line_count integer ;
+ min_timestamp timestamptz ; 
+ max_timestamp timestamptz ; 
  
  counter integer ; 
  min_max_rec record ;
  line_counter integer ; 
  
- min_max_pct_rec record ;
  
+  
+  min_max_pct_rec record ;
  
- waitings_calls  DOUBLE PRECISION;
- statement_stat_waitings_median_rec record ;
- 
-  wait_event_count_rec record  ;
+  cluster_stat_median_rec record ; 	
+  current_test_queryid bigint ;
   
-  temp_wait_event_names_rec record ; 
+  active_speed_correlation DOUBLE PRECISION;
+  speed_waitings_correlation DOUBLE PRECISION;
   
-  corr_value DOUBLE PRECISION;  
+  corr_bufferpin DOUBLE PRECISION ; 
+  corr_extension DOUBLE PRECISION ; 
+  corr_io DOUBLE PRECISION ; 
+  corr_ipc DOUBLE PRECISION ; 
+  corr_lock DOUBLE PRECISION ; 
+  corr_lwlock DOUBLE PRECISION ; 
+  corr_timeout DOUBLE PRECISION ; 
+  	
+  speed_regr_rec record ;
+  waitings_regr_rec record ; 
+    
+  column_count integer ;
+  stress_flag BOOLEAN; --TRUE - если отчет составляется по результатам НТ
+  min_max_load_rec record ;
+  current_test_id integer ;
+  current_load_rec record ; 
   
-  waitings_calls_rec record ;
+  --Взвешенная корреляция ожиданий (ВКО) 
+  pct_wait_event_type numeric ; 
+  score_wait_event_type numeric ; 
+  score_txt text[];
+  --Взвешенная корреляция ожиданий (ВКО) 
   
-  curr_calls numeric;
-  curr_waitings numeric;
-  curr_wait_event_type  numeric;
+   correlation_rec record ;
+   corr_values text[];
+   least_squares_rec record ; 
+   report_str text[];
+   
+   report_str_length integer ;
+   
+   wait_event_type_array text[7];
+   i integer ;
+   curr_integral_priority DOUBLE PRECISION;
+   wait_event_type_criteria_matrix_rec record ; 
+   wait_event_type_criteria_weight_rec record ;
 
-  
-  distinct_wait_event_rec record;
-  wait_event_rec record;
+   wait_event_type_Pi_rec record ; 
+   
 BEGIN
 	line_count = 1 ;
-
-	IF finish_timestamp = 'CURRENT_TIMESTAMP'
-	THEN 
-		SELECT 	to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) 
-		INTO 	max_timestamp ; 
 	
+	SELECT load_test_get_current_test_id()
+	INTO current_test_id; 
+	
+	
+	IF cluster_performance_finish_timestamp = 'CURRENT_TIMESTAMP'
+	THEN 
+		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+
 		min_timestamp = max_timestamp - interval '1 hour'; 	
 	ELSE
-		SELECT 	to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' )
+		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
 		INTO 	min_timestamp ; 
 		
-		SELECT 	to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) 
-		INTO 	max_timestamp ; 		
+		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
 	END IF ;
+
+
 	
-	result_str[line_count] = 'ИСТОРИЯ ВЫПОЛНЕНИЯ И СОБЫТИЙ ОЖИДАНИЯ' ; 
-	line_count=line_count+1; 
-	result_str[line_count] = 'QUERYID'; 
-	line_count=line_count+1; 		
-	result_str[line_count] = current_queryid; 
-	line_count=line_count+1; 		
-	
-	result_str[line_count] = 'WAIT_EVENT_TYPE' ; 
-	line_count=line_count+1; 	
-	result_str[line_count] = current_wait_event_type ; 
-	line_count=line_count+1; 	
-	
-	
-	result_str[line_count] = to_char( min_timestamp , 'YYYY-MM-DD HH24:MI' ) ; 
-	line_count=line_count+1; 
-	
-	result_str[line_count] = to_char( max_timestamp , 'YYYY-MM-DD HH24:MI' ); 
-	line_count=line_count+2; 
-	
-	result_str[line_count] = 	'timestamp'||'|'|| 
-                                'dbname'||'|'||
-								'username'||'|'||
-								'calls'||'|'
-								;		
-	
-	FOR distinct_wait_event_rec IN 
-	SELECT
-		DISTINCT wait_event
-	FROM 
-		statement_stat_waitings_median
-	WHERE 
-		queryid = current_queryid AND 
-		wait_event_type = current_wait_event_type AND 
-		curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-	ORDER BY 1
-	LOOP
-		result_str[line_count] = result_str[line_count] || 	distinct_wait_event_rec.wait_event ||'|' ;
-	END LOOP ;
-	
+	result_str[line_count] = '1. СТАТИСТИЧЕСКИЙ АНАЛИЗ ОЖИДАНИЙ СУБД' ; 
 	line_count=line_count+1;
 	
+	TRUNCATE TABLE wait_event_type_criteria_matrix;	
+	TRUNCATE TABLE wait_event_type_Pi ; 
+
+	wait_event_type_array[1] = 'BufferPin';
+	wait_event_type_array[2] = 'Extension';
+	wait_event_type_array[3] = 'IO';
+	wait_event_type_array[4] = 'IPC';
+	wait_event_type_array[5] = 'Lock';
+	wait_event_type_array[6] = 'LWLock';
+	wait_event_type_array[7] = 'Timeout';
+
+  	
 	
 	
-	current_timepoint = min_timestamp;
-	WHILE current_timepoint <= max_timestamp
-	LOOP
-		result_str[line_count] = to_char(current_timepoint , 'YYYY-MM-DD HH24:MI')  ||'|';
+	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+1; 
+	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+1; 
+
+	
+	DROP TABLE IF EXISTS tmp_timepoints;
+	CREATE TEMPORARY TABLE tmp_timepoints
+	(
+		curr_timestamp timestamptz  ,   
+		curr_timepoint integer 
+	);
+
+
+	INSERT INTO tmp_timepoints
+	(
+		curr_timestamp ,	
+		curr_timepoint 
+	)
+	SELECT 
+		curr_timestamp , 
+		row_number() over (order by curr_timestamp) AS x
+	FROM
+	cluster_stat_median
+	WHERE 
+		curr_timestamp BETWEEN min_timestamp AND max_timestamp  
+	ORDER BY curr_timestamp	;
+	
+	
+	----------------------------------------------------------------------------------------------------------------------------------------------	
+	-- Граничные значения и медиана 
+	SELECT 
+		MIN( cl.curr_op_speed) AS min_curr_op_speed, MAX( cl.curr_op_speed) AS max_curr_op_speed, (percentile_cont(0.5) within group (order by cl.curr_op_speed))::numeric AS median_curr_op_speed , 
+		MIN( cl.curr_waitings) AS min_curr_waitings, MAX( cl.curr_waitings) AS max_curr_waitings,  (percentile_cont(0.5) within group (order by cl.curr_waitings))::numeric AS median_curr_waitings , 
+		MIN( cl.curr_bufferpin) AS min_curr_bufferpin, MAX( cl.curr_bufferpin) AS max_curr_bufferpin, (percentile_cont(0.5) within group (order by cl.curr_bufferpin))::numeric AS median_curr_bufferpin , 
+		MIN( cl.curr_extension) AS min_curr_extension, MAX( cl.curr_extension) AS max_curr_extension, (percentile_cont(0.5) within group (order by cl.curr_extension))::numeric AS median_curr_extension , 
+		MIN( cl.curr_io) AS min_curr_io, MAX( cl.curr_io) AS max_curr_io, (percentile_cont(0.5) within group (order by cl.curr_io))::numeric AS median_curr_io , 
+		MIN( cl.curr_ipc) AS min_curr_ipc, MAX( cl.curr_ipc) AS max_curr_ipc, (percentile_cont(0.5) within group (order by cl.curr_ipc))::numeric AS median_curr_ipc , 
+		MIN( cl.curr_lock) AS min_curr_lock, MAX( cl.curr_lock) AS max_curr_lock, (percentile_cont(0.5) within group (order by cl.curr_lock))::numeric AS median_curr_lock , 
+		MIN( cl.curr_lwlock) AS min_curr_lwlock, MAX( cl.curr_lwlock) AS max_curr_lwlock, (percentile_cont(0.5) within group (order by cl.curr_lwlock))::numeric AS median_curr_lwlock , 
+		MIN( cl.curr_timeout) AS min_curr_timeout, MAX( cl.curr_timeout) AS max_curr_timeout, (percentile_cont(0.5) within group (order by cl.curr_timeout))::numeric AS median_curr_timeout  
+	INTO  	min_max_rec
+	FROM 
+		cluster_stat_median cl 
+	WHERE 	
+		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	;
+	-- Граничные значения
+	----------------------------------------------------------------------------------------------------		
+    line_count=line_count+1; 
+	result_str[line_count] = 	'ГРАНИЧНЫЕ ЗНАЧЕНИЯ И МЕДИАНА|'||
+								'№'||'|'||		
+								'SPEED '||'|'||
+								'WAITINGS' ||'|'||
+								'BUFFERPIN ' ||'|'||
+								'EXTENSION ' ||'|'||
+								'IO ' ||'|'||
+								'IPC ' ||'|'||
+								'LOCK ' ||'|'||
+								'LWLOCK ' ||'|'||
+								'TIMEOUT ' ||'|'
+									;							
+	line_count=line_count+1; 
+
+	result_str[line_count] = 	'MIN'||'|'||
+									1 ||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_op_speed::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_waitings::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_bufferpin::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_extension::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_io::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_ipc::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_lock::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_lwlock::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_curr_timeout::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
+									;							
+	line_count=line_count+1; 	
+
+	result_str[line_count] = 	'MEDIAN'||'|'||
+									' ' ||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.median_curr_op_speed::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.median_curr_waitings::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.median_curr_bufferpin::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.median_curr_extension::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.median_curr_io::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.median_curr_ipc::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.median_curr_lock::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.median_curr_lwlock::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.median_curr_timeout::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
+									;							
+	line_count=line_count+1; 	
+
+	
+	SELECT 
+		count(curr_timestamp)
+	INTO line_counter
+	FROM 
+		cluster_stat_median
+	WHERE 	
+		curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+			
+	result_str[line_count] = 	'MAX'||'|'||
+									line_counter||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_op_speed::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_waitings::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_bufferpin::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_extension::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_io::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_ipc::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_lock::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_lwlock::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_curr_timeout::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
+									;		
+
+-- Граничные значения
+----------------------------------------------------------------------------------------------------------------------------------------------	
+
+	line_count=line_count+2; 
+
+	result_str[line_count] = '1.1 ЛИНИЯ ТРЕНДА ОПЕРАЦИОННОЙ СКОРОСТИ ' ; 
+	line_count=line_count+1; 
+	result_str[line_count] = 'ПО ЛИНИИ РЕГРЕССИИ вида : Y = a + bt ; ГДЕ t - точка наблюдения.  ' ; 
+	line_count=line_count+1; 
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT cl.curr_timestamp , curr_op_speed 
+	FROM   cluster_stat_median cl 
+	WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+			
+	SELECT * INTO least_squares_rec FROM the_line_of_least_squares();	
+	result_str[line_count] = 'Коэффициент детерминации R^2 ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.current_r_squared::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 	
+	result_str[line_count] = 'угол наклона  ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.slope_angle_degrees::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 	
+	SELECT interpretation_r2_coefficient( least_squares_rec.current_r_squared::numeric ) 
+	INTO corr_values ; 
+	result_str[line_count] = corr_values[1] ; 
+	line_count=line_count+1;
+	result_str[line_count] = corr_values[2] ; 
+	line_count=line_count+1;
+	result_str[line_count] = corr_values[3] ; 
+	line_count=line_count+1;
+	
+
+
+	line_count=line_count+1; 
+	result_str[line_count] = '1.2 ЛИНИЯ ТРЕНДА ОЖИДАНИЙ СУБД' ; 
+	line_count=line_count+1; 
+	result_str[line_count] = 'ПО ЛИНИИ РЕГРЕССИИ вида : Y = a + bt ; ГДЕ t - точка наблюдения.  ' ; 
+	line_count=line_count+1; 
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT cl.curr_timestamp , curr_waitings 
+	FROM   cluster_stat_median cl 
+	WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+			
+	SELECT * INTO least_squares_rec FROM the_line_of_least_squares();		
+	result_str[line_count] = 'Коэффициент детерминации R^2 ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.current_r_squared::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 	
+	result_str[line_count] = 'угол наклона  ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.slope_angle_degrees::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 	
+	SELECT interpretation_r2_coefficient( least_squares_rec.current_r_squared::numeric ) 
+	INTO corr_values ; 
+	result_str[line_count] = corr_values[1] ; 
+	line_count=line_count+1;
+	result_str[line_count] = corr_values[2] ; 
+	line_count=line_count+1;
+	result_str[line_count] = corr_values[3] ; 
+	line_count=line_count+1;
+	
+	line_count=line_count+1; 
+	result_str[line_count] = '1.3 РЕГРЕССИЯ ОПЕРАЦИОННОЙ СКОРОСТИ(Y) по ОЖИДАНИЯМ(X) СУБД' ; 
+	line_count=line_count+1; 
+	result_str[line_count] = 'ЛИНИЯ РЕГРЕССИИ вида : Y = a + bX ' ; 
+	line_count=line_count+1; 
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT cl.curr_timestamp , curr_op_speed 
+	FROM   cluster_stat_median cl 
+	WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT cl.curr_timestamp , curr_waitings 
+	FROM   cluster_stat_median cl 
+	WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+			
+	SELECT * INTO least_squares_rec FROM Y_X_regression_line();	
+	result_str[line_count] = 'Коэффициент детерминации R^2 ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.current_r_squared::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 
+	IF least_squares_rec.current_r_squared >= 0.2 
+	THEN 	
+		result_str[line_count] = 'угол наклона  ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.slope_angle_degrees::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+		line_count=line_count+1; 	
+		SELECT interpretation_r2_coefficient( least_squares_rec.current_r_squared::numeric ) 
+		INTO corr_values ; 
+		result_str[line_count] = corr_values[1] ; 
+		line_count=line_count+1;
+		result_str[line_count] = corr_values[2] ; 
+		line_count=line_count+1;
+		result_str[line_count] = corr_values[3] ; 
+		line_count=line_count+1;
+	ELSE	
+		result_str[line_count] = 'Модель объясняет менее 20% (вплоть до 0%) вариации.'; 
+		line_count=line_count+1;
+	END IF;
+
+	----------------------------------------------------------------------------------------------------
+	--2. КОРРЕЛЯЦИЯ: ОПЕРАЦИОННАЯ СКОРОСТЬ - ОЖИДАНИЯ СУБД
+	-- Быстрая проверка значимости корреляции
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_op_speed
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_waitings
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+	
+	line_count=line_count+1;			 
+	result_str[line_count] = '2. КОРРЕЛЯЦИЯ: ОПЕРАЦИОННАЯ СКОРОСТЬ - ОЖИДАНИЯ СУБД';
+	line_count=line_count+1;	
+
+    SELECT fill_corr_values_for_negative_corr( correlation_rec ) 
+	INTO corr_values ; 
+	result_str[line_count] = corr_values[1] ; 
+	line_count=line_count+1;
+	IF corr_values[2] != ' ' THEN result_str[line_count] = corr_values[2] ; line_count=line_count+1; END IF ;
+	IF corr_values[3] != ' ' THEN result_str[line_count] = corr_values[3] ; line_count=line_count+1; END IF ;	
+	--2. КОРРЕЛЯЦИЯ: ОПЕРАЦИОННАЯ СКОРОСТЬ - ОЖИДАНИЯ СУБД
+	----------------------------------------------------------------------------------------------------	
+	
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+	line_count=line_count+2; 	
+	result_str[line_count] = '3. КОМПЛЕКСНЫЙ АНАЛИЗ ПО ТИПАМ ОЖИДАНИЙ(wait_event_type) ';
+	line_count=line_count+1;	
+	
+	----------------------------------------------------------------------------------------------------
+	--3.1 BufferPin
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_waitings
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_bufferpin
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	pct_wait_event_type = 	((min_max_rec.max_curr_bufferpin + min_max_rec.min_curr_bufferpin)/2.0)/
+							((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
+	score_wait_event_type = ROUND((correlation_rec.correvation_value::numeric * pct_wait_event_type::numeric / 100.0)::numeric , 2) ;
+	
+	SELECT fill_in_comprehensive_analysis_wait_event_type( '3.1 BufferPin' , 'BufferPin' , score_wait_event_type )
+	INTO report_str ; 
+
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+    SELECT array_length( result_str , 1 )
+	INTO line_count;	
+	
+	--3.1 BufferPin'
+	----------------------------------------------------------------------------------------------------
+	
+	----------------------------------------------------------------------------------------------------
+	--3.2 Extension
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_waitings
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_extension
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	pct_wait_event_type = 	((min_max_rec.max_curr_extension + min_max_rec.min_curr_extension)/2.0)/
+							((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
+	score_wait_event_type = ROUND((correlation_rec.correvation_value::numeric * pct_wait_event_type::numeric / 100.0)::numeric , 2) ;
+	
+	SELECT fill_in_comprehensive_analysis_wait_event_type( '3.2 Extension' , 'Extension' , score_wait_event_type )
+	INTO report_str ; 
+	
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+    SELECT array_length( result_str , 1 )
+	INTO line_count;	
+	
+	--3.2 Extension'
+	----------------------------------------------------------------------------------------------------	
+	
+	----------------------------------------------------------------------------------------------------
+	--3.3 IO
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_waitings
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_io
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	pct_wait_event_type = 	((min_max_rec.max_curr_io + min_max_rec.min_curr_io)/2.0)/
+							((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
+	score_wait_event_type = ROUND((correlation_rec.correvation_value::numeric * pct_wait_event_type::numeric / 100.0)::numeric , 2) ;
+	
+	SELECT fill_in_comprehensive_analysis_wait_event_type( '3.3 IO' , 'IO' , score_wait_event_type )
+	INTO report_str ; 
+	
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+    SELECT array_length( result_str , 1 )
+	INTO line_count;	
+	--3.3 IO
+	----------------------------------------------------------------------------------------------------		
+
+	----------------------------------------------------------------------------------------------------
+	--3.4 IPC
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_waitings
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_ipc
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	pct_wait_event_type = 	((min_max_rec.max_curr_ipc + min_max_rec.min_curr_ipc)/2.0)/
+							((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
+	score_wait_event_type = ROUND((correlation_rec.correvation_value::numeric * pct_wait_event_type::numeric / 100.0)::numeric , 2) ;
+	
+	SELECT fill_in_comprehensive_analysis_wait_event_type( '3.4 IPC' , 'IPC' , score_wait_event_type )
+	INTO report_str ; 
+
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+    SELECT array_length( result_str , 1 )
+	INTO line_count;	
+	--3.4 IPC'
+	----------------------------------------------------------------------------------------------------		
 		
-		FOR statement_stat_median_rec IN 
-		SELECT 
-			dbname , 
-			username ,
-			SUM( calls_long  ) AS calls_long 	
-		FROM 
-			statement_stat_median
+	----------------------------------------------------------------------------------------------------
+	--3.5 Lock
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_waitings
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_lock
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	pct_wait_event_type = 	((min_max_rec.max_curr_lock + min_max_rec.min_curr_lock)/2.0)/
+							((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
+	score_wait_event_type = ROUND((correlation_rec.correvation_value::numeric * pct_wait_event_type::numeric / 100.0)::numeric , 2) ;
+	
+	SELECT fill_in_comprehensive_analysis_wait_event_type( '3.5 Lock' , 'Lock' , score_wait_event_type )
+	INTO report_str ; 
+	
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+    SELECT array_length( result_str , 1 )
+	INTO line_count;	
+	
+	--3.5 Lock
+	----------------------------------------------------------------------------------------------------	
+	
+	----------------------------------------------------------------------------------------------------
+	--3.6 LWLock
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_waitings
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_lwlock
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	pct_wait_event_type = 	((min_max_rec.max_curr_lwlock + min_max_rec.min_curr_lwlock)/2.0)/
+							((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
+	score_wait_event_type = ROUND((correlation_rec.correvation_value::numeric * pct_wait_event_type::numeric / 100.0)::numeric , 2) ;
+	
+	SELECT fill_in_comprehensive_analysis_wait_event_type( '3.6 LWLock' , 'LWLock' , score_wait_event_type )
+	INTO report_str ; 
+	
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+    SELECT array_length( result_str , 1 )
+	INTO line_count;	
+	
+
+	--3.6 LWLock'
+	----------------------------------------------------------------------------------------------------		
+	
+	----------------------------------------------------------------------------------------------------
+	--3.7 Timeout
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_waitings
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_timeout
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	pct_wait_event_type = 	((min_max_rec.max_curr_timeout + min_max_rec.min_curr_timeout)/2.0)/
+							((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
+	score_wait_event_type = ROUND((correlation_rec.correvation_value::numeric * pct_wait_event_type::numeric / 100.0)::numeric , 2) ;
+	
+	SELECT fill_in_comprehensive_analysis_wait_event_type( '3.7 Timeout' , 'Timeout' , score_wait_event_type )
+	INTO report_str ; 
+	
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+    SELECT array_length( result_str , 1 )
+	INTO line_count;	
+	
+	--3.7 Timeout
+	----------------------------------------------------------------------------------------------------		
+	
+	----------------------------------------------------------------------------------------------------			
+	--Интегральный приоритет типа ожидания	
+	--Расчет нормализованных значений 
+		CALL norm_wait_event_type_criteria_matrix();
+	--Расчет нормализованных значений 
+	
+	--Для каждого типа ожидания i интегральный приоритет Pi рассчитывается как 
+	--взвешенная сумма нормализованных значений четырёх показателей, 
+	--предварительно приведённых к единой шкале и направлению «больше – лучше»:	
+
+
+	SELECT * 
+	INTO wait_event_type_criteria_weight_rec
+	FROM wait_event_type_criteria_weight;
+	
+	FOR i IN 1..7
+	LOOP 
+		SELECT * 
+		INTO wait_event_type_criteria_matrix_rec
+		FROM wait_event_type_criteria_matrix
+		WHERE wait_event_type = wait_event_type_array[i];
+		
+		curr_integral_priority = wait_event_type_criteria_weight_rec.curr_value[1] * wait_event_type_criteria_matrix_rec.calculated_r_norm --r Корреляция
+									+
+								 wait_event_type_criteria_weight_rec.curr_value[2] * wait_event_type_criteria_matrix_rec.calculated_p_norm --p-value
+									+
+								 wait_event_type_criteria_weight_rec.curr_value[3] * wait_event_type_criteria_matrix_rec.calculated_w_norm --ВКО (w)
+									+
+								 wait_event_type_criteria_weight_rec.curr_value[4] * wait_event_type_criteria_matrix_rec.calculated_r2_norm ; --ВКО (w)
+								 
+		INSERT INTO wait_event_type_Pi
+		( wait_event_type , integral_priority ) 
+		VALUES 
+		( wait_event_type_criteria_matrix_rec.wait_event_type , curr_integral_priority );		
+	END LOOP ;
+	
+	line_count=line_count+1;	
+	result_str[line_count] = 'РЕЗУЛЬТАТ ОТЧЕТА: ИНТЕГРАЛЬНЫЙ ПРИОРИТЕТ ТИПА ОЖИДАНИЯ';	
+	line_count=line_count+1;	
+	result_str[line_count] = '№ | WAIT_EVENT_TYPE | ПРИОРИТЕТ ';
+	line_count=line_count+1;			
+
+	counter = 1;
+	
+	FOR wait_event_type_Pi_rec IN 
+	SELECT * 
+	FROM wait_event_type_Pi
+	ORDER BY integral_priority DESC 
+	LOOP
+		
+		result_str[line_count] = counter ||'|'||wait_event_type_Pi_rec.wait_event_type ||'|'|| REPLACE ( TO_CHAR( ROUND( wait_event_type_Pi_rec.integral_priority::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' );
+		line_count=line_count+1;			
+		counter = counter + 1 ;
+	END LOOP ;
+	
+	--Интегральный приоритет типа ожидания	
+	----------------------------------------------------------------------------------------------------			
+
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION report_postgresql_wait_event_type IS 'КОРРЕЛЯЦИЯ ОЖИДАНИЙ СУБД и vmstat';
+-- КОРРЕЛЯЦИЯ ОЖИДАНИЙ СУБД и vmstat
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- report_queryid_for_pareto.sql
+-- version 7.0
+--------------------------------------------------------------------------------
+--
+-- report_queryid_for_pareto Диаграмма Парето по queryid
+--
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
+-- Сформировать диаграмму Парето по queryid
+CREATE OR REPLACE FUNCTION report_queryid_for_pareto(  start_timestamp text , finish_timestamp text ) RETURNS text[] AS $$
+DECLARE
+ result_str text[] ;
+ line_count integer ;
+ min_timestamp timestamptz ; 
+ max_timestamp timestamptz ;   
+ 
+ wait_event_type_rec record ;
+ wait_event_rec record ;
+ 
+ total_wait_event_count integer ;
+ pct_for_80 numeric ;
+ 
+ 
+ corr_bufferpin DOUBLE PRECISION ; 
+ corr_extension DOUBLE PRECISION ; 
+ corr_io DOUBLE PRECISION ; 
+ corr_ipc DOUBLE PRECISION ; 
+ corr_lock DOUBLE PRECISION ; 
+ corr_lwlock DOUBLE PRECISION ; 
+ corr_timeout DOUBLE PRECISION ; 
+ 
+ wait_event_type_corr_rec  record ; 
+  
+ tmp_queryid_index integer ; 
+ wait_event_list text ;
+ wait_event_list_rec record ;
+ 
+ curr_calls numeric; 
+
+ wait_event_type_counter integer ; 
+ wait_event_type_Pi_rec record ; 
+
+BEGIN
+	line_count = 1 ;
+	
+	result_str[line_count] = '5. ДИАГРАММА ПАРЕТО ПО QUERYID';	
+	line_count=line_count+1;
+	
+	line_count=line_count+1;
+	SELECT date_trunc( 'minute' , to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) )
+	INTO    min_timestamp ; 
+  
+	SELECT date_trunc( 'minute' , to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) )
+	INTO    max_timestamp ; 
+	
+	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+1; 
+	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+2; 
+	
+	result_str[line_count] =' QUERYID - идентификатор SQL выражения  |';
+	line_count=line_count+1;
+	result_str[line_count] =' CALLS - количество выполнений |';
+	line_count=line_count+1;
+	result_str[line_count] =' WAITINGS - Ожидания wait_event_type по данному queryid |';
+	line_count=line_count+1;
+	result_str[line_count] =' PCT - отношение ожиданий wait_event_type по данному queryid |';
+	line_count=line_count+1;
+	result_str[line_count] =' к общему количество ожиданий wait_event_type |';
+	line_count=line_count+1;
+	result_str[line_count] =' DBNAME ROLENAME - Наименование БД и Роли  |';
+	line_count=line_count+1;
+	result_str[line_count] =' WAIT_EVENT LIST - Список событий ожиданий  |';
+	line_count=line_count+2;
+	
+	
+	wait_event_type_counter = 1 ;
+	FOR wait_event_type_Pi_rec IN 
+	SELECT * 
+	FROM wait_event_type_Pi
+	WHERE integral_priority > 0 
+	ORDER BY integral_priority DESC 	
+	LOOP
+		
+		result_str[line_count] = wait_event_type_counter ||'. '||wait_event_type_Pi_rec.wait_event_type ||'. ИНТЕГРАЛЬНЫЙ ПРИОРИТЕТ ТИПА ОЖИДАНИЯ = |'|| REPLACE ( TO_CHAR( ROUND( wait_event_type_Pi_rec.integral_priority::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' );
+		line_count=line_count+1;			
+		wait_event_type_counter = wait_event_type_counter + 1 ;
+		
+		result_str[line_count] =' QUERYID  '||'|'||	
+								' CALLS '||'|' ||
+								' WAITINGS '||'|' ||  --Всего ожидания wait_event_type по данному queryid
+								' PCT '||'|' ||       --отношение ожиданий wait_event_type по данному queryid к общему количество ожиданий wait_event_type
+								' DBNAME ROLENAME '||'|'||
+								' WAIT_EVENT LIST '||'|'
+								;	
+		line_count=line_count+1;
+		
+		pct_for_80 = 0;
+		
+		FOR wait_event_rec IN 
+		SELECT 	
+			queryid , dbname , username ,
+			SUM(curr_value_long) AS count 
+		FROM 	
+			statement_stat_waitings_median
 		WHERE 
-			curr_timestamp = current_timepoint AND  queryid = current_queryid
+			curr_timestamp  BETWEEN min_timestamp AND max_timestamp
+			AND wait_event_type = wait_event_type_Pi_rec.wait_event_type 
 		GROUP BY 
-			dbname , username
-		LOOP
-			result_str[line_count] =	result_str[line_count] ||										
-										statement_stat_median_rec.dbname   ||'|'||
-										statement_stat_median_rec.username   ||'|'||
-										REPLACE ( TO_CHAR( ROUND( statement_stat_median_rec.calls_long::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )||'|';
-			FOR distinct_wait_event_rec IN 
-			SELECT
+			queryid , dbname , username 
+		ORDER BY 
+			4 desc 
+		LOOP	
+			WITH report_wait_event_for_pareto AS
+			(
+			SELECT 					
+				SUM(curr_value_long) AS counter 
+			FROM 	
+				statement_stat_waitings_median
+			WHERE 
+				curr_timestamp  BETWEEN min_timestamp AND max_timestamp
+				AND wait_event_type = wait_event_type_Pi_rec.wait_event_type
+			GROUP BY 				
+				queryid , dbname , username 
+			)
+			SELECT SUM(counter) 
+			INTO total_wait_event_count 
+			FROM report_wait_event_for_pareto ; 
+			
+			IF pct_for_80 = 0 
+			THEN 
+				pct_for_80 = (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric ; 
+			ELSE
+			    pct_for_80 = pct_for_80 + (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric ; 
+			END IF;
+			
+			SELECT 
+				SUM(calls_long)
+			INTO
+				curr_calls
+			FROM 
+				statement_stat_median
+			WHERE
+				curr_timestamp  BETWEEN min_timestamp AND max_timestamp
+				AND queryid = wait_event_rec.queryid  
+				AND dbname = wait_event_rec.dbname ; 
+			
+			result_str[line_count] =  wait_event_rec.queryid  ||'|'||
+									  REPLACE ( TO_CHAR( ROUND( curr_calls::numeric , 0 ) , '000000000000D0000') , '.' , ',' ) ||'|'||
+									  wait_event_rec.count  ||'|'||
+									  REPLACE ( TO_CHAR( ROUND( (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ||'|'||
+									  wait_event_rec.dbname||' '||wait_event_rec.username||'|'
+									  ;
+									  
+			FOR wait_event_list_rec IN 
+			SELECT 
 				DISTINCT wait_event
 			FROM 
 				statement_stat_waitings_median
 			WHERE 
-				queryid = current_queryid AND 
-				wait_event_type = current_wait_event_type AND 
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp  
-			ORDER BY 1
+				curr_timestamp  BETWEEN min_timestamp AND max_timestamp
+				AND wait_event_type = wait_event_type_Pi_rec.wait_event_type
+				AND queryid = wait_event_rec.queryid 
 			LOOP
-				SELECT
-					SUM(curr_value_long) AS wait_event_count 
-				INTO 
-					wait_event_rec
-				FROM 
-					statement_stat_waitings_median
-				WHERE 
-					curr_timestamp = current_timepoint AND 
-					dbname = statement_stat_median_rec.dbname AND 
-					username = statement_stat_median_rec.username AND 
-					queryid = current_queryid AND 
-					wait_event_type = current_wait_event_type AND 
-					wait_event = distinct_wait_event_rec.wait_event 
-				GROUP BY 
-					curr_timestamp ,
-					dbname ,
-					username ,
-					queryid ,
-					wait_event_type
-				; 
-				
-				IF wait_event_rec.wait_event_count IS NULL OR wait_event_rec.wait_event_count = 0 
-				THEN 
-					result_str[line_count] = result_str[line_count] || 	'0' ||'|' ;
-				ELSE
-					result_str[line_count] = result_str[line_count] || 	
-											REPLACE ( TO_CHAR( ROUND( wait_event_rec.wait_event_count::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )||'|' ;
-				END IF;
-			END LOOP;
+				result_str[line_count] = result_str[line_count] || wait_event_list_rec.wait_event ||' ';
+			END LOOP ;
+			result_str[line_count] = result_str[line_count] ||'|';
+ 
+			line_count=line_count+1; 
 			
-			line_count = line_count + 1 ;
+			IF pct_for_80 > 80.0 
+			THEN 
+				EXIT;
+			END IF;
+			
+		END LOOP ;		
+		--FOR wait_event_rec IN 
+	
+
+	END LOOP;
+	
+	
 		
-		END LOOP ;			
 		
-		current_timepoint = current_timepoint + interval '1 minute';
-	END LOOP ;
+		
+
+return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION report_queryid_for_pareto IS 'Диаграмма Парето по queryid';
+-- Диаграмма Парето по queryid
+-------------------------------------------------------------------------------
+
+
+	
+--------------------------------------------------------------------------------
+-- report_shared_buffers.sql
+-- version 7.0
+--------------------------------------------------------------------------------
+--
+-- report_shared_buffers Статистика shared_buffers
+--
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
+-- Статистика shared_buffers
+CREATE OR REPLACE FUNCTION report_shared_buffers( start_timestamp text , finish_timestamp text   ) RETURNS text[] AS $$
+DECLARE
+ result_str text[] ;
+ line_count integer ;
+ min_timestamp timestamptz ; 
+ max_timestamp timestamptz ; 
+ 
+ counter integer ; 
+ line_counter integer ; 
+
+ shared_buffers_rec record;
+
+BEGIN
+	line_count = 1 ;
 	
 	
 	
+	
+	IF finish_timestamp = 'CURRENT_TIMESTAMP'
+	THEN 
+		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+
+		min_timestamp = max_timestamp - interval '1 hour'; 	
+	ELSE
+		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	min_timestamp ; 
+		
+		SELECT 	date_trunc('minute' ,  to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+	END IF ;
+
+
+	
+	result_str[line_count] = 'СТАТИСТИКА shared_buffers' ; 
+	line_count=line_count+1;
+		
+	
+	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+1; 
+	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+2; 
+	
+	result_str[line_count] = 	'timestamp'||'|'||  --1
+								'№'||'|'	--2
+								'shared_blk_rw_time(s)'||'|' --3
+								'shared_blks_hit'||'|' --4
+								'shared_blks_read'||'|' --5
+								'shared_blks_dirtied'||'|' --6
+								'shared_blks_written'||'|' --7												
+								;
+	line_count = line_count + 1;
+	counter = 0 ; 
+	FOR shared_buffers_rec IN
+	SELECT 
+		cls.curr_timestamp , --1
+		(cls.curr_shared_blk_read_time+cls.curr_shared_blk_write_time)/1000.0 AS shared_blks_read_write_time , --3
+		cls.curr_shared_blks_hit AS shared_blks_hit ,--4
+		cls.curr_shared_blks_read AS shared_blks_read ,--5
+		cls.curr_shared_blks_dirtied AS shared_blks_dirtied ,--6
+		cls.curr_shared_blks_written AS shared_blks_written --7		
+	FROM cluster_stat_median cls 
+	WHERE 	
+		cls.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
+    ORDER BY cls.curr_timestamp 
+	LOOP
+		counter = counter + 1 ;
+		result_str[line_count] =
+								to_char( shared_buffers_rec.curr_timestamp , 'YYYY-MM-DD HH24:MI') ||'|'|| --1
+								counter ||'|'||  --2
+								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_read_write_time::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --3
+								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_hit::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --4
+								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_read::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --5
+								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_dirtied::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --6
+								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_written::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|' --7
+								;
+		
+		line_count=line_count+1; 
+	END LOOP;
+
+
   return result_str ; 
 END
 $$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_queryid_stat IS 'История выполения и ожиданий по отдельному SQL запросу';
---История выполения и ожиданий по отдельному SQL запросу
---------------------------------------------------------------------------------
-	
-	
---------------------------------------------------------------------------------
--- reports_vmstat_4graph.sql
--- version 1.0
+COMMENT ON FUNCTION report_shared_buffers IS 'Статистика shared_buffers';
+-- Чек-лист IO
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- report_sql_list.sql
+-- version 7.0
 --------------------------------------------------------------------------------
 --
--- reports_vmstat_4graph Данные для графиков по VMSTAT
+-- report_sql_list Список SQL выражений за период
+--
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
+-- Список SQL выражений за период
+CREATE OR REPLACE FUNCTION report_sql_list(  start_timestamp text , finish_timestamp text ) RETURNS text[] AS $$
+DECLARE
+ result_str text[] ;
+ line_count integer ;
+ min_timestamp timestamptz ; 
+ max_timestamp timestamptz ;   
+ sql_rec record ; 
+ 
+BEGIN
+	line_count = 1 ;
+	
+	result_str[line_count] = 'СПИСОК SQL ВЫРАЖЕНИЙ';	
+	line_count=line_count+1;
+	
+	line_count=line_count+1;
+	SELECT date_trunc( 'minute' , to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) )
+	INTO    min_timestamp ; 
+  
+	SELECT date_trunc( 'minute' , to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) )
+	INTO    max_timestamp ; 
+	
+	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+1; 
+	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+2; 
+	
+	result_str[line_count] = 'QUERYID | SQL TEXT |';	
+	line_count=line_count+1;	
+	
+	FOR sql_rec IN 
+	WITH ssm AS
+	(
+		SELECT 
+			queryid
+		FROM
+			statement_stat_median
+		WHERE 
+			curr_timestamp BETWEEN min_timestamp AND max_timestamp
+		GROUP BY 
+			queryid			
+	)
+	SELECT 
+		sss.* 
+	FROM 
+		statement_stat_sql sss
+		JOIN  ssm ON ( sss.queryid = ssm.queryid )
+	LOOP
+		result_str[line_count] = sql_rec.queryid||'|'|| sql_rec.query;	
+	    line_count=line_count+1;
+	END LOOP ;	
+	
+	
+return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION report_queryid_for_pareto IS 'Список SQL выражений за период';
+-- Список SQL выражений за период
+-------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- report_vm_dirty.sql
+-- version 7.0
+--------------------------------------------------------------------------------
+--
+-- report_vm_dirty Статистика dirty_ratio/dirty_background_ratio
+--
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
+-- Чек-лист IO
+CREATE OR REPLACE FUNCTION report_vm_dirty( ram_all integer , start_timestamp text , finish_timestamp text   ) RETURNS text[] AS $$
+DECLARE
+ result_str text[] ;
+ line_count integer ;
+ min_timestamp timestamptz ; 
+ max_timestamp timestamptz ; 
+ 
+ counter integer ; 
+ line_counter integer ; 
+
+ vm_dirty_rec record;
+
+BEGIN
+	line_count = 1 ;
+	
+	
+	
+	
+	IF finish_timestamp = 'CURRENT_TIMESTAMP'
+	THEN 
+		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+
+		min_timestamp = max_timestamp - interval '1 hour'; 	
+	ELSE
+		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	min_timestamp ; 
+		
+		SELECT 	date_trunc('minute' ,  to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+	END IF ;
+
+
+	
+	result_str[line_count] = 'Статистика dirty_ratio/dirty_background_ratio' ; 
+	line_count=line_count+1;
+	
+	result_str[line_count] = 'RAM (MB)| '||ram_all||'|';
+	line_count=line_count+1;		
+	
+	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+1; 
+	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+2; 
+	
+	result_str[line_count] = 	'timestamp'||'|'||  --1
+								'№'||'|'	--2
+								'dirty (KB)'||'|' --3
+								'% от dirty_ratio'||'|' --4
+								'% от dirty_background_ratio'||'|' --5
+								'free + cached memory'||'|' --6
+								;
+	line_count = line_count + 1;
+	counter = 0 ; 
+	FOR vm_dirty_rec IN
+	SELECT 
+		curr_timestamp , --1
+		dirty_kb_long ,  --3
+		dirty_percent_long , --4
+		dirty_bg_percent_long , --5
+		available_mem_mb_long  --6		
+	FROM os_stat_vmstat_median cls 
+	WHERE 	
+		curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
+    ORDER BY cls.curr_timestamp 
+	LOOP
+		counter = counter + 1 ;
+		result_str[line_count] =
+								to_char( vm_dirty_rec.curr_timestamp , 'YYYY-MM-DD HH24:MI') ||'|'|| --1
+								counter ||'|'||  --2
+								REPLACE ( TO_CHAR( ROUND( vm_dirty_rec.dirty_kb_long::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --3
+								REPLACE ( TO_CHAR( ROUND( vm_dirty_rec.dirty_percent_long::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --4
+								REPLACE ( TO_CHAR( ROUND( vm_dirty_rec.dirty_bg_percent_long::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --5
+								REPLACE ( TO_CHAR( ROUND( vm_dirty_rec.available_mem_mb_long::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'  --6								
+								;
+		
+		line_count=line_count+1; 
+	END LOOP;
+
+
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION report_vm_dirty IS 'Статистика dirty_ratio/dirty_background_ratio';
+-- Чек-лист IO
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- report_vmstat.sql
+-- version 7.0
+--------------------------------------------------------------------------------
+--
+-- report_vmstat Данные для графиков по VMSTAT
 --
 -------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------
 -- Данные для графиков по VMSTAT
-CREATE OR REPLACE FUNCTION reports_vmstat_4graph(  start_timestamp text , finish_timestamp text   ) RETURNS text[] AS $$
+CREATE OR REPLACE FUNCTION report_vmstat(  start_timestamp text , finish_timestamp text   ) RETURNS text[] AS $$
 DECLARE
  result_str text[] ;
  line_count integer ;
@@ -7008,1120 +6253,22 @@ BEGIN
   return result_str ; 
 END
 $$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_vmstat_4graph IS 'Данные для графиков по VMSTAT';
+COMMENT ON FUNCTION report_vmstat IS 'Данные для графиков по VMSTAT';
 -- Данные для графиков по VMSTAT
 -------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
--- reports_vmstat_cpu.sql
--- version 1.0
+-- report_vmstat_iostat.sql
+-- version 7.0
 --------------------------------------------------------------------------------
 --
--- reports_vmstat_cpu Чек-лист CPU
---
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- Чек-лист CPU
-CREATE OR REPLACE FUNCTION reports_vmstat_cpu(  cpu_count integer , start_timestamp text , finish_timestamp text   ) RETURNS text[] AS $$
-DECLARE
- result_str text[] ;
- line_count integer ;
- min_timestamp timestamptz ; 
- max_timestamp timestamptz ; 
- 
- counter integer ; 
- min_max_rec record ;
- line_counter integer ;  
- 	
-  
-  r_pct DOUBLE PRECISION;
-  cs_pct DOUBLE PRECISION;
-  sy_pct DOUBLE PRECISION;
-  
-  corr_cs_in DOUBLE PRECISION ; -- Корреляция cs-in
-  corr_cs_us DOUBLE PRECISION ; -- Корреляция cs-us
-  corr_cs_sy DOUBLE PRECISION ; -- Корреляция cs-sy
-  
-BEGIN
-	line_count = 1 ;
-	
-	IF finish_timestamp = 'CURRENT_TIMESTAMP'
-	THEN 
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-
-		min_timestamp = max_timestamp - interval '1 hour'; 	
-	ELSE
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	min_timestamp ; 
-		
-		SELECT 	date_trunc('minute' ,  to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-	END IF ;
-
-
-	
-	result_str[line_count] = 'ЧЕК-ЛИСТ CPU' ; 
-	line_count=line_count+1;
-	
-	result_str[line_count] = 'CPU | '||cpu_count||'|' ; 
-	line_count=line_count+2;
-	
-	
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1;  
-	
-	
-	
-	DROP TABLE IF EXISTS tmp_timepoints;
-	CREATE TEMPORARY TABLE tmp_timepoints
-	(
-		curr_timestamp timestamptz  ,   
-		curr_timepoint integer 
-	);
-
-
-	INSERT INTO tmp_timepoints
-	(
-		curr_timestamp ,	
-		curr_timepoint 
-	)
-	SELECT 
-		curr_timestamp , 
-		row_number() over (order by curr_timestamp) AS x
-	FROM
-	os_stat_vmstat_median cl
-	WHERE 
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp  
-	ORDER BY curr_timestamp	;
-
-	SELECT 
-		MIN( cl.procs_r_long) AS min_procs_r_long , MAX( cl.procs_r_long) AS max_procs_r_long , 
-		MIN( cl.system_cs_long) AS min_system_cs_long , MAX( cl.system_cs_long) AS max_system_cs_long ,		
-		MIN( cl.system_in_long) AS min_system_in_long , MAX( cl.system_in_long) AS max_system_in_long ,
-		MIN( cl.cpu_us_long) AS min_cpu_us_long , MAX( cl.cpu_us_long) AS max_cpu_us_long ,
-		MIN( cl.cpu_sy_long) AS min_cpu_sy_long , MAX( cl.cpu_sy_long) AS max_cpu_sy_long
-	INTO  	min_max_rec
-	FROM 
-		os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-	WHERE 	
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	;
-		
-    	
-	SELECT 
-		count(curr_timestamp)
-	INTO line_counter
-	FROM 
-		cluster_stat_median cl
-	WHERE 	
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
-		
-	-----------------------------------------------------------------------------
-	--r — процессы в run queue (готовы к выполнению)(% превышение CPU)
-	WITH 
-	  cpu_counter AS
-	  (
-		SELECT count(*) AS total_counter
-		FROM 
-			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-		WHERE				
-			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-			AND procs_r_long > cpu_count
-	  ) 
-	SELECT 
-		(total_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
-	INTO
-		r_pct
-	FROM cpu_counter ;
-
-	line_count=line_count+1;
-	result_str[line_count] = 'r — процессы в run queue (готовы к выполнению): % превышения ядер CPU | '|| REPLACE ( TO_CHAR( ROUND( r_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
-	line_count=line_count+1;
-	
-	IF r_pct < 25.0 
-	THEN 
-		result_str[line_count] = 'OK: менее 25% наблюдений - очередь процессов превышает количество ядер CPU' ; 
-		line_count=line_count+1;
-	ELSIF r_pct > 25.0 AND r_pct <= 50.0
-	THEN 
-		result_str[line_count] = 'WARNING: 25-50% наблюдений - очередь процессов превышает количество ядер CPU' ; 
-		line_count=line_count+1;
-	ELSE 
-		result_str[line_count] = 'ALARM: более 50% наблюдений - очередь процессов превышает количество ядер CPU' ; 
-		line_count=line_count+1;
-	END IF ;	
-	--r — процессы в run queue (готовы к выполнению)(% превышение CPU)
-	-----------------------------------------------------------------------------
-
-	
-	----------------------------------------------------------------------------
-	-- sy — system time(% превышение 30%)
-	WITH 
-	  sy_counter AS
-	  (
-		SELECT count(*) AS total_sy_counter
-		FROM 
-			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-		WHERE				
-			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-			AND cpu_sy_long > 30
-	  ) 
-	SELECT 
-		(total_sy_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
-	INTO
-		sy_pct
-	FROM sy_counter ;
-
-	line_count=line_count+1;
-	result_str[line_count] = 'sy — system time: % превышение 30% | '|| REPLACE ( TO_CHAR( ROUND( sy_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
-	line_count=line_count+1;
-	
-	IF sy_pct < 25.0 
-	THEN 
-		result_str[line_count] = 'OK: менее 25% наблюдений - доля system time  превышает 30%' ; 
-		line_count=line_count+1;
-	ELSIF sy_pct > 25.0 AND sy_pct <= 50.0
-	THEN 
-		result_str[line_count] = 'WARNING: 25-50% наблюдений - доля system time превышает 30%' ; 
-		line_count=line_count+1;
-	ELSE 
-		result_str[line_count] = 'ALARM: более 50% наблюдений - доля system time превышает 30%' ; 
-		line_count=line_count+1;
-	END IF ;
-	-- sy — system time(% превышение 30%)
-	----------------------------------------------------------------------------
-	----------------------------------------------------------------------------
-	-- КОРРЕЛЯЦИЯ system_cs system_in	
-	IF min_max_rec.min_system_cs_long != min_max_rec.max_system_cs_long AND 
-	   min_max_rec.min_system_in_long != min_max_rec.max_system_in_long
-	THEN	
-		WITH 
-		system_cs_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , system_cs_long  AS system_cs_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND system_cs_long > 0 
-		) ,
-		system_in_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , system_in_long  AS system_in_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND system_in_long > 0 
-		) 
-		SELECT COALESCE( corr( v1.system_cs_long , v2.system_in_long ) , 0 ) AS correlation_value 
-		INTO corr_cs_in
-		FROM
-			system_cs_values v1 JOIN system_in_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-	ELSE 
-		corr_cs_in = 0 ;
-	END IF;
-	
-    line_count=line_count+1;
-    result_str[line_count] = 'Корреляция переключений контекста и прерываний(cs - in) | ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_cs_in::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-
-	IF corr_cs_in <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (cs - in) - отрицательная или отсутствует' ; 
-		line_count=line_count+1;	
-	ELSIF corr_cs_in > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (cs - in) - переключения контекста могут быть вызваны прерываниями.' ; 
-		line_count=line_count+1;
-	ELSIF corr_cs_in > 0.5 AND corr_cs_in <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (cs - in) - переключения контекста могут быть вызваны прерываниями.' ; 
-		line_count=line_count+1;
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (cs - in) - переключения контекста могут быть вызваны прерываниями.' ; 
-		line_count=line_count+1;
-	
-	END IF;
-	-- КОРРЕЛЯЦИЯ system_cs system_in	
-	----------------------------------------------------------------------------
-
-	----------------------------------------------------------------------------
-	-- КОРРЕЛЯЦИЯ system_cs cpu_us	
-	IF min_max_rec.min_system_cs_long != min_max_rec.max_system_cs_long AND 
-	   min_max_rec.min_cpu_us_long != min_max_rec.max_cpu_us_long
-	THEN 
-	WITH 
-		system_cs_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , system_cs_long  AS system_cs_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND system_cs_long > 0 
-		) ,
-		cpu_us_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , cpu_us_long  AS cpu_us_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND cpu_us_long > 0 
-		) 
-		SELECT COALESCE( corr( v1.system_cs_long , v2.cpu_us_long ) , 0 ) AS correlation_value 
-		INTO corr_cs_us
-		FROM
-			system_cs_values v1 JOIN cpu_us_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-	ELSE
-		corr_cs_us = 0 ;
-	END IF ;
-
-	line_count=line_count+1;
-	result_str[line_count] = 'Корреляция переключений контекста и user time(cs - us) | ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_cs_us::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-
-
-	IF corr_cs_us <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (cs - us) - отрицательная или отсутствует' ; 
-		line_count=line_count+1;	
-	ELSIF corr_cs_us > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (cs - us) - возможно проблема в пользовательском приложении(resource contention).' ; 
-		line_count=line_count+1;
-	ELSIF corr_cs_us > 0.5 AND corr_cs_us <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (cs - us) - возможно проблема в пользовательском приложении(resource contention).' ; 
-		line_count=line_count+1;
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя (cs - us) - возможно проблема в пользовательском приложении(resource contention).' ; 
-		line_count=line_count+1;
-	
-	END IF;
-	-- КОРРЕЛЯЦИЯ system_cs cpu_us	
-	----------------------------------------------------------------------------
-
-	----------------------------------------------------------------------------
-	-- КОРРЕЛЯЦИЯ system_cs system_sy
-	IF min_max_rec.min_system_cs_long != min_max_rec.max_system_cs_long AND 
-	   min_max_rec.min_cpu_sy_long != min_max_rec.max_cpu_sy_long
-	THEN 
-	WITH 
-		system_cs_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , system_cs_long  AS system_cs_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND system_cs_long > 0 
-		) ,
-		system_sy_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , cpu_sy_long  AS cpu_sy_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND cpu_sy_long > 0 
-		) 
-		SELECT COALESCE( corr( v1.system_cs_long , v2.cpu_sy_long ) , 0 ) AS correlation_value 
-		INTO corr_cs_sy
-		FROM
-			system_cs_values v1 JOIN system_sy_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-	ELSE 
-		corr_cs_sy = 0 ;
-	END IF;
-			
-	line_count=line_count+1;
-	result_str[line_count] = 'Корреляция переключений контекста и system time(cs - sy) | ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_cs_sy::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;		
-
-	IF corr_cs_sy <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (cs - sy) - отрицательная или отсутствует' ; 
-		line_count=line_count+1;	
-	ELSIF corr_cs_sy > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (cs - sy) - ядро тратит много времени на переключение контекста и планирование, вместо полезной работы.' ; 
-		line_count=line_count+1;
-	ELSIF corr_cs_sy > 0.5 AND corr_cs_sy <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция(cs - sy) - ядро тратит много времени на переключение контекста и планирование, вместо полезной работы.' ; 
-		line_count=line_count+1;
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (cs - sy) - ядро тратит много времени на переключение контекста и планирование, вместо полезной работы.' ; 
-		line_count=line_count+1;
-	
-	END IF;
-	-- КОРРЕЛЯЦИЯ system_cs system_sy	
-	----------------------------------------------------------------------------
-
-  return result_str ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_vmstat_cpu IS 'Чек-лист CPU';
--- Чек-лист CPU
----------------------------------------------------------------------------------------------------------------------------------------------------------------
--- reports_vmstat_io.sql
--- version 6.0
---------------------------------------------------------------------------------
---
--- reports_vmstat_io Чек-лист IO
---
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- Чек-лист IO
-CREATE OR REPLACE FUNCTION reports_vmstat_io( cpu_count integer , start_timestamp text , finish_timestamp text   ) RETURNS text[] AS $$
-DECLARE
- result_str text[] ;
- line_count integer ;
- min_timestamp timestamptz ; 
- max_timestamp timestamptz ; 
- 
- counter integer ; 
- min_max_rec record ;
- line_counter integer ; 
-  	
-  
-  b_pct DOUBLE PRECISION;
-  wa_pct DOUBLE PRECISION;
-  
-  b_reg_slope DOUBLE PRECISION; -- угол наклона линии регрессии b — процессы в uninterruptible sleep (обычно ждут IO)
-  slope DOUBLE PRECISION; -- угол наклона линии регрессии 
-  
-  b_regr_rec record ;
-  
-  sum_shared_blks_rec record ; 
-  shared_blks_read_write_ratio DOUBLE PRECISION ;
-  
-  speed_read_blks_corr DOUBLE PRECISION ;
-  speed_write_blks_corr DOUBLE PRECISION ;
-  
-  speed_read_time_corr DOUBLE PRECISION ;
-  speed_write_time_corr DOUBLE PRECISION ; 
-
-   hit_ratio_rec  record ; 
-
-   shared_blks_corr DOUBLE PRECISION ; 
-   io_perf_rec record;
-
-BEGIN
-	line_count = 1 ;
-	
-	
-	
-	
-	IF finish_timestamp = 'CURRENT_TIMESTAMP'
-	THEN 
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-
-		min_timestamp = max_timestamp - interval '1 hour'; 	
-	ELSE
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	min_timestamp ; 
-		
-		SELECT 	date_trunc('minute' ,  to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-	END IF ;
-
-
-	
-	result_str[line_count] = 'ЧЕК-ЛИСТ IO' ; 
-	line_count=line_count+1;
-		
-	result_str[line_count] = 'CPU | '||cpu_count||'|' ;  
-	line_count=line_count+2;
-	
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+2; 
-		
-	
-	DROP TABLE IF EXISTS tmp_timepoints;
-	CREATE TEMPORARY TABLE tmp_timepoints
-	(
-		curr_timestamp timestamptz  ,   
-		curr_timepoint integer 
-	);
-
-
-	INSERT INTO tmp_timepoints
-	(
-		curr_timestamp ,	
-		curr_timepoint 
-	)
-	SELECT 
-		cl.curr_timestamp , 
-		row_number() over (order by cl.curr_timestamp) AS x
-	FROM
-	os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)	
-	WHERE 
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp  
-	ORDER BY cl.curr_timestamp	;
-
-	SELECT 
-		MIN( cl.procs_b_long) AS min_procs_b_long , MAX( cl.procs_b_long) AS max_procs_b_long , 
-		MIN( cl.cpu_wa_long) AS min_cpu_wa_long , MAX( cl.cpu_wa_long) AS max_cpu_wa_long 
-	INTO  	min_max_rec
-	FROM 
-		os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-	WHERE 	
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	;
-		
-    		
-	SELECT 
-		count(curr_timestamp)
-	INTO line_counter
-	FROM 
-		cluster_stat_median cl
-	WHERE 	
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
-		
-	
-
-	----------------------------------------------------------------------------
-	-- wa — ожидание IO
-	WITH 
-	  wa_counter AS
-	  (
-		SELECT count(*) AS total_wa_counter
-		FROM 
-			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)			
-		WHERE				
-			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-			AND cpu_wa_long > 10
-	  ) 
-	SELECT 
-		(total_wa_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
-	INTO
-		wa_pct
-	FROM wa_counter ;
-
-	result_str[line_count] = 'wa — ожидание IO (% свыше 10%) | '|| REPLACE ( TO_CHAR( ROUND( wa_pct::numeric , 2 ) , '000000000000D0000' ) , '.' , ',' )  ; 
-	line_count=line_count+1;
-	
-	IF wa_pct < 25.0 
-	THEN 
-		result_str[line_count] = 'OK: менее 25% наблюдений - wa > 10%' ; 
-		line_count=line_count+1;
-	ELSIF wa_pct > 25.0 AND wa_pct <= 50.0
-	THEN 
-		result_str[line_count] = 'WARNING: 25-50% наблюдений - wa > 10%' ; 
-		line_count=line_count+1;
-	ELSE 
-		result_str[line_count] = 'ALARM: более 50% наблюдений - wa > 10%' ; 
-		line_count=line_count+1;
-	END IF ;
-	-- wa — ожидание IO
-	----------------------------------------------------------------------------
-	
-	-----------------------------------------------------------------------------
-	-- УГОЛ НАКЛОНА ЛИНИИ НАИМЕНЬШИХ КВАДРАТОВ b — процессы в uninterruptible sleep (обычно ждут IO)
-	-- 	линия регрессии  скорости  : Y = a + bX
-	BEGIN
-		WITH stats AS 
-		(
-		  SELECT 
-			AVG(t.curr_timepoint::DOUBLE PRECISION) as avg1, 
-			STDDEV(t.curr_timepoint::DOUBLE PRECISION) as std1,
-			AVG(s.procs_b_long::DOUBLE PRECISION) as avg2, 
-			STDDEV(s.procs_b_long::DOUBLE PRECISION) as std2
-		  FROM
-			os_stat_vmstat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp )
-		  WHERE 
-			t.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-		),
-		standardized_data AS 
-		(
-			SELECT 
-				(t.curr_timepoint::DOUBLE PRECISION - avg1) / std1 as x_z,
-				(s.procs_b_long::DOUBLE PRECISION - avg2) / std2 as y_z
-			FROM
-				os_stat_vmstat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp ) , stats
-			WHERE 
-				t.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-		)	
-		SELECT
-			REGR_SLOPE(y_z, x_z) as slope, --b
-			ATAN(REGR_SLOPE(y_z, x_z)) * 180 / PI() as slope_angle_degrees, --угол наклона
-			REGR_R2(y_z, x_z) as r_squared -- Коэффициент детерминации
-		INTO 
-			b_regr_rec
-		FROM standardized_data;
-	EXCEPTION
-	  --STDDEV(s.curr_op_speed::DOUBLE PRECISION) = 0  
-	  WHEN division_by_zero THEN  -- Конкретное исключение для деления на ноль
-	    SELECT 
-			1.0 as slope, --b
-			0.0  as slope_angle_degrees, --угол наклона
-			0.0  as r_squared -- Коэффициент детерминации
-		INTO 
-		b_regr_rec ;
-	END;
--- 	линия регрессии  скорости  : Y = a + bX
-
-    line_count=line_count+1;
-    result_str[line_count] = 'ЛИНИЯ РЕГРЕССИИ: Y = a + bX ' ; 
-	line_count=line_count+1; 
-	result_str[line_count] = 'b — процессы в uninterruptible sleep (обычно ждут IO)' ; 
-	line_count=line_count+1; 
-	result_str[line_count] = 'Коэффициент детерминации R^2 ' ||'|'|| REPLACE ( TO_CHAR( ROUND( b_regr_rec.r_squared::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 	
-	result_str[line_count] = 'угол наклона  ' ||'|'|| REPLACE ( TO_CHAR( ROUND( b_regr_rec.slope_angle_degrees::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
-	line_count=line_count+1; 	
-	
-/*	
-	Хотя не существует строгих порогов, часто используют следующую качественную шкалу:
-
-	0.8 ≤ R² ≤ 1.0: Очень сильная объясняющая способность модели.
-
-	0.6 ≤ R² < 0.8: Сильная объясняющая способность.
-
-	0.4 ≤ R² < 0.6: Умеренная объясняющая способность.
-
-	0.2 ≤ R² < 0.4: Слабая объясняющая способность.
-
-	0.0 ≤ R² < 0.2: Объясняющая способность отсутствует или крайне мала.	
-*/	
-	IF ROUND( b_regr_rec.slope_angle_degrees::numeric , 2 ) = 0 OR ROUND( b_regr_rec.r_squared::numeric , 2 ) < 0.6 
-	THEN 
-		result_str[line_count] = 'OK: количество процессов в uninterruptible sleep - не возрастает, либо незначительно' ; 
-		line_count=line_count+1;
-	ELSIF wa_pct < 25.0
-	THEN 
-		result_str[line_count] = 'WARNING: количество процессов в uninterruptible sleep возрастает, но wa > 10% менее 25% наблюдений.' ; 
-		line_count=line_count+1;		
-	ELSE
-		result_str[line_count] = 'ALARM: количество процессов в uninterruptible sleep возрастает, и wa > 10% более 25% наблюдений.' ; 
-		line_count=line_count+1;	
-	END IF ;
-	line_count=line_count+1; 
-	
-	-- УГОЛ НАКЛОНА ЛИНИИ НАИМЕНЬШИХ КВАДРАТОВ b — процессы в uninterruptible sleep (обычно ждут IO)
-	-----------------------------------------------------------------------------
-
-    -----------------------------------------------------------------------------
-	--b — процессы в uninterruptible sleep (обычно ждут IO)(% превышение CPU)
-	WITH 
-	  cpu_counter AS
-	  (
-		SELECT count(*) AS total_counter
-		FROM 
-			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-		WHERE				
-			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-			AND procs_b_long > cpu_count
-	  ) 
-	SELECT 
-		(total_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
-	INTO
-		b_pct
-	FROM cpu_counter ;
-
-	result_str[line_count] = 'b — процессы в uninterruptible sleep (обычно ждут IO): % превышения ядер CPU | '|| REPLACE ( TO_CHAR( ROUND( b_pct::numeric , 2 ) , '000000000000D0000' ) , '.' , ',' )  ; 
-	line_count=line_count+1;
-	
-	IF b_pct < 25.0 
-	THEN 
-		result_str[line_count] = 'OK: менее 25% наблюдений - процессы в uninterruptible sleep превышают количество ядер CPU' ; 
-		line_count=line_count+1;
-	ELSIF b_pct > 25.0 AND b_pct <= 50.0
-	THEN 
-		result_str[line_count] = 'WARNING: 25-50% наблюдений - процессы в uninterruptible sleep превышают количество ядер CPU' ; 
-		line_count=line_count+1;
-	ELSE 
-		result_str[line_count] = 'ALARM: более 50% наблюдений - процессы в uninterruptible sleep превышают количество ядер CPU' ; 
-		line_count=line_count+1;
-	END IF ;	
-	--b — процессы в uninterruptible sleep (обычно ждут IO)(% превышение CPU)
-	-----------------------------------------------------------------------------
-	
-	-----------------------------------------------------------------------------
-	-- Отношение прочитанных блоков к записанным(новые+измененные)
-	SELECT 
-		CASE 
-			WHEN SUM(curr_shared_blks_dirtied) > 0
-			THEN ROUND(SUM(curr_shared_blks_read+curr_shared_blks_hit)::numeric / SUM(curr_shared_blks_dirtied), 4)
-			ELSE NULL -- избегаем деления на ноль, если нет изменений
-		END 
-	INTO 
-		shared_blks_read_write_ratio
-	FROM 
-		cluster_stat_median
-	WHERE 
-		curr_timestamp BETWEEN min_timestamp AND max_timestamp ;	
-	
-	line_count=line_count+1;
-    result_str[line_count] = 'Отношение прочитанных блоков к измененным |' ||
-	REPLACE ( TO_CHAR( ROUND( shared_blks_read_write_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-
-
-	IF shared_blks_read_write_ratio IS NULL
-	THEN 
-		result_str[line_count] = 'Только читающая нагрузка.' ; 
-		line_count=line_count+1;		 
-	ELSE
-		result_str[line_count] = 'Эмпирические ориентиры ' ; 
-		line_count=line_count+1;
-		result_str[line_count] = ' для оценки типа нагрузки(OLAP/OLTP): ' ; 
-		line_count=line_count+1;
-
-		IF shared_blks_read_write_ratio >= 200
-		THEN 
-			result_str[line_count] = 'OLAP сценарий.' ; 
-			line_count=line_count+1;		
-		ELSE 
-			result_str[line_count] = 'OLTP сценарий.' ; 
-			line_count=line_count+1;		
-		END IF;
-	
-	END IF ;
-
-	-- Отношение прочитанных блоков к записанным(новые+измененные)
-	-----------------------------------------------------------------------------
-    
-    
-	-----------------------------------------------------------------------------
-	-- Корреляция операционная скорость - прочитанные блоки
-	SELECT COALESCE( corr( v1.curr_op_speed , v2.curr_shared_blks_read ) , 0 ) AS correlation_value 
-	INTO speed_read_blks_corr
-	FROM
-		cluster_stat_median v1 JOIN cluster_stat_median v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) 
-	WHERE 	
-		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
-	
-	line_count=line_count+1;
-    result_str[line_count] = 'Корреляция операционная скорость - прочитанные блоки |' ||
-	REPLACE ( TO_CHAR( ROUND( speed_read_blks_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-	
-	
-	IF speed_read_blks_corr <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (speed - shared_blks_read ) - отрицательная или отсутствует' ; 
-		line_count=line_count+1;			 
-		result_str[line_count] = 'Большая часть данных обслуживается из кэша. Штатная OLTP-нагрузка.' ; 
-		line_count=line_count+1;
-	ELSIF speed_read_blks_corr > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (speed - shared_blks_read ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Рост скорости операций напрямую зависит от роста чтений с диска.' ; 
-		line_count=line_count+1;
-	ELSIF speed_read_blks_corr > 0.5 AND speed_read_blks_corr <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (speed - shared_blks_read ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Производительности IO - недостаточно для данной нагрузки.' ; 
-		line_count=line_count+1;
-	ELSE
-		result_str[line_count] = 'INFO : Слабая корреляция (speed - shared_blks_read ).' ; 
-		line_count=line_count+1;		
-	END IF;	
-	-- Корреляция операционная скорость - прочитанные блоки
-	-----------------------------------------------------------------------------
-	
-	-----------------------------------------------------------------------------
-	-- Корреляция операционная скорость - записанные блоки
-	SELECT COALESCE( corr( v1.curr_op_speed , v2.curr_shared_blks_dirtied + v2.curr_shared_blks_written ) , 0 ) AS correlation_value 
-	INTO speed_write_blks_corr
-	FROM
-		cluster_stat_median v1 JOIN cluster_stat_median v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) 
-	WHERE 	
-		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
-	
-	line_count=line_count+1;
-    result_str[line_count] = 'Корреляция операционная скорость - записанные блоки |' ||
-	REPLACE ( TO_CHAR( ROUND( speed_write_blks_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-	
-	
-	IF speed_write_blks_corr <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (speed - shared_blks_write ) - отрицательная или отсутствует' ; 
-		line_count=line_count+1;			 
-		result_str[line_count] = 'Операции записи не являются основным узким местом' ; 
-		line_count=line_count+1;		
-	ELSIF speed_write_blks_corr > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (speed - shared_blks_write ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Система ограничена производительностью записи на диск' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Точки для анализа: скорость дисков, настройки commit_delay, wal_buffers.' ; 
-		line_count=line_count+1;
-	ELSIF speed_write_blks_corr > 0.5 AND speed_write_blks_corr <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (speed - shared_blks_write ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Рост операций записи приводит к падению общей скорости.' ; 
-		line_count=line_count+1;
-	ELSE
-		result_str[line_count] = 'INFO : Слабая корреляция (speed - shared_blks_write ).' ; 
-		line_count=line_count+1;
-	END IF;	
-	-- Корреляция операционная скорость - записанные блоки
-	-----------------------------------------------------------------------------
-	
-	-----------------------------------------------------------------------------
-	-- Hit Ratio
-	line_count=line_count+1;
-	WITH 
-	hit_ratio AS
-	(
-		SELECT 
-			( curr_shared_blks_hit / NULLIF(curr_shared_blks_hit + curr_shared_blks_read, 0))*100.0 as value 
-		FROM 
-			cluster_stat_median
-		WHERE 
-			curr_timestamp BETWEEN min_timestamp AND max_timestamp
-	) 
-	SELECT 
-		MIN(value) as min_hit_ratio ,
-		MAX(value) as max_hit_ratio , 
-		(percentile_cont(0.5) within group (order by value))::numeric as median_hit_ratio
-	INTO 
-		hit_ratio_rec
-	FROM 
-		hit_ratio ;
-
-    result_str[line_count] = 'Shared buffers MIN HIT RATIO | '||REPLACE ( TO_CHAR( ROUND( hit_ratio_rec.min_hit_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-
-    result_str[line_count] = 'Shared buffers MAX HIT RATIO | '||REPLACE ( TO_CHAR( ROUND( hit_ratio_rec.max_hit_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-
-    result_str[line_count] = 'Shared buffers MEDIAN HIT RATIO | '||REPLACE ( TO_CHAR( ROUND( hit_ratio_rec.median_hit_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-
-
-	
-	IF hit_ratio_rec.median_hit_ratio >= 99.0 
-	THEN 
-		result_str[line_count] = 'OK : Идеальный результат для OLTP' ; 
-		line_count=line_count+2;
-	ELSIF hit_ratio_rec.median_hit_ratio >= 90.0 AND hit_ratio_rec.median_hit_ratio < 99.0
-	THEN 
-		result_str[line_count] = 'INFO: приемлемо для OLAP, особенно при работе с большими таблицами' ; 
-		line_count=line_count+2;
-	ELSIF hit_ratio_rec.median_hit_ratio >= 85.0 AND hit_ratio_rec.median_hit_ratio < 90.0
-	THEN 
-		result_str[line_count] = 'WARNING: низкое значение HIT RATIO' ; 
-		line_count=line_count+2;
-	ELSE
-		result_str[line_count] = 'ALARM: критически низкое значение HIT RATIO' ; 
-		line_count=line_count+2;
-	END IF;			 		
-	-- Hit Ratio
-	-----------------------------------------------------------------------------
-	
-	-----------------------------------------------------------------------------
-	-- корреляция shared_blks_hit - shared_blks_read
-	SELECT COALESCE( corr( v1.curr_shared_blks_hit , v1.curr_shared_blks_read ) , 0 ) AS correlation_value 
-	INTO shared_blks_corr
-	FROM
-		cluster_stat_median v1 
-	WHERE 	
-		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp;
-    
-	result_str[line_count] = 'Корреляция shared_blks_hit - shared_blks_read | '||REPLACE ( TO_CHAR( ROUND( shared_blks_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-	
-	
-	IF shared_blks_corr <= -0.7 AND shared_blks_corr >= -1.0
-	THEN 
-		result_str[line_count] = 'OK : Эффективное кэширование.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Высокая предсказуемость.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Когда нагрузка попадает в кэш, это реально снижает дисковую нагрузку.' ; 
-		line_count=line_count+2;
-	END IF;
-	
-	IF shared_blks_corr <= -0.3 AND shared_blks_corr > -0.7
-	THEN 
-		result_str[line_count] = 'INFO : Нелинейная зависимость от кэша.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Нелинейная зависимость от кэша.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Увеличение hit помогает, но не пропорционально.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Возможные причины' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Фрагментация доступа: Даже при повторных запросах нужно подчитывать новые данные с диска.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Конкуренция за кэш: OLTP и аналитические запросы "вытесняют" данные друг друга.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Разные рабочие наборы: Несколько приложений с разными паттернами доступа.' ; 
-		line_count=line_count+2;
-	END IF;
-	
-	IF shared_blks_corr <= 0.3 AND shared_blks_corr > -0.3
-	THEN 
-		result_str[line_count] = 'WARNING :  Кэширование практически не влияет на дисковую нагрузку.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Производительность определяется дисковыми характеристиками.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Кэш работает как буфер, но не как ускоритель.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Нагрузка: Аналитическая или "сканирующая":' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Рабочий набор >> shared_buffers: Данные читаются один раз и вытесняются.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Случайные большие запросы: Каждый запрос читает уникальные данные.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Проблемы с эффективностью кэша: Неправильные настройки autovacuum, много мёртвых кортежей.' ; 
-		line_count=line_count+2;
-	END IF;
-	
-	IF shared_blks_corr > 0.3 
-	THEN 
-		result_str[line_count] = 'ALARM : Кэширования связано с большим чтением с диска' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Возможные причины:' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'В периоды высокой нагрузки растут hit и read.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'OLTP-запросы (высокий hit) и отчетные (высокий read) запускаются одновременно.' ; 
-		line_count=line_count+2;		
-	END IF;
-	
-----------------------------------------------------------------------------------	
---RESERVED FOR FUTURE	
-/* 	
-	-- корреляция shared_blks_hit - shared_blks_read
-	-----------------------------------------------------------------------------
-	
-	result_str[line_count] = 	'timestamp'||'|'||  --1
-								'№'||'|'	--2
-								'shared_blk_rw_time(s)'||'|' --3
-								'shared_blks_hit'||'|' --4
-								'shared_blks_read'||'|' --5
-								'shared_blks_dirtied'||'|' --6
-								'shared_blks_written'||'|' --7												
-								;
-	line_count = line_count + 1;
-	counter = 0 ; 
-	FOR io_perf_rec IN
-	SELECT 
-		cls.curr_timestamp , --1
-		(cls.curr_shared_blk_read_time+cls.curr_shared_blk_write_time)/1000.0 AS shared_blks_read_write_time , --3
-		cls.curr_shared_blks_hit AS shared_blks_hit ,--4
-		cls.curr_shared_blks_read AS shared_blks_read ,--5
-		cls.curr_shared_blks_dirtied AS shared_blks_dirtied ,--6
-		cls.curr_shared_blks_written AS shared_blks_written --7		
-	FROM cluster_stat_median cls 
-	WHERE 	
-		cls.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
-    ORDER BY cls.curr_timestamp 
-	LOOP
-		counter = counter + 1 ;
-		result_str[line_count] =
-								to_char( io_perf_rec.curr_timestamp , 'YYYY-MM-DD HH24:MI') ||'|'|| --1
-								counter ||'|'||  --2
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_read_write_time::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --3
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_hit::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --4
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_read::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --5
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_dirtied::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --6
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.shared_blks_written::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|' --7
-								;
-		
-		line_count=line_count+1; 
-	END LOOP;
-*/
---RESERVED FOR FUTURE		
-----------------------------------------------------------------------------------	
-
-		
-
----------------------------------------------------------------------------------
---RESERVED FOR FUTURE 
-/*
-	-----------------------------------------------------------------------------
-	-- Корреляция операционной скорости - время чтения
-	line_count=line_count+1;
-	SELECT COALESCE( corr( v1.curr_op_speed , v2.curr_shared_blk_read_time) , 0 ) AS correlation_value 
-	INTO speed_read_time_corr
-	FROM
-		cluster_stat_median v1 JOIN cluster_stat_median v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) 
-	WHERE 	
-		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
-	
-    line_count=line_count+1;
-    result_str[line_count] = 'Корреляция операционной скорости - время чтения |' ||
-	REPLACE ( TO_CHAR( ROUND( speed_read_time_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;			 
-	
-	
-	IF speed_read_time_corr <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (speed - shared_blk_read_time ) - отрицательная или отсутствует' ; 
-		line_count=line_count+1;			 
-		result_str[line_count] = 'Система может переключаться на кеширование или менять паттерны доступа' ; 
-		line_count=line_count+1;		
-	ELSIF speed_read_time_corr > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (speed - shared_blk_read_time ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Производительность сильно зависит от скорости чтения' ; 
-		line_count=line_count+1;		
-	ELSIF speed_read_time_corr > 0.5 AND speed_read_time_corr <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (speed - shared_blk_read_time ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Чтение не является ограничивающим фактором.' ; 
-		line_count=line_count+1;
-	ELSE
-		result_str[line_count] = 'INFO: Слабая корреляция (speed - shared_blk_read_time ).' ; 
-		line_count=line_count+1;	
-	END IF;				
-	-- Корреляция операционной скорости - время чтения
-	-----------------------------------------------------------------------------
-
-	-----------------------------------------------------------------------------
-	-- Корреляция операционной скорости - время записи
-	SELECT COALESCE( corr( v1.curr_op_speed , v2.curr_shared_blk_write_time) , 0 ) AS correlation_value 
-	INTO speed_write_time_corr
-	FROM
-		cluster_stat_median v1 JOIN cluster_stat_median v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) 
-	WHERE 	
-		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
-		
-	line_count=line_count+1;
-    result_str[line_count] = 'Корреляция операционной скорости - время записи |' ||
-	REPLACE ( TO_CHAR( ROUND( speed_write_time_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;			 
-		
-	IF speed_write_time_corr <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (speed - curr_shared_blk_write_time ) - отрицательная или отсутствует' ; 
-		line_count=line_count+1;			 
-		result_str[line_count] = 'Возможна буферизация или асинхронная запись' ; 
-		line_count=line_count+1;		
-	ELSIF speed_write_time_corr > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (speed - curr_shared_blk_write_time ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Запись на диск — узкое место' ; 
-		line_count=line_count+1;		
-	ELSIF speed_write_time_corr > 0.5 AND speed_write_time_corr <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (speed - curr_shared_blk_write_time ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Запись не лимитирует производительность' ; 
-		line_count=line_count+1;
-	ELSE
-		result_str[line_count] = 'INFO: Слабая корреляция (speed - curr_shared_blk_write_time ).' ; 
-		line_count=line_count+1;	
-	END IF;				
-	-- Корреляция операционной скорости - время записи
-	-----------------------------------------------------------------------------
-	
-	-----------------------------------------------------------------------------
-	--Сценарии 
-	line_count=line_count+1;	
-	--Сценарий 1: Доминирование чтения
-	result_str[line_count] = 'Сценарий 1: Доминирование чтения' ; 
-	line_count=line_count+1;	
-	IF speed_read_time_corr >= 0.7 AND speed_write_time_corr >= 0.15
-	THEN 
-		result_str[line_count] = 'Производительность ограничена скоростью чтения.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Участки оптимизации:' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Увеличить shared_buffers' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Оптимизация запросов' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Добавить индексы для hot таблиц' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Оптимизация дисков' ; 
-		line_count=line_count+1;	
-	END IF;	
-	--Сценарий 2: Доминирование чтения
-	
-	--Сценарий 2: Доминирование записи
-	result_str[line_count] = 'Сценарий 2: Доминирование записи' ; 
-	line_count=line_count+1;	
-	IF speed_read_time_corr >= 0.15 AND speed_write_time_corr >= 0.7
-	THEN 
-		result_str[line_count] = 'Производительность ограничена скоростью записи.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Участки оптимизации:' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Оптимизировать checkpoint_segments и checkpoint_timeout' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Увеличить wal_buffers и max_wal_size' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Настроить bgwriter_delay и bgwriter_lru_maxpages' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Оптимизация дисков' ; 
-		line_count=line_count+1;	
-	END IF;	
-	--Сценарий 2: Доминирование записи
-	
-	--Сценарий 3: Сбалансированная нагрузка 
-	result_str[line_count] = 'Сценарий 2: Сбалансированная нагрузка' ; 
-	line_count=line_count+1;	
-	IF (speed_read_time_corr - speed_write_time_corr) <= 0.10
-	THEN 
-		result_str[line_count] = 'Производительность не ограничена IO.' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Участки оптимизации:' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'CPU (cpu_tuple_cost, параллелизм)' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Тяжелые блокировки' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Ожидания СУБД' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Оптимизация запросов' ; 
-		line_count=line_count+1;	
-	END IF;	
-	--Сценарий 3: Сбалансированная нагрузка 	
-	--Сценарии 
-	-----------------------------------------------------------------------------
---RESERVED FOR FUTURE 	
-*/
----------------------------------------------------------------------------------	
-
-
-  return result_str ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_vmstat_io IS 'Чек-лист IO';
--- Чек-лист IO
----------------------------------------------------------------------------------------------------------------------------------------------------------------
--- reports_vmstat_iostat.sql
--- version 1.0
---------------------------------------------------------------------------------
---
--- reports_vmstat_iostat Корреляция метрик vmstat и iopstat
+-- report_vmstat_iostat Корреляция метрик vmstat и iopstat
 --
 -------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------
 -- Корреляция метрик vmstat и iopstat
-CREATE OR REPLACE FUNCTION reports_vmstat_iostat( start_timestamp text , finish_timestamp text , device_name text  ) RETURNS text[] AS $$
+CREATE OR REPLACE FUNCTION report_vmstat_iostat( start_timestamp text , finish_timestamp text , device_name text  ) RETURNS text[] AS $$
 DECLARE
  result_str text[] ;
  line_count integer ;
@@ -8156,6 +6303,19 @@ DECLARE
   aqu_sz_pct  DOUBLE PRECISION ; 
   
   
+  subpart_counter integer ; 
+  part integer ; 
+  correlation_rec record; 
+  reason_casulas_list text[];
+  report_str text[];
+  
+  speed_iops_corr DOUBLE PRECISION ;
+  speed_mbps_corr DOUBLE PRECISION ; 
+  delta_corr DOUBLE PRECISION ; 
+
+	cpi_matrix_rec record ; 
+ 
+  
 BEGIN
 	line_count = 1 ;
 	
@@ -8175,8 +6335,10 @@ BEGIN
 	END IF ;
 
 
+    --Очистить таблицу для расчета Индекса Приоритета Корреляции (Correlation Priority Index, CPI) .
+	TRUNCATE TABLE cpi_matrix;
 	
-	result_str[line_count] = 'КОРРЕЛЯЦИЯ МЕТРИК VMSTAT И IOPSTAT' ; 
+	result_str[line_count] = '1. СТАТИСТИЧЕСКИЙ АНАЛИЗ ПОДСИСТЕМЫ IO' ; 
 	line_count=line_count+1;
 	
 	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
@@ -8213,18 +6375,20 @@ BEGIN
 		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp  
 	ORDER BY cl.curr_timestamp	;
 	
+	----------------------------------------------------------------------------------------------------------------------------------------------	
+	-- Граничные значения и медиана 
 	SELECT 
-		MIN( cl.cpu_wa_long) AS min_cpu_wa_long , MAX( cl.cpu_wa_long) AS max_cpu_wa_long , 
-		MIN( cl_io.dev_util_pct_long) AS min_dev_util_pct_long , MAX( cl_io.dev_util_pct_long) AS max_dev_util_pct_long,
-		MIN( cl.memory_buff_long) AS min_memory_buff_long , MAX( cl.memory_buff_long) AS max_memory_buff_long , 
-		MIN( cl.memory_cache_long) AS min_memory_cache_long , MAX( cl.memory_cache_long) AS max_memory_cache_long , 
-		MIN( cl_io.dev_rps_long) AS min_dev_rps_long , MAX( cl_io.dev_rps_long) AS max_dev_rps_long,
-		MIN( cl_io.dev_rmbs_long) AS min_dev_rmbs_long , MAX( cl_io.dev_rmbs_long) AS max_dev_rmbs_long,
-		MIN( cl_io.dev_wps_long) AS min_dev_wps_long , MAX( cl_io.dev_wps_long) AS max_dev_wps_long,
-		MIN( cl_io.dev_wmbps_long) AS min_dev_wmbps_long , MAX( cl_io.dev_wmbps_long) AS max_dev_wmbps_long ,
-		MIN( cl_io.dev_r_await_long) AS min_dev_r_await_long , MAX( cl_io.dev_r_await_long) AS max_dev_r_await_long ,
-		MIN( cl_io.dev_w_await_long) AS min_dev_w_await_long , MAX( cl_io.dev_w_await_long) AS max_dev_w_await_long ,
-		MIN( cl_io.dev_aqu_sz_long) AS min_dev_aqu_sz_long , MAX( cl_io.dev_aqu_sz_long) AS max_dev_aqu_sz_long  		
+		MIN( cl.cpu_wa_long) AS min_cpu_wa_long , MAX( cl.cpu_wa_long) AS max_cpu_wa_long , (percentile_cont(0.5) within group (order by cl.cpu_wa_long))::numeric AS median_cpu_wa_long , 
+		MIN( cl_io.dev_util_pct_long) AS min_dev_util_pct_long , MAX( cl_io.dev_util_pct_long) AS max_dev_util_pct_long, (percentile_cont(0.5) within group (order by cl_io.dev_util_pct_long))::numeric AS median_dev_util_pct_long , 
+		MIN( cl.memory_buff_long) AS min_memory_buff_long , MAX( cl.memory_buff_long) AS max_memory_buff_long, (percentile_cont(0.5) within group (order by cl.memory_buff_long))::numeric AS median_memory_buff_long ,  
+		MIN( cl.memory_cache_long) AS min_memory_cache_long , MAX( cl.memory_cache_long) AS max_memory_cache_long, (percentile_cont(0.5) within group (order by cl.memory_cache_long))::numeric AS median_memory_cache_long , 
+		MIN( cl_io.dev_rps_long) AS min_dev_rps_long , MAX( cl_io.dev_rps_long) AS max_dev_rps_long, (percentile_cont(0.5) within group (order by cl_io.dev_rps_long))::numeric AS median_dev_rps_long , 
+		MIN( cl_io.dev_rmbs_long) AS min_dev_rmbs_long , MAX( cl_io.dev_rmbs_long) AS max_dev_rmbs_long, (percentile_cont(0.5) within group (order by cl_io.dev_rmbs_long))::numeric AS median_dev_rmbs_long , 
+		MIN( cl_io.dev_wps_long) AS min_dev_wps_long , MAX( cl_io.dev_wps_long) AS max_dev_wps_long, (percentile_cont(0.5) within group (order by cl_io.dev_wps_long))::numeric AS median_dev_wps_long , 
+		MIN( cl_io.dev_wmbps_long) AS min_dev_wmbps_long , MAX( cl_io.dev_wmbps_long) AS max_dev_wmbps_long, (percentile_cont(0.5) within group (order by cl_io.dev_wmbps_long))::numeric AS median_dev_wmbps_long  , 
+		MIN( cl_io.dev_r_await_long) AS min_dev_r_await_long , MAX( cl_io.dev_r_await_long) AS max_dev_r_await_long, (percentile_cont(0.5) within group (order by cl_io.dev_r_await_long))::numeric AS median_dev_r_await_long , 
+		MIN( cl_io.dev_w_await_long) AS min_dev_w_await_long , MAX( cl_io.dev_w_await_long) AS max_dev_w_await_long, (percentile_cont(0.5) within group (order by cl_io.dev_w_await_long))::numeric AS median_dev_w_await_long , 
+		MIN( cl_io.dev_aqu_sz_long) AS min_dev_aqu_sz_long , MAX( cl_io.dev_aqu_sz_long) AS max_dev_aqu_sz_long, (percentile_cont(0.5) within group (order by cl_io.dev_aqu_sz_long))::numeric AS median_dev_aqu_sz_long
 	INTO  	min_max_rec
 	FROM 
 		os_stat_vmstat_median cl 
@@ -8233,6 +6397,9 @@ BEGIN
 	WHERE 	
 		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
 		AND cl_io.device = device_name ;
+	-- Граничные значения и медиана 
+	----------------------------------------------------------------------------------------------------------------------------------------------	
+
 		
 	SELECT 
 		count(curr_timestamp)
@@ -8244,7 +6411,7 @@ BEGIN
 		
 		
     
-	result_str[line_count] = 	' '||'|'||								
+	result_str[line_count] = 	'ГРАНИЧНЫЕ ЗНАЧЕНИЯ И МЕДИАНА'||'|'||								
 								'cpu_wa ' ||'|' ||
 								'device_util ' ||'|'||
                                 'memory_buff ' ||'|'||
@@ -8260,7 +6427,7 @@ BEGIN
 	line_count=line_count+1; 
 	
 	
-	result_str[line_count] = 	'MIN'||'|'||								
+	result_str[line_count] = 	'MIN '||'|'||								
 								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_cpu_wa_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
 								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_util_pct_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
 								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_memory_buff_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
@@ -8272,6 +6439,22 @@ BEGIN
 								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_r_await_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
 								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_w_await_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
 								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_dev_aqu_sz_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'
+								
+								;							
+	line_count=line_count+1; 
+
+	result_str[line_count] = 	'MEDIAN'||'|'||								
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_cpu_wa_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_dev_util_pct_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_memory_buff_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_memory_cache_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_dev_rps_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_dev_rmbs_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_dev_wps_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_dev_wmbps_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_dev_r_await_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_dev_w_await_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_dev_aqu_sz_long::numeric , 4 ) , '000000000000D0000') , '.' , ',' )||'|'
 								
 								;							
 	line_count=line_count+1; 
@@ -8292,581 +6475,13 @@ BEGIN
 								;								
 	line_count=line_count+2; 	
 	
-		
-----------------------------------------------------------------------------
-	-- КОРРЕЛЯЦИЯ wa util
-	IF min_max_rec.min_cpu_wa_long != min_max_rec.max_cpu_wa_long AND 
-	   min_max_rec.min_dev_util_pct_long != min_max_rec.max_dev_util_pct_long
-	THEN 
-	WITH 
-		vmstat_wa_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , cpu_wa_long  AS cpu_wa_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND cpu_wa_long > 0 
-		) ,
-		iostat_util_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , dev_util_pct_long  AS dev_util_pct_long 
-			FROM 
-				os_stat_iostat_device_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND dev_util_pct_long > 0 
-				AND cl.device = device_name
-		) 
-		SELECT COALESCE( corr( v1.cpu_wa_long , v2.dev_util_pct_long ) , 0 ) AS correlation_value 
-		INTO corr_wa_util
-		FROM
-			vmstat_wa_values v1 JOIN iostat_util_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-	ELSE
-	 corr_wa_util = 0 ;
-	END IF;
 
-    result_str[line_count] = 'Корреляция ожидания процессором IO и загруженности диска (wa - util) | ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_wa_util::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
 
-	IF corr_wa_util <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (wa - util)  - отрицательная или отсутствует' ; 
-		line_count=line_count+1;	
-	ELSIF corr_wa_util > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (wa - util)' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'процессы не могут работать, потому что ждут диск' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'медленный диск, слишком много запросов' ; 
-		line_count=line_count+1;
-	ELSIF corr_wa_util > 0.5 AND corr_wa_util <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (wa - util)' ; 
-		line_count=line_count+1;
-        result_str[line_count] = 'процессы не могут работать, потому что ждут диск' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'медленный диск, слишком много запросов' ; 
-		line_count=line_count+1;		
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (wa - util)' ; 
-		line_count=line_count+1;		
-		result_str[line_count] = 'процессы не могут работать, потому что ждут диск' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'медленный диск, слишком много запросов' ; 
-		line_count=line_count+1;		
-	END IF;
-	line_count=line_count+1;
-	-- КОРРЕЛЯЦИЯ wa util	
-	----------------------------------------------------------------------------	
+	line_count=line_count+1; 								
+	result_str[line_count] = 'ОТНОСИТЕЛЬНЫЕ ПОКАЗАТЕЛИ iostat' ; 
+	line_count=line_count+1;		
 
---------------------------------------------------------------------------------
---БУФЕРИЗОВАННЫЙ ВВОД-ВЫВОД
-    ----------------------------------------------------------------------------
-	-- КОРРЕЛЯЦИЯ buff_rps
-	IF min_max_rec.min_memory_buff_long != min_max_rec.max_memory_buff_long AND 
-	   min_max_rec.min_dev_rps_long != min_max_rec.max_dev_rps_long
-	THEN 	
-	WITH 
-		vmstat_buff_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , memory_buff_long  AS memory_buff_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND memory_buff_long > 0 
-		) ,
-		iostat_rps_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , dev_rps_long  AS dev_rps_long 
-			FROM 
-				os_stat_iostat_device_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND dev_rps_long > 0 
-				AND cl.device = device_name
-		) 
-		SELECT COALESCE( corr( v1.memory_buff_long , v2.dev_rps_long ) , 0 ) AS correlation_value 
-		INTO corr_buff_rps
-		FROM
-			vmstat_buff_values v1 JOIN iostat_rps_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-	ELSE
-		corr_buff_rps = 0 ;
-	END IF ;
-
-    result_str[line_count] = 'Корреляция: объем памяти, используемой для буферов и количество операций чтения с диска (buff - r/s) | ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_buff_rps::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-	result_str[line_count] = 'Высокое значение - признак не эффективного использование памяти для снижения нагрузки на диск' ; 
-	line_count=line_count+1;	
-	
-
-	IF corr_buff_rps <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (buff - r/s)  - отрицательная или отсутствует' ; 
-		line_count=line_count+1;	
-	ELSIF corr_buff_rps > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (buff - r/s)' ; 
-		line_count=line_count+1;		
-	ELSIF corr_buff_rps > 0.5 AND corr_buff_rps <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (buff - r/s)' ; 
-		line_count=line_count+1;		
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (buff - r/s)' ; 
-		line_count=line_count+1;			
-	END IF;
-	line_count=line_count+1;
-	-- КОРРЕЛЯЦИЯ buff_rps	
-	----------------------------------------------------------------------------
-
-    ----------------------------------------------------------------------------
-	-- КОРРЕЛЯЦИЯ buff_rmbs
-	IF min_max_rec.min_memory_buff_long != min_max_rec.max_memory_buff_long AND 
-	   min_max_rec.min_dev_rmbs_long != min_max_rec.max_dev_rmbs_long
-	THEN 
-	WITH 
-		vmstat_buff_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , memory_buff_long  AS memory_buff_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND memory_buff_long > 0 
-		) ,
-		iostat_rmbs_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , dev_rmbs_long  AS dev_rmbs_long 
-			FROM 
-				os_stat_iostat_device_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND dev_rmbs_long > 0 
-				AND cl.device = device_name
-		) 
-		SELECT COALESCE( corr( v1.memory_buff_long , v2.dev_rmbs_long ) , 0 ) AS correlation_value 
-		INTO corr_buff_rmbs
-		FROM
-			vmstat_buff_values v1 JOIN iostat_rmbs_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-	ELSE
-		corr_buff_rmbs = 0 ;
-	END IF ;
-
-    result_str[line_count] = 'Корреляция: объем памяти, используемой для буферов  и объём чтения с диска (buff - rMB/s)  | ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_buff_rmbs::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-	result_str[line_count] = 'Высокое значение - признак не эффективного использование памяти для снижения нагрузки на диск' ; 
-	line_count=line_count+1;	
-
-	IF corr_buff_rmbs <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (buff - rMB/s)- отрицательная или отсутствует' ; 
-		line_count=line_count+1;	
-	ELSIF corr_buff_rmbs > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (buff - rMB/s)' ; 
-		line_count=line_count+1;		
-	ELSIF corr_buff_rmbs > 0.5 AND corr_buff_rmbs <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (buff - rMB/s)' ; 
-		line_count=line_count+1;		
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (buff - rMB/s)' ; 
-		line_count=line_count+1;			
-	END IF;
-	line_count=line_count+1;
-	-- КОРРЕЛЯЦИЯ buff_rmbs	
-	----------------------------------------------------------------------------		
-	
-	----------------------------------------------------------------------------
-	-- КОРРЕЛЯЦИЯ buff_wps
-	IF min_max_rec.min_memory_buff_long != min_max_rec.max_memory_buff_long AND 
-	   min_max_rec.min_dev_wps_long != min_max_rec.max_dev_wps_long
-	THEN 
-	WITH 
-		vmstat_buff_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , memory_buff_long  AS memory_buff_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND memory_buff_long > 0 
-		) ,
-		iostat_wps_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , dev_wps_long  AS dev_wps_long 
-			FROM 
-				os_stat_iostat_device_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND dev_wps_long > 0 
-				AND cl.device = device_name
-		) 
-		SELECT COALESCE( corr( v1.memory_buff_long , v2.dev_wps_long ) , 0 ) AS correlation_value 
-		INTO corr_buff_wps
-		FROM
-			vmstat_buff_values v1 JOIN iostat_wps_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-	ELSE 
-		corr_buff_wps = 0 ;
-	END IF;
-
-    result_str[line_count] = 'Корреляция: объем памяти, используемой для буферов  и количество операций записи на диск (buff - w/s) | ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_buff_wps::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-	result_str[line_count] = 'Высокое значение - признак не эффективного использование памяти для снижения нагрузки на диск' ; 
-	line_count=line_count+1;	
-	
-
-	IF corr_buff_wps <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (buff - w/s) - отрицательная или отсутствует' ; 
-		line_count=line_count+1;	
-	ELSIF corr_buff_wps > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (buff - r/s)' ; 
-		line_count=line_count+1;		
-	ELSIF corr_buff_wps > 0.5 AND corr_buff_wps <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (buff - r/s)' ; 
-		line_count=line_count+1;		
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (buff - r/s)' ; 
-		line_count=line_count+1;			
-	END IF;
-	line_count=line_count+1;
-	-- КОРРЕЛЯЦИЯ buff_wps	
-	----------------------------------------------------------------------------
-
-	----------------------------------------------------------------------------
-	-- КОРРЕЛЯЦИЯ buff_wmbs
-	IF min_max_rec.min_memory_buff_long != min_max_rec.max_memory_buff_long AND 
-	   min_max_rec.min_dev_wmbps_long != min_max_rec.max_dev_wmbps_long
-	THEN 
-	WITH 
-		vmstat_buff_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , memory_buff_long  AS memory_buff_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND memory_buff_long > 0 
-		) ,
-		iostat_wmbps_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , dev_wmbps_long  AS dev_wmbps_long 
-			FROM 
-				os_stat_iostat_device_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND dev_wmbps_long > 0 
-				AND cl.device = device_name
-		) 
-		SELECT COALESCE( corr( v1.memory_buff_long , v2.dev_wmbps_long ) , 0 ) AS correlation_value 
-		INTO corr_buff_wmbs
-		FROM
-			vmstat_buff_values v1 JOIN iostat_wmbps_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-	ELSE
-		corr_buff_wmbs = 0 ;
-	END IF ;
-
-    result_str[line_count] = 'Корреляция: объем памяти, используемой для буферов  и объем запись на диск (buff - wMB/s)  | ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_buff_wmbs::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;
-    result_str[line_count] = 'Высокое значение - признак не эффективного использование памяти для снижения нагрузки на диск' ; 
-	line_count=line_count+1;	
-
-	IF corr_buff_wmbs <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (buff - wMB/s)- отрицательная или отсутствует' ; 
-		line_count=line_count+1;	
-	ELSIF corr_buff_wmbs > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (buff - wMB/s)' ; 
-		line_count=line_count+1;		
-	ELSIF corr_buff_wmbs > 0.5 AND corr_buff_wmbs <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (buff - wMB/s)' ; 
-		line_count=line_count+1;		
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (buff - wMB/s)' ; 
-		line_count=line_count+1;			
-	END IF;
-	line_count=line_count+1;
-	-- КОРРЕЛЯЦИЯ buff_wps	
-	----------------------------------------------------------------------------	
---БУФЕРИЗОВАННЫЙ ВВОД-ВЫВОД
---------------------------------------------------------------------------------
-	
-	
---------------------------------------------------------------------------------
---КЭШИРОВАНИЕ ВВОД-ВЫВОД
-
-    ----------------------------------------------------------------------------
-	-- КОРРЕЛЯЦИЯ cache_rps
-	IF min_max_rec.min_memory_cache_long != min_max_rec.max_memory_cache_long AND 
-	   min_max_rec.min_dev_rps_long != min_max_rec.max_dev_rps_long
-	THEN 
-	WITH 
-		vmstat_cache_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , memory_cache_long  AS memory_cache_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND memory_cache_long > 0 
-		) ,
-		iostat_rps_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , dev_rps_long  AS dev_rps_long 
-			FROM 
-				os_stat_iostat_device_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND dev_rps_long > 0 
-				AND cl.device = device_name
-		) 
-		SELECT COALESCE( corr( v1.memory_cache_long , v2.dev_rps_long ) , 0 ) AS correlation_value 
-		INTO corr_cache_rps
-		FROM
-			vmstat_cache_values v1 JOIN iostat_rps_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-	ELSE
-		corr_cache_rps = 0 ; 
-	END IF;
-
-    result_str[line_count] = 'Корреляция: объем памяти, используемой для кэширования и количество операций чтения с диска (cache - r/s) | ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_cache_rps::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-	result_str[line_count] = 'Высокое значение - признак не эффективного использование памяти для снижения нагрузки на диск' ; 
-	line_count=line_count+1;	
-	
-
-	IF corr_cache_rps <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (cache - r/s)  - отрицательная или отсутствует' ; 
-		line_count=line_count+1;	
-	ELSIF corr_cache_rps > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (cache - r/s)' ; 
-		line_count=line_count+1;		
-	ELSIF corr_cache_rps > 0.5 AND corr_cache_rps <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (cache - r/s)' ; 
-		line_count=line_count+1;		
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (cache - r/s)' ; 
-		line_count=line_count+1;			
-	END IF;
-	line_count=line_count+1;
-	-- КОРРЕЛЯЦИЯ cache_rps	
-	----------------------------------------------------------------------------
-
-    ----------------------------------------------------------------------------
-	-- КОРРЕЛЯЦИЯ cache_rmbs
-	IF min_max_rec.min_memory_cache_long != min_max_rec.max_memory_cache_long AND 
-	   min_max_rec.min_dev_rmbs_long != min_max_rec.max_dev_rmbs_long
-	THEN
-	WITH 
-		vmstat_cache_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , memory_cache_long  AS memory_cache_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND memory_cache_long > 0 
-		) ,
-		iostat_rmbs_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , dev_rmbs_long  AS dev_rmbs_long 
-			FROM 
-				os_stat_iostat_device_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND dev_rmbs_long > 0 
-				AND cl.device = device_name
-		) 
-		SELECT COALESCE( corr( v1.memory_cache_long , v2.dev_rmbs_long ) , 0 ) AS correlation_value 
-		INTO corr_cache_rmbs
-		FROM
-			vmstat_cache_values v1 JOIN iostat_rmbs_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-	ELSE
-		corr_cache_rmbs = 0 ;
-	END IF;
-
-    result_str[line_count] = 'Корреляция: объем памяти, используемой для кэширования  и объём чтения с диска (cache - rMB/s)  | ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_cache_rmbs::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-	result_str[line_count] = 'Высокое значение - признак не эффективного использование памяти для снижения нагрузки на диск' ; 
-	line_count=line_count+1;	
-
-	IF corr_cache_rmbs <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (cache - rMB/s)- отрицательная или отсутствует' ; 
-		line_count=line_count+1;	
-	ELSIF corr_cache_rmbs > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (cache - rMB/s)' ; 
-		line_count=line_count+1;		
-	ELSIF corr_cache_rmbs > 0.5 AND corr_cache_rmbs <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (cache - rMB/s)' ; 
-		line_count=line_count+1;		
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (cache - rMB/s)' ; 
-		line_count=line_count+1;			
-	END IF;
-	line_count=line_count+1;
-	-- КОРРЕЛЯЦИЯ cache_rmbs	
-	----------------------------------------------------------------------------		
-	
-	----------------------------------------------------------------------------
-	-- КОРРЕЛЯЦИЯ cache_wps
-	IF min_max_rec.min_memory_cache_long != min_max_rec.max_memory_cache_long AND 
-	   min_max_rec.min_dev_wps_long != min_max_rec.max_dev_wps_long
-	THEN
-	WITH 
-		vmstat_cache_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , memory_cache_long  AS memory_cache_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND memory_cache_long > 0 
-		) ,
-		iostat_wps_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , dev_wps_long  AS dev_wps_long 
-			FROM 
-				os_stat_iostat_device_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND dev_wps_long > 0 
-				AND cl.device = device_name
-		) 
-		SELECT COALESCE( corr( v1.memory_cache_long , v2.dev_wps_long ) , 0 ) AS correlation_value 
-		INTO corr_cache_wps
-		FROM
-			vmstat_cache_values v1 JOIN iostat_wps_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-	ELSE 
-		corr_cache_wps = 0 ;
-	END IF;
-
-    result_str[line_count] = 'Корреляция: объем памяти, используемой для кэширования  и количество операций записи на диск (cache - w/s) | ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_cache_wps::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-	result_str[line_count] = 'Высокое значение - признак не эффективного использование памяти для снижения нагрузки на диск' ; 
-	line_count=line_count+1;	
-	
-
-	IF corr_cache_wps <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (cache - w/s) - отрицательная или отсутствует' ; 
-		line_count=line_count+1;	
-	ELSIF corr_cache_wps > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (cache - r/s)' ; 
-		line_count=line_count+1;		
-	ELSIF corr_cache_wps > 0.5 AND corr_cache_wps <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (cache - r/s)' ; 
-		line_count=line_count+1;		
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (cache - r/s)' ; 
-		line_count=line_count+1;			
-	END IF;
-	line_count=line_count+1;
-	-- КОРРЕЛЯЦИЯ cache_wps	
-	----------------------------------------------------------------------------
-
-	----------------------------------------------------------------------------
-	-- КОРРЕЛЯЦИЯ cache_wmbs
-	IF min_max_rec.min_memory_cache_long != min_max_rec.max_memory_cache_long AND 
-	   min_max_rec.min_dev_wmbps_long != min_max_rec.max_dev_wmbps_long
-	THEN
-	WITH 
-		vmstat_cache_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , memory_cache_long  AS memory_cache_long 
-			FROM 
-				os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND memory_cache_long > 0 
-		) ,
-		iostat_wmbps_values AS
-		(
-			SELECT 
-				cl.curr_timestamp , dev_wmbps_long  AS dev_wmbps_long 
-			FROM 
-				os_stat_iostat_device_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-			WHERE				
-				cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND dev_wmbps_long > 0 
-				AND cl.device = device_name
-		) 
-		SELECT COALESCE( corr( v1.memory_cache_long , v2.dev_wmbps_long ) , 0 ) AS correlation_value 
-		INTO corr_cache_wmbs
-		FROM
-			vmstat_cache_values v1 JOIN iostat_wmbps_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-	ELSE
-	 corr_cache_wmbs = 0 ;
-	END IF;
-
-    result_str[line_count] = 'Корреляция: объем памяти, используемой для кэширования  и объем запись на диск (cache - wMB/s)  | ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_cache_wmbs::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;
-    result_str[line_count] = 'Высокое значение - признак не эффективного использование памяти для снижения нагрузки на диск' ; 
-	line_count=line_count+1;	
-
-	IF corr_cache_wmbs <= 0 
-	THEN 
-	    result_str[line_count] = 'OK: Корреляция (cache - wMB/s)- отрицательная или отсутствует' ; 
-		line_count=line_count+1;	
-	ELSIF corr_cache_wmbs > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (cache - wMB/s)' ; 
-		line_count=line_count+1;		
-	ELSIF corr_cache_wmbs > 0.5 AND corr_cache_wmbs <= 0.7
-	THEN 
-		result_str[line_count] = 'WARNING : Высокая корреляция (cache - wMB/s)' ; 
-		line_count=line_count+1;		
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (cache - wMB/s)' ; 
-		line_count=line_count+1;			
-	END IF;
-	line_count=line_count+1;
-	-- КОРРЕЛЯЦИЯ cache_wps	
-	----------------------------------------------------------------------------	
---КЭШИРОВАНИЕ ВВОД-ВЫВОД
---------------------------------------------------------------------------------	
-	
-    -----------------------------------------------------------------------------
+-----------------------------------------------------------------------------
 	--%util Процент загрузки устройства (чем ближе к 100%, тем выше нагрузка) свыше 50%.
 	WITH 
 	  util_counter AS
@@ -8890,14 +6505,14 @@ BEGIN
 	
 	IF util_pct < 25.0 
 	THEN 
-		result_str[line_count] = 'OK: менее 25% наблюдений - загрузки устройства свыше 50%' ; 
+		result_str[line_count] = 'OK: менее 25% тестового периода - загрузки устройства свыше 50%' ; 
 		line_count=line_count+1;
 	ELSIF util_pct > 25.0 AND util_pct <= 50.0
 	THEN 
-		result_str[line_count] = 'WARNING: 25-50% наблюдений - загрузки устройства свыше 50%' ; 
+		result_str[line_count] = 'WARNING: 25-50% тестового периода - загрузки устройства свыше 50%' ; 
 		line_count=line_count+1;
 	ELSE 
-		result_str[line_count] = 'ALARM: более 50% наблюдений - загрузки устройства свыше 50%' ; 
+		result_str[line_count] = 'ALARM: более 50% тестового периода - загрузки устройства свыше 50%' ; 
 		line_count=line_count+1;
 	END IF ;	
 	--%util Процент загрузки устройства (чем ближе к 100%, тем выше нагрузка) свыше 50%.
@@ -8923,19 +6538,19 @@ BEGIN
 	FROM r_await_counter ;
 
     line_count=line_count+1; 
-	result_str[line_count] = 'Отклик на чтение свыше 5мс(%наблюдений)| '|| REPLACE ( TO_CHAR( ROUND( r_await_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
+	result_str[line_count] = 'Отклик на чтение свыше 5мс(%тестового периода)| '|| REPLACE ( TO_CHAR( ROUND( r_await_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
 	line_count=line_count+1;
 	
 	IF r_await_pct < 25.0 
 	THEN 
-		result_str[line_count] = 'OK: менее 25% наблюдений - Отклик на чтение свыше 5мс' ; 
+		result_str[line_count] = 'OK: менее 25% тестового периода - Отклик на чтение свыше 5мс' ; 
 		line_count=line_count+1;
 	ELSIF r_await_pct > 25.0 AND r_await_pct <= 50.0
 	THEN 
-		result_str[line_count] = 'WARNING: 25-50% наблюдений - Отклик на чтение свыше 5мс' ; 
+		result_str[line_count] = 'WARNING: 25-50% тестового периода - Отклик на чтение свыше 5мс' ; 
 		line_count=line_count+1;
 	ELSE 
-		result_str[line_count] = 'ALARM: более 50% наблюдений - Отклик на чтение свыше 5мс' ; 
+		result_str[line_count] = 'ALARM: более 50% тестового периода - Отклик на чтение свыше 5мс' ; 
 		line_count=line_count+1;
 	END IF ;	
 	--Среднее время выполнения запросов чтения (включая время в очереди) свыше 5мс.
@@ -8961,19 +6576,19 @@ BEGIN
 	FROM w_await_counter ;
 
 	line_count=line_count+1;
-	result_str[line_count] = 'Отклик на запись свыше 5мс(%наблюдений)| '|| REPLACE ( TO_CHAR( ROUND( w_await_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
+	result_str[line_count] = 'Отклик на запись свыше 5мс(%тестового периода)| '|| REPLACE ( TO_CHAR( ROUND( w_await_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
 	line_count=line_count+1;
 	
 	IF w_await_pct < 25.0 
 	THEN 
-		result_str[line_count] = 'OK: менее 25% наблюдений - Отклик на запись свыше 5мс' ; 
+		result_str[line_count] = 'OK: менее 25% тестового периода - Отклик на запись свыше 5мс' ; 
 		line_count=line_count+1;
 	ELSIF w_await_pct > 25.0 AND w_await_pct <= 50.0
 	THEN 
-		result_str[line_count] = 'WARNING: 25-50% наблюдений - Отклик на запись свыше 5мс' ; 
+		result_str[line_count] = 'WARNING: 25-50% тестового периода - Отклик на запись свыше 5мс' ; 
 		line_count=line_count+1;
 	ELSE 
-		result_str[line_count] = 'ALARM: более 50% наблюдений - Отклик на запись свыше 5мс' ; 
+		result_str[line_count] = 'ALARM: более 50% тестового периода - Отклик на запись свыше 5мс' ; 
 		line_count=line_count+1;
 	END IF ;	
 	--w_await (мс) Среднее время выполнения запросов записи  свыше 5мс.
@@ -8999,2576 +6614,503 @@ BEGIN
 	FROM aqu_sz_counter ;
 
 	line_count=line_count+1;
-	result_str[line_count] = 'Средняя длина очереди запросов (глубина очереди) свыше 1 (%наблюдений) | '|| REPLACE ( TO_CHAR( ROUND( aqu_sz_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
+	result_str[line_count] = 'Средняя длина очереди запросов (глубина очереди) свыше 1 (%тестового периода) | '|| REPLACE ( TO_CHAR( ROUND( aqu_sz_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
 	line_count=line_count+1;
 
 	IF aqu_sz_pct < 25.0 
 	THEN 
-		result_str[line_count] = 'OK: менее 25% наблюдений - глубина очереди свыше 1' ; 
+		result_str[line_count] = 'OK: менее 25% тестового периода - глубина очереди свыше 1' ; 
 		line_count=line_count+1;
 	ELSIF aqu_sz_pct > 25.0 AND aqu_sz_pct <= 50.0
 	THEN 
-		result_str[line_count] = 'WARNING: 25-50% наблюдений - глубина очереди свыше 1' ; 
+		result_str[line_count] = 'WARNING: 25-50% тестового периода - глубина очереди свыше 1' ; 
 		line_count=line_count+1;
 	ELSE 
-		result_str[line_count] = 'ALARM: более 50% наблюдений - глубина очереди) свыше 1' ; 
+		result_str[line_count] = 'ALARM: более 50% тестового периода - глубина очереди) свыше 1' ; 
 		line_count=line_count+1;
 	END IF ;	
 	--aqu_sz Средняя длина очереди запросов (глубина очереди).
 	-----------------------------------------------------------------------------
-
-
-
-  return result_str ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_vmstat_iostat IS 'Корреляция метрик vmstat и iopstat';
--- Корреляция метрик vmstat и iopstat
--------------------------------------------------------------------------------
-
---------------------------------------------------------------------------------
--- reports_vmstat_meta.sql
--- version 1.0
---------------------------------------------------------------------------------
---
--- reports_vmstat_meta Метаданные по VMSTAT
---
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- Метаданные по VMSTAT
-CREATE OR REPLACE FUNCTION reports_vmstat_meta(  start_timestamp text , finish_timestamp text   ) RETURNS text[] AS $$
-DECLARE
- result_str text[] ;
- line_count integer ;
- min_timestamp timestamptz ; 
- max_timestamp timestamptz ; 
- 
- counter integer ; 
- min_max_rec record ;
- line_counter integer ; 
-   
-  min_max_pct_rec record ;
- 
-  cluster_stat_median_rec record ; 	
-  os_stat_vmstat_median_rec record ; 
-  
-BEGIN
-	line_count = 1 ;
 	
-	IF finish_timestamp = 'CURRENT_TIMESTAMP'
-	THEN 
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-
-		min_timestamp = max_timestamp - interval '1 hour'; 	
-	ELSE
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	min_timestamp ; 
+	
+	-----------------------------------------------------------------------------------------------------------------------
+	--КОРРЕЛЯЦИЯ VMSTAT и IOSTAT
+	line_count=line_count+1;
+	result_str[line_count] = '1. КОРРЕЛЯЦИЯ VMSTAT и IOSTAT' ; 
+	line_count=line_count+1;
+	part = 0 ;
+	
+	------------------------------------------------------------
+	-- vmstat/wa и iostat/util
+	IF 	min_max_rec.min_cpu_wa_long != min_max_rec.max_cpu_wa_long AND 
+		min_max_rec.min_dev_util_pct_long != min_max_rec.max_dev_util_pct_long
+	THEN
+		CALL truncate_time_series();
+		INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , cpu_wa_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
 		
-		SELECT 	date_trunc('minute' ,  to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
+		INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , dev_util_pct_long 
+		FROM 	os_stat_iostat_device_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+				AND device = device_name ;
+		
+		SELECT * INTO correlation_rec FROM quick_significance_check();
+		
+		reason_casulas_list := '{}'::text[]; 				
+		reason_casulas_list[1] = 'ПОСЛЕДСТВИЯ: Влияние на процессы - ожидание IO' ; 
+		
+		part = part + 1 ;
+		SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'. Корреляция: vmstat/wa(ожидание IO) и iostat/util(Процент загрузки устройства)','vmstat/wa(ожидание IO)', 'iostat/util(Процент загрузки устройства)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+		INTO report_str ; 
+		
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT result_str || report_str
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;
+	
 	END IF ;
-
-	result_str[line_count] = 'Метаданные по VMSTAT' ; 
-	line_count=line_count+1;
+	-- vmstat/wa и iostat/util
+	------------------------------------------------------------
 	
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+2; 
-	
-	
-	DROP TABLE IF EXISTS tmp_timepoints;
-	CREATE TEMPORARY TABLE tmp_timepoints
-	(
-		curr_timestamp timestamptz  ,   
-		curr_timepoint integer 
-	);
-
-
-	INSERT INTO tmp_timepoints
-	(
-		curr_timestamp ,	
-		curr_timepoint 
-	)
-	SELECT 
-		curr_timestamp , 
-		row_number() over (order by curr_timestamp) AS x
-	FROM
-	os_stat_vmstat_median cl
-	WHERE 
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp  
-	ORDER BY curr_timestamp	;
-
-	SELECT 
-		MIN( cl.procs_r_long) AS min_procs_r_long , MAX( cl.procs_r_long) AS max_procs_r_long , 
-		MIN( cl.procs_b_long) AS min_procs_b_long , MAX( cl.procs_b_long) AS max_procs_b_long , 		
-		MIN( cl.memory_swpd_long) AS min_memory_swpd_long , MAX( cl.memory_swpd_long) AS max_memory_swpd_long , 
-		MIN( cl.memory_free_long) AS min_memory_free_long, MAX( cl.memory_free_long) AS max_memory_free_long , 
-		MIN( cl.memory_buff_long) AS min_memory_buff_long , MAX( cl.memory_buff_long) AS max_memory_buff_long , 
-		MIN( cl.memory_cache_long) AS min_memory_cache_long , MAX( cl.memory_cache_long) AS max_memory_cache_long , 
-		MIN( cl.swap_si_long) AS min_swap_si_long , MAX( cl.swap_si_long) AS max_swap_si_long , 
-		MIN( cl.swap_so_long) AS min_swap_so_long , MAX( cl.swap_so_long) AS max_swap_so_long ,
-		MIN( cl.io_bi_long) AS min_io_bi_long , MAX( cl.io_bi_long) AS max_io_bi_long ,
-		MIN( cl.io_bo_long) AS min_io_bo_long , MAX( cl.io_bo_long) AS max_io_bo_long ,
-		MIN( cl.system_in_long) AS min_system_in_long , MAX( cl.system_in_long) AS max_system_in_long ,
-		MIN( cl.system_cs_long) AS min_system_cs_long , MAX( cl.system_cs_long) AS max_system_cs_long ,
-		MIN( cl.cpu_us_long) AS min_cpu_us_long , MAX( cl.cpu_us_long) AS max_cpu_us_long ,
-		MIN( cl.cpu_sy_long) AS min_cpu_sy_long , MAX( cl.cpu_sy_long) AS max_cpu_sy_long ,
-		MIN( cl.cpu_id_long) AS min_cpu_id_long , MAX( cl.cpu_id_long) AS max_cpu_id_long ,
-		MIN( cl.cpu_wa_long) AS min_cpu_wa_long , MAX( cl.cpu_wa_long) AS max_cpu_wa_long ,
-		MIN( cl.cpu_st_long) AS min_cpu_st_long , MAX( cl.cpu_st_long) AS max_cpu_st_long 
-	INTO  	min_max_rec
-	FROM 
-		os_stat_vmstat_median cl 
-	WHERE 	
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	;
-		
-	
-	line_count=line_count+1;
-	result_str[line_count] = 	' '||'|'||
-								'№'||'|'||									
-								'procs_r' ||'|'||
-								'procs_b ' ||'|'||
-								'memory_swpd ' ||'|'||
-								'memory_free ' ||'|'||
-								'memory_buff ' ||'|'||
-								'memory_cache ' ||'|'||
-								'swap_si ' ||'|' ||
-								'swap_so ' ||'|' ||
-								'io_bi ' ||'|' ||
-								'io_bo ' ||'|' ||
-								'system_in ' ||'|' ||
-								'system_cs ' ||'|' ||
-								'cpu_us ' ||'|' ||
-								'cpu_sy ' ||'|' ||
-								'cpu_id ' ||'|' ||
-								'cpu_wa ' ||'|' ||
-								'cpu_st ' ||'|' 
-								;							
-	line_count=line_count+1; 
-	
-	result_str[line_count] = 	'MIN'||'|'||
-								1 ||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_procs_r_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_procs_b_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_memory_swpd_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_memory_free_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_memory_buff_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_memory_cache_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_swap_si_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_swap_so_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_io_bi_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_io_bo_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_system_in_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_system_cs_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_cpu_us_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_cpu_sy_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_cpu_id_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_cpu_wa_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_cpu_st_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
-								;							
-	line_count=line_count+1; 
-	
-	SELECT 
-		count(curr_timestamp)
-	INTO line_counter
-	FROM 
-		cluster_stat_median cl
-	WHERE 	
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
-	
-	
-	result_str[line_count] = 	'MAX'||'|'||
-								line_counter||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_procs_r_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_procs_b_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_memory_swpd_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_memory_free_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_memory_buff_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_memory_cache_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_swap_si_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_swap_so_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_io_bi_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_io_bo_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_system_in_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_system_cs_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_cpu_us_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_cpu_sy_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_cpu_id_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_cpu_wa_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
-								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_cpu_st_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
-								;								
-
-  return result_str ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_vmstat_meta IS 'Метаданные по VMSTAT';
--- Метаданные по VMSTAT
--------------------------------------------------------------------------------
-
---------------------------------------------------------------------------------
--- reports_vmstat_ram.sql
--- version 6.0
---------------------------------------------------------------------------------
---
--- reports_vmstat_ram Чек-лист RAM
---
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- Чек-лист RAM
-CREATE OR REPLACE FUNCTION reports_vmstat_ram(  ram_all integer , start_timestamp text , finish_timestamp text   ) RETURNS text[] AS $$
-DECLARE
- result_str text[] ;
- line_count integer ;
- min_timestamp timestamptz ; 
- max_timestamp timestamptz ; 
- 
- counter integer ; 
-  line_counter integer ; 
- 
-  
-  free_pct DOUBLE PRECISION;
-  si_pct DOUBLE PRECISION;
-  so_pct DOUBLE PRECISION;
-  current_test_id bigint; 
-  
-  vm_settings text[];
-  
-  dirty_percent_rec record ; 
-  dirty_bg_percent_rec record ; 
-  available_mem_mb_rec record ; 
-  dirty_kb_long_rec record;
-  
-BEGIN	
-	line_count = 1 ;
-	
-	
-	
-	
-	IF finish_timestamp = 'CURRENT_TIMESTAMP'
-	THEN 
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-
-		min_timestamp = max_timestamp - interval '1 hour'; 	
-	ELSE
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	min_timestamp ; 
-		
-		SELECT 	date_trunc('minute' ,  to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-	END IF ;
-
-
-	
-	result_str[line_count] = 'ЧЕК-ЛИСТ RAM' ; 
-	line_count=line_count+1;
-	
-	result_str[line_count] = 'RAM (MB)| '||ram_all||'|';
-	line_count=line_count+1;
-	
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+2; 
-	
-	
-	
-	DROP TABLE IF EXISTS tmp_timepoints;
-	CREATE TEMPORARY TABLE tmp_timepoints
-	(
-		curr_timestamp timestamptz  ,   
-		curr_timepoint integer 
-	);
-
-
-	INSERT INTO tmp_timepoints
-	(
-		curr_timestamp ,	
-		curr_timepoint 
-	)
-	SELECT 
-		curr_timestamp , 
-		row_number() over (order by curr_timestamp) AS x
-	FROM
-	os_stat_vmstat_median cl
-	WHERE 
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp  
-	ORDER BY curr_timestamp	;
-		
-	SELECT 
-		count(curr_timestamp)
-	INTO line_counter
-	FROM 
-		cluster_stat_median cl
-	WHERE 	
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;	
-		
-	-----------------------------------------------------------------------------
-	--free — свободная RAM менее 5%
-	WITH 
-	  free_counter AS
-	  (
-		SELECT count(*) AS total_counter
-		FROM 
-			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-		WHERE				
-			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-			AND memory_free_long::numeric < ( ram_all::numeric * 0.05::numeric )
-	  ) 
-	SELECT 
-		(total_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
-	INTO
-		free_pct
-	FROM free_counter ;
-
-	result_str[line_count] = 'free — свободная RAM  (% менее 5%) | '|| REPLACE ( TO_CHAR( ROUND( free_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
-	line_count=line_count+1;
-	
-	IF free_pct < 25.0 
-	THEN 
-		result_str[line_count] = 'OK: менее 25% наблюдений - свободная RAM менее 5%' ; 
-		line_count=line_count+1;
-	ELSIF free_pct > 25.0 AND free_pct <= 50.0
-	THEN 
-		result_str[line_count] = 'WARNING: 25-50% наблюдений - свободная RAM менее 5%' ; 
-		line_count=line_count+1;
-	ELSE 
-		result_str[line_count] = 'ALARM: более 50% наблюдений - свободная RAM менее 5%' ; 
-		line_count=line_count+1;
-	END IF ;	
-	--free — свободная RAM
-	-----------------------------------------------------------------------------	
-	
-	-----------------------------------------------------------------------------
-	--swap_si -- si — swap in (из swap в RAM) > 0 
-	WITH 
-	  si_counter AS
-	  (
-		SELECT count(*) AS total_counter
-		FROM 
-			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-		WHERE				
-			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-			AND swap_si_long > 0 
-	  ) 
-	SELECT 
-		(total_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
-	INTO
-		si_pct
-	FROM si_counter ;
-
-	line_count=line_count+1;
-	result_str[line_count] = 'swap in (% наблюдений) | '|| REPLACE ( TO_CHAR( ROUND( si_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
-	line_count=line_count+1;
-	
-	IF si_pct = 0 
-	THEN 
-		result_str[line_count] = 'ОК : Свопинг в RAM не используется' ; 
-		line_count=line_count+1;	
-	ELSIF si_pct < 25.0 
-	THEN 
-		result_str[line_count] = 'INFO: менее 25% наблюдений - используется cвопинг в RAM' ; 
-		line_count=line_count+1;
-	ELSIF si_pct > 25.0 AND si_pct <= 50.0
-	THEN 
-		result_str[line_count] = 'WARNING: 25-50% наблюдений - используется cвопинг в RAM' ;
-		line_count=line_count+1;
-	ELSE 
-		result_str[line_count] = 'ALARM : более 50% наблюдений - используется cвопинг в RAM' ;
-		line_count=line_count+1;
-	END IF ;	
-	--swap_si -- si — swap in (из swap в RAM) > 0 
-	-----------------------------------------------------------------------------
-	
-	-----------------------------------------------------------------------------
-	--so — swap out (из RAM в swap) > 0
-	WITH 
-	  so_counter AS
-	  (
-		SELECT count(*) AS total_counter
-		FROM 
-			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-		WHERE				
-			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-			AND swap_so_long > 0 
-	  ) 
-	SELECT 
-		(total_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
-	INTO
-		so_pct
-	FROM so_counter ;
-
-	line_count=line_count+1;
-	result_str[line_count] = 'swap out (% наблюдений) | '|| REPLACE ( TO_CHAR( ROUND( so_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
-	line_count=line_count+1;
-	
-	IF so_pct = 0 
-	THEN 
-		result_str[line_count] = 'ОК : Свопинг из RAM не используется' ; 
-		line_count=line_count+1;	
-	ELSIF so_pct < 25.0 
-	THEN 
-		result_str[line_count] = 'INFO: менее 25% наблюдений - используется cвопинг из RAM' ; 
-		line_count=line_count+1;
-	ELSIF so_pct > 25.0 AND so_pct <= 50.0
-	THEN 
-		result_str[line_count] = 'WARNING: 25-50% наблюдений - используется cвопинг из RAM' ;
-		line_count=line_count+1;
-	ELSE 
-		result_str[line_count] = 'ALARM : более 50% наблюдений - используется cвопинг из RAM' ;
-		line_count=line_count+1;
-	END IF ;	
-	--so — swap out (из RAM в swap) > 0
-	-----------------------------------------------------------------------------
-	
-	
-	line_count=line_count+1;
-	result_str[line_count] = 'СТАТИСТИКА dirty_kb/dirty_ratio/dirty_background_ratio' ;
-	line_count=line_count+1;
-	
-	--dirty pages size (KB)
-	WITH 
-	dirty_kb AS
-	(
-		SELECT 
-			dirty_kb_long as value 
-		FROM 
-			os_stat_vmstat_median
-		WHERE 
-			curr_timestamp BETWEEN min_timestamp AND max_timestamp
-	) 
-	SELECT 
-		MIN(value) as min_dirty_kb ,
-		MAX(value) as max_dirty_kb , 
-		(percentile_cont(0.5) within group (order by value))::numeric as median_dirty_kb
-	INTO 
-		dirty_kb_long_rec
-	FROM 
-		dirty_kb ;
-
-    result_str[line_count] = 'MIN dirty pages size (KB) | '||REPLACE ( TO_CHAR( ROUND( dirty_kb_long_rec.min_dirty_kb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-
-    result_str[line_count] = 'MAX dirty pages size (KB) | '||REPLACE ( TO_CHAR( ROUND( dirty_kb_long_rec.max_dirty_kb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-
-    result_str[line_count] = 'MEDIAN dirty pages size (KB) | '||REPLACE ( TO_CHAR( ROUND( dirty_kb_long_rec.median_dirty_kb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-	
-   	--vm_dirty_percent
-	WITH 
-	vm_dirty_percent AS
-	(
-		SELECT 
-			dirty_percent_long as value 
-		FROM 
-			os_stat_vmstat_median
-		WHERE 
-			curr_timestamp BETWEEN min_timestamp AND max_timestamp
-	) 
-	SELECT 
-		MIN(value) as min_dirty_percent ,
-		MAX(value) as max_dirty_percent , 
-		(percentile_cont(0.5) within group (order by value))::numeric as median_dirty_percent
-	INTO 
-		dirty_percent_rec
-	FROM 
-		vm_dirty_percent ;
-
-    result_str[line_count] = 'MIN dirty_ratio | '||REPLACE ( TO_CHAR( ROUND( dirty_percent_rec.min_dirty_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-
-    result_str[line_count] = 'MAX dirty_ratio | '||REPLACE ( TO_CHAR( ROUND( dirty_percent_rec.max_dirty_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-
-    result_str[line_count] = 'MEDIAN dirty_ratio | '||REPLACE ( TO_CHAR( ROUND( dirty_percent_rec.median_dirty_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-	
-	--vm_dirty_bg_percent
-	WITH 
-	vm_dirty_bg_percent AS
-	(
-		SELECT 
-			dirty_bg_percent_long as value 
-		FROM 
-			os_stat_vmstat_median
-		WHERE 
-			curr_timestamp BETWEEN min_timestamp AND max_timestamp
-	) 
-	SELECT 
-		MIN(value) as min_dirty_bg_percent ,
-		MAX(value) as max_dirty_bg_percent , 
-		(percentile_cont(0.5) within group (order by value))::numeric as median_dirty_bg_percent
-	INTO 
-		dirty_bg_percent_rec
-	FROM 
-		vm_dirty_bg_percent ;
-		
-	result_str[line_count] = 'MIN dirty_bg_percent | '||REPLACE ( TO_CHAR( ROUND( dirty_bg_percent_rec.min_dirty_bg_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-
-    result_str[line_count] = 'MAX dirty_bg_percent | '||REPLACE ( TO_CHAR( ROUND( dirty_bg_percent_rec.max_dirty_bg_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-
-    result_str[line_count] = 'MEDIAN dirty_bg_percent | '||REPLACE ( TO_CHAR( ROUND( dirty_bg_percent_rec.median_dirty_bg_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-		
-	--available_mem_mb
-	WITH 
-	available_mem_mb AS
-	(
-		SELECT 
-			available_mem_mb_long as value 
-		FROM 
-			os_stat_vmstat_median
-		WHERE 
-			curr_timestamp BETWEEN min_timestamp AND max_timestamp
-	) 
-	SELECT 
-		MIN(value) as min_available_mem_mb ,
-		MAX(value) as max_available_mem_mb , 
-		(percentile_cont(0.5) within group (order by value))::numeric as median_available_mem_mb
-	INTO 
-		available_mem_mb_rec
-	FROM 
-		available_mem_mb ;	
-
-    result_str[line_count] = 'MIN available_mem_mb | '||REPLACE ( TO_CHAR( ROUND( available_mem_mb_rec.min_available_mem_mb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-
-    result_str[line_count] = 'MAX available_mem_mb | '||REPLACE ( TO_CHAR( ROUND( available_mem_mb_rec.max_available_mem_mb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-
-    result_str[line_count] = 'MEDIAN available_mem_mb | '||REPLACE ( TO_CHAR( ROUND( available_mem_mb_rec.median_available_mem_mb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ) ; 
-	line_count=line_count+1;
-	
-	result_str[line_count] = ' ';
-	line_count=line_count+1;
-	result_str[line_count] = ' ';
-	line_count=line_count+1;
-	
-	SELECT get_vm_params_list()
-	INTO vm_settings ; 
-	
-	SELECT result_str || vm_settings 
-	INTO result_str ; 
-	
-  return result_str ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_vmstat_ram IS 'Чек-лист RAM';
--- Чек-лист RAM
--------------------------------------------------------------------------------
-
-
---------------------------------------------------------------------------------
--- report_wait_event_for_pareto.sql
--- version 3.0
---------------------------------------------------------------------------------
---
--- report_wait_event_for_pareto Диаграмма Парето по wait_event
---
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- Сформировать диаграмму Парето по wait_event
-CREATE OR REPLACE FUNCTION report_wait_event_for_pareto(  start_timestamp text , finish_timestamp text ) RETURNS text[] AS $$
-DECLARE
- result_str text[] ;
- line_count integer ;
- min_timestamp timestamptz ; 
- max_timestamp timestamptz ;   
- wait_event_queryid_rec record ;
- wait_event_type_rec record ;
- wait_event_rec record ;
- 
- 
- sql_stats_history_rec record ;  
- 
- query_min_timestamp timestamptz ; 
- query_max_timestamp timestamptz ; 
- total_wait_event_count integer ;
- pct_for_80 numeric ;
- 
- report_wait_event_for_pareto text[];
- report_wait_event_for_pareto_count integer ;
- index_for_wait_event integer ;
- 
- corr_bufferpin DOUBLE PRECISION ; 
- corr_extension DOUBLE PRECISION ; 
- corr_io DOUBLE PRECISION ; 
- corr_ipc DOUBLE PRECISION ; 
- corr_lock DOUBLE PRECISION ; 
- corr_lwlock DOUBLE PRECISION ; 
- corr_timeout DOUBLE PRECISION ; 
- 
- wait_event_type_corr_rec  record ; 
-  
- tmp_wait_event_type_corr_index integer ; 
- 
-BEGIN
-	line_count = 1 ;
-	
-	result_str[line_count] = 'ДИАГРАММА ПАРЕТО ПО WAIT_EVENT';	
-	line_count=line_count+1;
-	
-	
-	SELECT date_trunc( 'minute' , to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) )
-	INTO    min_timestamp ; 
-  
-	SELECT date_trunc( 'minute' , to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) )
-	INTO    max_timestamp ; 
-	
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+2; 
-	
-	result_str[line_count] ='80% ОЖИДАНИЙ,';	
+	line_count=line_count+2;	
+	result_str[line_count] = '2. БУФЕРИЗАЦИЯ ВВОДА-ВЫВОДА' ; 
+	line_count=line_count+1;		
+	result_str[line_count] = 'buff - Буфер памяти хранит данные, которые передаются в хранилище с немедленным доступом и из него.' ; 
 	line_count=line_count+1;	
-	result_str[line_count] = 'C КОЭФФИЦИЕНТОМ КОРРЕЛЯЦИЯ МЕЖДУ ';
+	result_str[line_count] = '  Буфер позволяет процессору и модулю памяти работать независимо, не реагируя на незначительные различия в работе' ; 
 	line_count=line_count+1;	
-	result_str[line_count] = 'ТИПОМ ОЖИДАНИЯ И ОЖИДАНИЯМИ СУБД';	
-	line_count=line_count+1;	
-	result_str[line_count] = '0.7 и ВЫШЕ';	
-	line_count=line_count+1;	
-	
-	DROP TABLE IF EXISTS wait_event_type_corr;
-	CREATE TEMPORARY TABLE wait_event_type_corr
-	(
-		wait_event_type text  ,   
-		corr_value DOUBLE PRECISION 
-	);
-	
-	----------------------------------------------	
-	-- ВНУТРЕННЯЯ ТАБЛИЦА ОТЧЕТА 	
-	TRUNCATE TABLE tmp_wait_events ;
-	-- ВНУТРЕННЯЯ ТАБЛИЦА ОТЧЕТА 
-	----------------------------------------------	
-	
-	tmp_wait_event_type_corr_index = 0 ; 
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - bufferpin
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		bufferpin_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_bufferpin  AS curr_bufferpin 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_bufferpin > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_bufferpin ) , 0 ) AS correlation_value 
-		INTO corr_bufferpin
-		FROM
-			waitings os JOIN bufferpin_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;	
-			
-		INSERT INTO wait_event_type_corr ( wait_event_type , corr_value )
-		VALUES ( 'BufferPin' , corr_bufferpin );
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - bufferpin 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - extension
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		extension_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_extension  AS curr_extension 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_extension > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_extension ) , 0 ) AS correlation_value 
-		INTO corr_extension
-		FROM
-			waitings os JOIN extension_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;
-		
-		INSERT INTO wait_event_type_corr ( wait_event_type , corr_value )
-		VALUES ( 'Extension' , corr_extension );			
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - extension 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - io
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		io_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_io  AS curr_io 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_io > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_io ) , 0 ) AS correlation_value 
-		INTO corr_io
-		FROM
-			waitings os JOIN io_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;	
-			
-		INSERT INTO wait_event_type_corr ( wait_event_type , corr_value )
-		VALUES ( 'IO' , corr_io );			
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - io 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - ipc
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		ipc_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_ipc  AS curr_ipc 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_ipc > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_ipc ) , 0 ) AS correlation_value 
-		INTO corr_ipc
-		FROM
-			waitings os JOIN ipc_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;
-	
-		INSERT INTO wait_event_type_corr ( wait_event_type , corr_value )
-		VALUES ( 'IPC' , corr_ipc );
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - ipc 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - lock
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp
-				AND curr_waitings > 0
-		) ,
-		lock_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_lock  AS curr_lock 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_lock > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_lock ) , 0 ) AS correlation_value 
-		INTO corr_lock
-		FROM
-			waitings os JOIN lock_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;
-
-		INSERT INTO wait_event_type_corr ( wait_event_type , corr_value )
-		VALUES ( 'Lock' , corr_lock );			
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - lock 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - lwlock
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_waitings > 0				
-		) ,
-		lwlock_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_lwlock  AS curr_lwlock 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_lwlock > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_lwlock ) , 0 ) AS correlation_value 
-		INTO corr_lwlock
-		FROM
-			waitings os JOIN lwlock_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;
-			
-		INSERT INTO wait_event_type_corr ( wait_event_type , corr_value )
-		VALUES ( 'LWLock' , corr_lwlock );
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - lwlock 
-	----------------------------------------------------------------------------------------------------
-	
-	----------------------------------------------------------------------------------------------------
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - timeout
-		WITH 
-		waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_waitings  AS curr_waitings  
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_waitings > 0				
-		) ,
-		timeout_waitings AS
-		(
-			SELECT 
-				curr_timestamp , curr_timeout  AS curr_timeout 
-			FROM cluster_stat_median
-			WHERE				
-				curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				AND curr_timeout > 0 
-		) 
-		SELECT COALESCE( corr( curr_waitings , curr_timeout ) , 0 ) AS correlation_value 
-		INTO corr_timeout
-		FROM
-			waitings os JOIN timeout_waitings  w ON ( os.curr_timestamp = w.curr_timestamp ) ;
-		
-		INSERT INTO wait_event_type_corr ( wait_event_type , corr_value )
-		VALUES ( 'Timeout' , corr_timeout );
-	--КОРРЕЛЯЦИЯ ОПЕРАЦИОННАЯ ОЖИДАНИЯ - timeout 
-	----------------------------------------------------------------------------------------------------
-	
-	
-	-----------------------------------------------------------------------------
-	
-	
-	FOR wait_event_type_rec IN 
-	SELECT 	
-		wait_event_type 
-	FROM 	
-		statement_stat_waitings_median
-	WHERE 
-		curr_timestamp  BETWEEN min_timestamp AND max_timestamp
-	GROUP BY 
-		wait_event_type 
-	ORDER BY 
-		wait_event_type 
-	LOOP 
-		SELECT *
-		INTO wait_event_type_corr_rec
-		FROM wait_event_type_corr
-		WHERE wait_event_type = wait_event_type_rec.wait_event_type ;
-		
-		IF wait_event_type_corr_rec.corr_value < 0.7 
-		THEN 
-			CONTINUE;
-		END IF ; 
-		
-		line_count=line_count+2;
-		result_str[line_count] =' WAIT_EVENT_TYPE = '|| wait_event_type_rec.wait_event_type ||'|';
-		line_count=line_count+1;
-
-		
-		result_str[line_count] =' WAIT_EVENT  '||'|'||								
-								' COUNT '||'|' ||
-								' PCT '||'|' 
-								;	
-		line_count=line_count+1;
-		
-		pct_for_80 = 0;
-		
-		FOR wait_event_rec IN 
-		SELECT 	
-			wait_event , 
-			SUM(curr_value_long) AS count
-		FROM 	
-			statement_stat_waitings_median
-		WHERE 
-			curr_timestamp  BETWEEN min_timestamp AND max_timestamp
-			AND wait_event_type = wait_event_type_rec.wait_event_type 
-		GROUP BY 
-			wait_event
-		ORDER BY 
-			2 desc 
-		LOOP	
-			WITH report_wait_event_for_pareto AS
-			(
-			SELECT 	
-				wait_event , 			
-				SUM(curr_value_long) AS counter 
-			FROM 	
-				statement_stat_waitings_median
-			WHERE 
-				curr_timestamp  BETWEEN min_timestamp AND max_timestamp
-				AND wait_event_type = wait_event_type_rec.wait_event_type
-			GROUP BY 				
-				wait_event
-			)
-			SELECT SUM(counter) 
-			INTO total_wait_event_count 
-			FROM report_wait_event_for_pareto ; 
-			
-			IF pct_for_80 = 0 
-			THEN 
-				pct_for_80 = (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric ; 
-			ELSE
-			    pct_for_80 = pct_for_80 + (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric ; 
-			END IF;
-			
-			result_str[line_count] =  wait_event_rec.wait_event  ||'|'||
-									  wait_event_rec.count  ||'|'||
-									  REPLACE ( TO_CHAR( ROUND( (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ||'|'
-									  ;
-			line_count=line_count+1; 
-			
-			SELECT report_wait_event_for_pareto || wait_event_rec.wait_event
-			INTO report_wait_event_for_pareto ; 
-	
-			tmp_wait_event_type_corr_index = tmp_wait_event_type_corr_index + 1 ;
-			INSERT INTO  tmp_wait_events 
-			( id , wait_event_type , wait_event )
-			VALUES 
-			( tmp_wait_event_type_corr_index , wait_event_type_rec.wait_event_type , wait_event_rec.wait_event );
-			
-			IF pct_for_80 > 80.0 
-			THEN 
-				EXIT;
-			END IF;
-			
-		END LOOP ;		
-		--FOR wait_event_rec IN 
-	END LOOP;
-	--FOR wait_event_type_rec IN 
-
-  return result_str ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION report_queryid_for_pareto IS 'Сформировать диаграмму Парето по wait_event';
--- Сформировать диаграмму Парето по wait_event
--------------------------------------------------------------------------------
-
-	
-
-
-	
--------------------------------------------------------------------------------
--- reports_waitings_os_corr.sql
--- version 1.0
---------------------------------------------------------------------------------
---
--- reports_reports_waitings_os_corr Корреляция ожиданий СУБД и метрик vmstat
---
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- Корреляция ожиданий СУБД и метрик vmstat
-CREATE OR REPLACE FUNCTION reports_waitings_os_corr( start_timestamp text , finish_timestamp text ) RETURNS text[] AS $$
-DECLARE
- result_str text[] ;
- line_count integer ;
- min_timestamp timestamptz ; 
- max_timestamp timestamptz ; 
- 
- counter integer ; 
- min_max_rec record ;
- line_counter integer ; 
- 
-  min_max_pct_rec record ;
-  
-  corr_io_wa DOUBLE PRECISION ; -- Корреляция 
-  corr_io_b DOUBLE PRECISION ; -- Корреляция 
-  corr_io_si DOUBLE PRECISION ; -- Корреляция 
-  corr_io_so DOUBLE PRECISION ; -- Корреляция 
-  corr_io_bi DOUBLE PRECISION ; -- Корреляция 
-  corr_io_bo DOUBLE PRECISION ; -- Корреляция 
-  corr_lwlock_us DOUBLE PRECISION ; -- Корреляция 
-  corr_lwlock_sy DOUBLE PRECISION ; -- Корреляция 
-  
-  bi_regr_rec record ;
-  bo_regr_rec record ;
-  
-  timestamp_counter integer ;
-  us_sy_pct DOUBLE PRECISION ; 
-  us_regr_rec record ;
-  sy_regr_rec record ;
-  
-  
-BEGIN
-	line_count = 1 ;
-	
-	
-	
-	
-	IF finish_timestamp = 'CURRENT_TIMESTAMP'
-	THEN 
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-
-		min_timestamp = max_timestamp - interval '1 hour'; 	
-	ELSE
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	min_timestamp ; 
-		
-		SELECT 	date_trunc('minute' ,  to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-	END IF ;
-
-	SELECT 
-		count(curr_timestamp)
-	INTO timestamp_counter
-	FROM 
-		cluster_stat_median cl
-	WHERE 	
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
-
-		
-	DROP TABLE IF EXISTS tmp_timepoints;
-	CREATE TEMPORARY TABLE tmp_timepoints
-	(
-		curr_timestamp timestamptz  ,   
-		curr_timepoint integer 
-	);
-
-
-	INSERT INTO tmp_timepoints
-	(
-		curr_timestamp ,	
-		curr_timepoint 
-	)
-	SELECT 
-		cl.curr_timestamp , 
-		row_number() over (order by cl.curr_timestamp) AS x
-	FROM
-	os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)	
-	WHERE 
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp  
-	ORDER BY cl.curr_timestamp	;		
-	
-	result_str[line_count] = 'КОРРЕЛЯЦИЯ ОЖИДАНИЙ СУБД И МЕТРИК vmstat' ; 
-	line_count=line_count+1;
-	
-	
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+2;  
-	
-	
-	SELECT 
-		MIN( cl_w.curr_io) AS min_vmstat_curr_io , MAX( cl_w.curr_io) AS max_curr_io , 
-		MIN( cl_w.curr_lwlock) AS min_curr_lwlock , MAX( cl_w.curr_lwlock) AS max_curr_lwlock , 		
-		MIN( cl.cpu_wa_long) AS min_cpu_wa_long , MAX( cl.cpu_wa_long) AS max_cpu_wa_long ,
-		MIN( cl.procs_b_long) AS min_procs_b_long , MAX( cl.procs_b_long) AS max_procs_b_long , 
-		MIN( cl.swap_si_long) AS min_swap_si_long , MAX( cl.swap_si_long) AS max_swap_si_long , 
-		MIN( cl.swap_so_long) AS min_swap_so_long , MAX( cl.swap_so_long) AS max_swap_so_long , 
-		MIN( cl.io_bi_long) AS min_io_bi_long , MAX( cl.io_bi_long) AS max_io_bi_long ,
-		MIN( cl.io_bo_long) AS min_io_bo_long , MAX( cl.io_bo_long) AS max_io_bo_long ,
-		MIN( cl.cpu_us_long) AS min_cpu_us_long , MAX( cl.cpu_us_long) AS max_cpu_us_long ,
-		MIN( cl.cpu_sy_long) AS min_cpu_sy_long , MAX( cl.cpu_sy_long) AS max_cpu_sy_long		
-	INTO  	min_max_rec
-	FROM 
-		os_stat_vmstat_median cl 
-		JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-	WHERE 	
-		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp;
-		
-		
-	---------------------------------------------------------------------------
-	--1.Проблема в ОС (по vmstat): Высокий wa, b (медленный/перегруженный диск)	
-	--IO - wa	 
-		IF min_max_rec.min_vmstat_curr_io != min_max_rec.max_curr_io AND 
-		   min_max_rec.min_cpu_wa_long != min_max_rec.max_cpu_wa_long
-		THEN 
-			WITH 
-			io_values AS
-			(
-				SELECT 
-					cl.curr_timestamp , curr_io  AS curr_io 
-				FROM 
-					os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-				WHERE				
-					cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-					AND curr_io > 0 
-			) ,
-			cpu_wa_values AS
-			(
-				SELECT 
-					cl.curr_timestamp , cpu_wa_long  AS cpu_wa_long 
-				FROM 
-					os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-				WHERE				
-					cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-					AND cpu_wa_long > 0 					
-			) 
-			SELECT COALESCE( corr( v1.curr_io , v2.cpu_wa_long ) , 0 ) AS correlation_value 
-			INTO corr_io_wa
-			FROM
-				io_values v1 JOIN cpu_wa_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-		ELSE
-			corr_io_wa = 0 ;
-		END IF;
-		
-		result_str[line_count] = 'Корреляция ожиданий IO и wa(I/O wait): IO-wa | ' ||
-		REPLACE ( TO_CHAR( ROUND( corr_io_wa::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-		line_count=line_count+1;	
-
-		IF corr_io_wa <= 0 
-		THEN 
-			result_str[line_count] = 'OK: Корреляция (IO-wa)  - отрицательная или отсутствует' ; 
-			line_count=line_count+1;	
-		ELSIF corr_io_wa > 0.7 
-		THEN 
-			result_str[line_count] = 'ALARM : Очень высокая корреляция (IO-wa)' ; 
-			line_count=line_count+1;
-			
-			-----------------------------------------------------------------------------------------------------------
-			result_str[line_count] = 'Процесс переходит в состояние непрерываемого сна (D), ожидая ответа от диска.' ; 
-			line_count=line_count+1;
-			result_str[line_count] = 'Даже простые операции чтения/записи (WAL, сброс буферов) начинают занимать неприемлемо много времени,';
-			line_count=line_count+1;
-			result_str[line_count] = 'так как диск не успевает обрабатывать запросы.';
-			line_count=line_count+1;
-			result_str[line_count] = 'Возможные причины и последствия ';
-			line_count=line_count+1;
-			result_str[line_count] = '1. Неоптимальные настройки I/O подсистемы (например, неверный sheduler, низкие лимиты IOPS/пропускной способности)';
-			line_count=line_count+1;
-			result_str[line_count] = 'Медленный диск или неправильная настройка контроллера/ФС приводят к тому, что даже обычные операции записи WAL ';
-			line_count=line_count+1;
-			result_str[line_count] = 'или сброса "грязных" страниц на диск начинают занимать много времени.';
-			line_count=line_count+1;	
-			result_str[line_count] = '2. Неверные настройки виртуальной памяти (например, vm.dirty_*)';
-			line_count=line_count+1;	
-			result_str[line_count] = 'Слишком большие значения vm.dirty_background_bytes и vm.dirty_bytes приводят к тому, что ОС копит много "грязных" данных в кеше,';
-			line_count=line_count+1;
-			result_str[line_count] = 'а затем сбрасывает их на диск одним большим взрывом. Это вызывает длительные ожидания записи ';
-			line_count=line_count+1;
-			result_str[line_count] = 'и может провоцировать длительные проверки контрольных точек (checkpoint).';
-			line_count=line_count+1;
-			-----------------------------------------------------------------------------------------------------------
-			
-		ELSIF corr_io_wa > 0.5 AND corr_io_wa <= 0.7
-		THEN 
-			result_str[line_count] = 'WARNING : Высокая корреляция (IO-wa)' ; 
-			line_count=line_count+1;
-			-----------------------------------------------------------------------------------------------------------
-			result_str[line_count] = 'Процесс переходит в состояние непрерываемого сна (D), ожидая ответа от диска.' ; 
-			line_count=line_count+1;
-			result_str[line_count] = 'Даже простые операции чтения/записи (WAL, сброс буферов) начинают занимать неприемлемо много времени,';
-			line_count=line_count+1;
-			result_str[line_count] = 'так как диск не успевает обрабатывать запросы.';
-			line_count=line_count+1;
-			result_str[line_count] = 'Возможные причины и последствия ';
-			line_count=line_count+1;
-			result_str[line_count] = '1. Неоптимальные настройки I/O подсистемы (например, неверный sheduler, низкие лимиты IOPS/пропускной способности)';
-			line_count=line_count+1;
-			result_str[line_count] = 'Медленный диск или неправильная настройка контроллера/ФС приводят к тому, что даже обычные операции записи WAL ';
-			line_count=line_count+1;
-			result_str[line_count] = 'или сброса "грязных" страниц на диск начинают занимать много времени.';
-			line_count=line_count+1;	
-			result_str[line_count] = '2. Неверные настройки виртуальной памяти (например, vm.dirty_*)';
-			line_count=line_count+1;	
-			result_str[line_count] = 'Слишком большие значения vm.dirty_background_bytes и vm.dirty_bytes приводят к тому, что ОС копит много "грязных" данных в кеше,';
-			line_count=line_count+1;
-			result_str[line_count] = 'а затем сбрасывает их на диск одним большим взрывом. Это вызывает длительные ожидания записи ';
-			line_count=line_count+1;
-			result_str[line_count] = 'и может провоцировать длительные проверки контрольных точек (checkpoint).';
-			line_count=line_count+1;
-			-----------------------------------------------------------------------------------------------------------
-						
-		ELSE
-			result_str[line_count] = 'INFO : Слабая или средняя корреляция (IO-wa)' ; 
-			line_count=line_count+1;		
-			-----------------------------------------------------------------------------------------------------------
-			result_str[line_count] = 'Процесс переходит в состояние непрерываемого сна (D), ожидая ответа от диска.' ; 
-			line_count=line_count+1;
-			result_str[line_count] = 'Даже простые операции чтения/записи (WAL, сброс буферов) начинают занимать неприемлемо много времени,';
-			line_count=line_count+1;
-			result_str[line_count] = 'так как диск не успевает обрабатывать запросы.';
-			line_count=line_count+1;
-			result_str[line_count] = 'Возможные причины и последствия ';
-			line_count=line_count+1;
-			result_str[line_count] = '1. Неоптимальные настройки I/O подсистемы (например, неверный sheduler, низкие лимиты IOPS/пропускной способности)';
-			line_count=line_count+1;
-			result_str[line_count] = 'Медленный диск или неправильная настройка контроллера/ФС приводят к тому, что даже обычные операции записи WAL ';
-			line_count=line_count+1;
-			result_str[line_count] = 'или сброса "грязных" страниц на диск начинают занимать много времени.';
-			line_count=line_count+1;	
-			result_str[line_count] = '2. Неверные настройки виртуальной памяти (например, vm.dirty_*)';
-			line_count=line_count+1;	
-			result_str[line_count] = 'Слишком большие значения vm.dirty_background_bytes и vm.dirty_bytes приводят к тому, что ОС копит много "грязных" данных в кеше,';
-			line_count=line_count+1;
-			result_str[line_count] = 'а затем сбрасывает их на диск одним большим взрывом. Это вызывает длительные ожидания записи ';
-			line_count=line_count+1;
-			result_str[line_count] = 'и может провоцировать длительные проверки контрольных точек (checkpoint).';
-			line_count=line_count+1;
-			-----------------------------------------------------------------------------------------------------------		
-								
-		END IF;
-		line_count=line_count+1;
-		--IO - wa
-		--------------------------------------------------------------------------------------------------------------------------
-		--IO - b
-		IF min_max_rec.min_vmstat_curr_io != min_max_rec.max_curr_io AND 
-		   min_max_rec.min_procs_b_long != min_max_rec.max_procs_b_long
-		THEN 
-			WITH 
-			io_values AS
-			(
-				SELECT 
-					cl.curr_timestamp , curr_io  AS curr_io 
-				FROM 
-					os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-				WHERE				
-					cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-					AND curr_io > 0 
-			) ,
-			procs_b_values AS
-			(
-				SELECT 
-					cl.curr_timestamp , procs_b_long  AS procs_b_long 
-				FROM 
-					os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-				WHERE				
-					cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-					AND procs_b_long > 0 					
-			) 
-			SELECT COALESCE( corr( v1.curr_io , v2.procs_b_long ) , 0 ) AS correlation_value 
-			INTO corr_io_b
-			FROM
-				io_values v1 JOIN procs_b_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-		ELSE
-			corr_io_b = 0 ;
-		END IF;
-		
-		result_str[line_count] = 'Корреляция ожиданий IO и b(blocked) процессы, находящихся в состоянии непрерываемого сна: IO-b | ' ||
-		REPLACE ( TO_CHAR( ROUND( corr_io_b::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-		line_count=line_count+1;	
-
-		IF corr_io_b <= 0 
-		THEN 
-			result_str[line_count] = 'OK: Корреляция (IO-b)  - отрицательная или отсутствует' ; 
-			line_count=line_count+1;	
-		ELSIF corr_io_b > 0.7 
-		THEN 
-			result_str[line_count] = 'ALARM : Очень высокая корреляция (IO-b)' ; 
-			line_count=line_count+1;
-			-----------------------------------------------------------------------------------------------------------
-			result_str[line_count] = 'Процесс переходит в состояние непрерываемого сна (D), ожидая ответа от диска.' ; 
-			line_count=line_count+1;
-			result_str[line_count] = 'Даже простые операции чтения/записи (WAL, сброс буферов) начинают занимать неприемлемо много времени,';
-			line_count=line_count+1;
-			result_str[line_count] = 'так как диск не успевает обрабатывать запросы.';
-			line_count=line_count+1;
-			result_str[line_count] = 'Возможные причины и последствия ';
-			line_count=line_count+1;
-			result_str[line_count] = '1. Неоптимальные настройки I/O подсистемы (например, неверный sheduler, низкие лимиты IOPS/пропускной способности)';
-			line_count=line_count+1;
-			result_str[line_count] = 'Медленный диск или неправильная настройка контроллера/ФС приводят к тому, что даже обычные операции записи WAL ';
-			line_count=line_count+1;
-			result_str[line_count] = 'или сброса "грязных" страниц на диск начинают занимать много времени.';
-			line_count=line_count+1;	
-			result_str[line_count] = '2. Неверные настройки виртуальной памяти (например, vm.dirty_*)';
-			line_count=line_count+1;	
-			result_str[line_count] = 'Слишком большие значения vm.dirty_background_bytes и vm.dirty_bytes приводят к тому, что ОС копит много "грязных" данных в кеше,';
-			line_count=line_count+1;
-			result_str[line_count] = 'а затем сбрасывает их на диск одним большим взрывом. Это вызывает длительные ожидания записи ';
-			line_count=line_count+1;
-			result_str[line_count] = 'и может провоцировать длительные проверки контрольных точек (checkpoint).';
-			line_count=line_count+1;
-			-----------------------------------------------------------------------------------------------------------		
-								
-		ELSIF corr_io_b > 0.5 AND corr_io_b <= 0.7
-		THEN 
-			result_str[line_count] = 'WARNING : Высокая корреляция (IO-b)' ; 
-			line_count=line_count+1;
-			-----------------------------------------------------------------------------------------------------------
-			result_str[line_count] = 'Процесс переходит в состояние непрерываемого сна (D), ожидая ответа от диска.' ; 
-			line_count=line_count+1;
-			result_str[line_count] = 'Даже простые операции чтения/записи (WAL, сброс буферов) начинают занимать неприемлемо много времени,';
-			line_count=line_count+1;
-			result_str[line_count] = 'так как диск не успевает обрабатывать запросы.';
-			line_count=line_count+1;
-			result_str[line_count] = 'Возможные причины и последствия ';
-			line_count=line_count+1;
-			result_str[line_count] = '1. Неоптимальные настройки I/O подсистемы (например, неверный sheduler, низкие лимиты IOPS/пропускной способности)';
-			line_count=line_count+1;
-			result_str[line_count] = 'Медленный диск или неправильная настройка контроллера/ФС приводят к тому, что даже обычные операции записи WAL ';
-			line_count=line_count+1;
-			result_str[line_count] = 'или сброса "грязных" страниц на диск начинают занимать много времени.';
-			line_count=line_count+1;	
-			result_str[line_count] = '2. Неверные настройки виртуальной памяти (например, vm.dirty_*)';
-			line_count=line_count+1;	
-			result_str[line_count] = 'Слишком большие значения vm.dirty_background_bytes и vm.dirty_bytes приводят к тому, что ОС копит много "грязных" данных в кеше,';
-			line_count=line_count+1;
-			result_str[line_count] = 'а затем сбрасывает их на диск одним большим взрывом. Это вызывает длительные ожидания записи ';
-			line_count=line_count+1;
-			result_str[line_count] = 'и может провоцировать длительные проверки контрольных точек (checkpoint).';
-			line_count=line_count+1;
-			-----------------------------------------------------------------------------------------------------------
-					
-		ELSE
-			result_str[line_count] = 'INFO : Слабая или средняя корреляция (IO-b)' ; 
-			line_count=line_count+1;		
-			-----------------------------------------------------------------------------------------------------------
-			result_str[line_count] = 'Процесс переходит в состояние непрерываемого сна (D), ожидая ответа от диска.' ; 
-			line_count=line_count+1;
-			result_str[line_count] = 'Даже простые операции чтения/записи (WAL, сброс буферов) начинают занимать неприемлемо много времени,';
-			line_count=line_count+1;
-			result_str[line_count] = 'так как диск не успевает обрабатывать запросы.';
-			line_count=line_count+1;
-			result_str[line_count] = 'Возможные причины и последствия ';
-			line_count=line_count+1;
-			result_str[line_count] = '1. Неоптимальные настройки I/O подсистемы (например, неверный sheduler, низкие лимиты IOPS/пропускной способности)';
-			line_count=line_count+1;
-			result_str[line_count] = 'Медленный диск или неправильная настройка контроллера/ФС приводят к тому, что даже обычные операции записи WAL ';
-			line_count=line_count+1;
-			result_str[line_count] = 'или сброса "грязных" страниц на диск начинают занимать много времени.';
-			line_count=line_count+1;	
-			result_str[line_count] = '2. Неверные настройки виртуальной памяти (например, vm.dirty_*)';
-			line_count=line_count+1;	
-			result_str[line_count] = 'Слишком большие значения vm.dirty_background_bytes и vm.dirty_bytes приводят к тому, что ОС копит много "грязных" данных в кеше,';
-			line_count=line_count+1;
-			result_str[line_count] = 'а затем сбрасывает их на диск одним большим взрывом. Это вызывает длительные ожидания записи ';
-			line_count=line_count+1;
-			result_str[line_count] = 'и может провоцировать длительные проверки контрольных точек (checkpoint).';
-			line_count=line_count+1;
-			-----------------------------------------------------------------------------------------------------------	
-						
-		END IF;
-		line_count=line_count+1;
-		
-		--IO - b
-		--------------------------------------------------------------------------------------------------------------------------
-	--1.Проблема в ОС (по vmstat): Высокий wa, b (медленный/перегруженный диск)	
-    ---------------------------------------------------------------------------
-	
-	-----------------------------------------------------------------------------
-	--Высокие значения bi(blocks in) 
-	IF min_max_rec.min_vmstat_curr_io != min_max_rec.max_curr_io AND 
-		   min_max_rec.min_io_bi_long != min_max_rec.max_io_bi_long
-	THEN 
-		-- УГОЛ НАКЛОНА ЛИНИИ НАИМЕНЬШИХ КВАДРАТОВ bi
-		-- 	линия регрессии  скорости  : Y = a + bX
-			BEGIN
-				WITH stats AS 
-				(
-				  SELECT 
-					AVG(t.curr_timepoint::DOUBLE PRECISION) as avg1, 
-					STDDEV(t.curr_timepoint::DOUBLE PRECISION) as std1,
-					AVG(s.io_bi_long::DOUBLE PRECISION) as avg2, 
-					STDDEV(s.io_bi_long::DOUBLE PRECISION) as std2
-				  FROM
-					os_stat_vmstat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp )
-				  WHERE 
-					t.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				),
-				standardized_data AS 
-				(
-					SELECT 
-						(t.curr_timepoint::DOUBLE PRECISION - avg1) / std1 as x_z,
-						(s.io_bi_long::DOUBLE PRECISION - avg2) / std2 as y_z
-					FROM
-						os_stat_vmstat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp ) , stats
-					WHERE 
-						t.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				)	
-				SELECT
-					REGR_SLOPE(y_z, x_z) as slope, --bi
-					ATAN(REGR_SLOPE(y_z, x_z)) * 180 / PI() as slope_angle_degrees, --угол наклона
-					REGR_R2(y_z, x_z) as r_squared -- Коэффициент детерминации
-				INTO 
-					bi_regr_rec
-				FROM standardized_data;
-			EXCEPTION
-			  --STDDEV(s.op_speed_long::DOUBLE PRECISION) = 0  
-			  WHEN division_by_zero THEN  -- Конкретное исключение для деления на ноль
-				SELECT 
-					1.0 as slope, --b
-					0.0  as slope_angle_degrees, --угол наклона
-					0.0  as r_squared -- Коэффициент детерминации
-				INTO 
-				bi_regr_rec ;
-			END;
-		-- УГОЛ НАКЛОНА ЛИНИИ НАИМЕНЬШИХ КВАДРАТОВ bi
-		-- 	линия регрессии  скорости  : Y = a + bX
-			
-			IF  bi_regr_rec.slope_angle_degrees <= 0 
-			THEN 
-				result_str[line_count] = 'Количество bi(блоки, считанные с устройств) - не растёт | ' ;
-				line_count=line_count+1;	
-			ELSE 
-				WITH 
-				io_values AS
-				(
-					SELECT 
-						cl.curr_timestamp , curr_io  AS curr_io 
-					FROM 
-						os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-					WHERE				
-						cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-						AND curr_io > 0 
-				) ,
-				io_bi_values AS
-				(
-					SELECT 
-						cl.curr_timestamp , io_bi_long  AS io_bi_long 
-					FROM 
-						os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-					WHERE				
-						cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-						AND io_bi_long > 0 					
-				) 
-				SELECT COALESCE( corr( v1.curr_io , v2.io_bi_long ) , 0 ) AS correlation_value 
-				INTO corr_io_bi
-				FROM
-					io_values v1 JOIN io_bi_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;  
-			END IF;
-	ELSE
-		corr_io_bi = 0 ;
-	END IF;
-
-	result_str[line_count] = 'Корреляция ожиданий IO и bi(blocks in):| ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_io_bi::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-
-	IF corr_io_bi <= 0 
-	THEN 
-		result_str[line_count] = 'OK: Корреляция IO и bi(blocks in) - отрицательная или отсутствует' ; 
-		line_count=line_count+1;				
-	ELSIF corr_io_bi > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (IO и bi)' ; 
-		line_count=line_count+1;
-		---------------------------------------------------------------------------------------------
-		result_str[line_count] = 'Причины и последствия: ' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Активная работа с большими объемами данных  ' ;
-		line_count=line_count+1;
-		result_str[line_count] = '(например, полное сканирование таблиц, интенсивная запись). ' ;
-		line_count=line_count+1;
-		result_str[line_count] = 'Неэффективные запросы, вызывающие чрезмерный I/O.	 ' ;
-		line_count=line_count+1;
-		
-	ELSIF corr_io_bi > 0.5 AND corr_io_bi <= 0.7
+	part = 0 ; 
+	----------------------------------------------------------------------------
+	-- Корреляция: vmstat/buff(буферы) и iostat/rps(Количество операций чтения в секунду)
+	IF min_max_rec.min_memory_buff_long != min_max_rec.max_memory_buff_long AND 
+	   min_max_rec.min_dev_rps_long != min_max_rec.max_dev_rps_long
 	THEN 	
-		result_str[line_count] = 'WARNING : Высокая корреляция (IO и bi)' ; 
-		line_count=line_count+1;
-		---------------------------------------------------------------------------------------------
-		result_str[line_count] = 'Причины и последствия: ' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Активная работа с большими объемами данных  ' ;
-		line_count=line_count+1;
-		result_str[line_count] = '(например, полное сканирование таблиц, интенсивная запись). ' ;
-		line_count=line_count+1;
-		result_str[line_count] = 'Неэффективные запросы, вызывающие чрезмерный I/O.	 ' ;
-		line_count=line_count+1;	
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (IO и bi)' ; 
-		line_count=line_count+1;
-		---------------------------------------------------------------------------------------------
-		result_str[line_count] = 'Причины и последствия: ' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Активная работа с большими объемами данных  ' ;
-		line_count=line_count+1;
-		result_str[line_count] = '(например, полное сканирование таблиц, интенсивная запись). ' ;
-		line_count=line_count+1;
-		result_str[line_count] = 'Неэффективные запросы, вызывающие чрезмерный I/O.	 ' ;
-		line_count=line_count+1;
-	END IF ; 
-	line_count=line_count+1;	
-	--Высокие значения bi(blocks in) 
-	-------------------------------------------------------
-	
-	-----------------------------------------------------------------------------
-	--Высокие значения bo(blocks out) 
-	IF min_max_rec.min_vmstat_curr_io != min_max_rec.max_curr_io AND 
-		   min_max_rec.min_io_bo_long != min_max_rec.max_io_bo_long
-	THEN 
-		-- УГОЛ НАКЛОНА ЛИНИИ НАИМЕНЬШИХ КВАДРАТОВ bo
-		-- 	линия регрессии  скорости  : Y = a + bX
-			BEGIN
-				WITH stats AS 
-				(
-				  SELECT 
-					AVG(t.curr_timepoint::DOUBLE PRECISION) as avg1, 
-					STDDEV(t.curr_timepoint::DOUBLE PRECISION) as std1,
-					AVG(s.io_bo_long::DOUBLE PRECISION) as avg2, 
-					STDDEV(s.io_bo_long::DOUBLE PRECISION) as std2
-				  FROM
-					os_stat_vmstat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp )
-				  WHERE 
-					t.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				),
-				standardized_data AS 
-				(
-					SELECT 
-						(t.curr_timepoint::DOUBLE PRECISION - avg1) / std1 as x_z,
-						(s.io_bo_long::DOUBLE PRECISION - avg2) / std2 as y_z
-					FROM
-						os_stat_vmstat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp ) , stats
-					WHERE 
-						t.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				)	
-				SELECT
-					REGR_SLOPE(y_z, x_z) as slope, --bo
-					ATAN(REGR_SLOPE(y_z, x_z)) * 180 / PI() as slope_angle_degrees, --угол наклона
-					REGR_R2(y_z, x_z) as r_squared -- Коэффициент детерминации
-				INTO 
-					bo_regr_rec
-				FROM standardized_data;
-			EXCEPTION
-			  --STDDEV(s.op_speed_long::DOUBLE PRECISION) = 0  
-			  WHEN division_by_zero THEN  -- Конкретное исключение для деления на ноль
-				SELECT 
-					1.0 as slope, --b
-					0.0  as slope_angle_degrees, --угол наклона
-					0.0  as r_squared -- Коэффициент детерминации
-				INTO 
-				bo_regr_rec ;
-			END;
-		-- УГОЛ НАКЛОНА ЛИНИИ НАИМЕНЬШИХ КВАДРАТОВ bo
-		-- 	линия регрессии  скорости  : Y = a + bX
-			
-			IF  bo_regr_rec.slope_angle_degrees <= 0 
-			THEN 
-				result_str[line_count] = 'Количество bo(записанные на устройства ) - не растёт | ' ;
-				line_count=line_count+1;	
-			ELSE 
-				WITH 
-				io_values AS
-				(
-					SELECT 
-						cl.curr_timestamp , curr_io  AS curr_io 
-					FROM 
-						os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-					WHERE				
-						cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-						AND curr_io > 0 
-				) ,
-				io_bo_values AS
-				(
-					SELECT 
-						cl.curr_timestamp , io_bo_long  AS io_bo_long 
-					FROM 
-						os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-					WHERE				
-						cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-						AND io_bo_long > 0 					
-				) 
-				SELECT COALESCE( corr( v1.curr_io , v2.io_bo_long ) , 0 ) AS correlation_value 
-				INTO corr_io_bo
-				FROM
-					io_values v1 JOIN io_bo_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;  
-			END IF;
-	ELSE
-		corr_io_bo = 0 ;
-	END IF;
-
-	result_str[line_count] = 'Корреляция ожиданий IO и bo(blocks out):| ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_io_bo::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-
-	IF corr_io_bo <= 0 
-	THEN 
-		result_str[line_count] = 'OK: Корреляция IO и bo(blocks out) - отрицательная или отсутствует' ; 
-		line_count=line_count+1;				
-	ELSIF corr_io_bo > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (IO и bo)' ; 
-		line_count=line_count+1;
-		---------------------------------------------------------------------------------------------
-		result_str[line_count] = 'Причины и последствия: ' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Активная работа с большими объемами данных  ' ;
-		line_count=line_count+1;
-		result_str[line_count] = '(например, полное сканирование таблиц, интенсивная запись). ' ;
-		line_count=line_count+1;
-		result_str[line_count] = 'Неэффективные запросы, вызывающие чрезмерный I/O.	 ' ;
-		line_count=line_count+1;
+		CALL truncate_time_series();
+		INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , memory_buff_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
 		
-	ELSIF corr_io_bo > 0.5 AND corr_io_bo <= 0.7
+		INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , dev_rps_long 
+		FROM 	os_stat_iostat_device_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+				AND device = device_name ;
+		
+		SELECT * INTO correlation_rec FROM quick_significance_check();
+		
+		reason_casulas_list := '{}'::text[]; 				
+		reason_casulas_list[1] = 'ПОСЛЕДСТВИЯ: Не эффективное использование памяти для снижения нагрузки на диск' ; 
+		
+		part = part + 1 ;
+		SELECT fill_in_comprehensive_analysis_correlation('2.'||part||'. Корреляция: vmstat/buff(буферы) и iostat/rps(Количество операций чтения в секунду)','vmstat/buff(буферы)', 'iostat/rps(Количество операций чтения в секунду)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+		INTO report_str ; 
+		
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT result_str || report_str
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;
+	END IF ;
+	-- Корреляция: vmstat/buff(буферы) и iostat/rps(Количество операций чтения в секунду)
+	----------------------------------------------------------------------------
+
+	----------------------------------------------------------------------------
+	-- Корреляция: vmstat/buff(буферы) и iostat/rMBps Скорость чтения (МБ/с)
+	IF min_max_rec.min_memory_buff_long != min_max_rec.max_memory_buff_long AND 
+	   min_max_rec.min_dev_rmbs_long != min_max_rec.max_dev_rmbs_long
 	THEN 	
-		result_str[line_count] = 'WARNING : Высокая корреляция (IO и bo)' ; 
-		line_count=line_count+1;
-		---------------------------------------------------------------------------------------------
-		result_str[line_count] = 'Причины и последствия: ' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Активная работа с большими объемами данных  ' ;
-		line_count=line_count+1;
-		result_str[line_count] = '(например, полное сканирование таблиц, интенсивная запись). ' ;
-		line_count=line_count+1;
-		result_str[line_count] = 'Неэффективные запросы, вызывающие чрезмерный I/O.	 ' ;
-		line_count=line_count+1;	
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (IO и bo)' ; 
-		line_count=line_count+1;
-		---------------------------------------------------------------------------------------------
-		result_str[line_count] = 'Причины и последствия: ' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Активная работа с большими объемами данных  ' ;
-		line_count=line_count+1;
-		result_str[line_count] = '(например, полное сканирование таблиц, интенсивная запись). ' ;
-		line_count=line_count+1;
-		result_str[line_count] = 'Неэффективные запросы, вызывающие чрезмерный I/O.	 ' ;
-		line_count=line_count+1;
-	END IF ; 
-	line_count=line_count+1;	
-	--Высокие значения bo(blocks out) 
-	-------------------------------------------------------
-	
-	---------------------------------------------------------------------------
-	--Низкое значение id (idle time) при высоком us (user time) или sy (system time)
-	--us + sy > 80%
-	WITH 
-	  cpu_counter AS
-	  (
-		SELECT count(*) AS total_counter
-		FROM 
-			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-		WHERE				
-			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-			AND (cpu_us_long + cpu_sy_long ) > 80
-	  ) 
-	SELECT 
-		(total_counter::DOUBLE PRECISION / timestamp_counter::DOUBLE PRECISION)*100.0 
-	INTO
-		us_sy_pct
-	FROM cpu_counter ;
-	
-	result_str[line_count] = 'us(user time) + sy(system time) (% свыше 80%) | '|| REPLACE ( TO_CHAR( ROUND( us_sy_pct::numeric , 2 ) , '000000000000D0000' ) , '.' , ',' )  ; 
-	line_count=line_count+1;
-	
-	IF us_sy_pct < 25.0 
-	THEN 
-		result_str[line_count] = 'OK: менее 25% наблюдений - wa > 10%' ; 
-		line_count=line_count+1;		
-	ELSIF us_sy_pct > 25.0 AND us_sy_pct <= 50.0
-	THEN 
-		result_str[line_count] = 'WARNING: 25-50% наблюдений - wa > 10%' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Высокая нагрузка на CPU из-за сложных запросов (агрегации, JOINs).';
-		line_count=line_count+1;
-		result_str[line_count] = 'Конкуренция за ресурсы CPU (например, из-за параллельных процессов).';
-		line_count=line_count+1;
-		result_str[line_count] = 'Резкий рост sy может указывать на проблемы с системными вызовами (например, частое переключение контекста).';
-		line_count=line_count+1;
-	ELSE 
-		result_str[line_count] = 'ALARM: более 50% наблюдений - wa > 10%' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Высокая нагрузка на CPU из-за сложных запросов (агрегации, JOINs).';
-		line_count=line_count+1;
-		result_str[line_count] = 'Конкуренция за ресурсы CPU (например, из-за параллельных процессов).';
-		line_count=line_count+1;
-		result_str[line_count] = 'Резкий рост sy может указывать на проблемы с системными вызовами (например, частое переключение контекста).';
-		line_count=line_count+1;
+		CALL truncate_time_series();
+		INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , memory_buff_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+		
+		INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , dev_rmbs_long 
+		FROM 	os_stat_iostat_device_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+				AND device = device_name ;
+		
+		SELECT * INTO correlation_rec FROM quick_significance_check();
+		
+		reason_casulas_list := '{}'::text[]; 				
+		reason_casulas_list[1] = 'ПОСЛЕДСТВИЯ: Не эффективное использование памяти для снижения нагрузки на диск' ; 
+		
+		part = part + 1 ;
+		SELECT fill_in_comprehensive_analysis_correlation('2.'||part||'. Корреляция: vmstat/buff(буферы) и iostat/rMBps Скорость чтения (МБ/с)','vmstat/buff(буферы)', 'iostat/rMBps Скорость чтения (МБ/с)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+		INTO report_str ; 
+		
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT result_str || report_str
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;
 	END IF ;
+	-- Корреляция: vmstat/buff(буферы) и iostat/rMBps Скорость чтения (МБ/с)
+	----------------------------------------------------------------------------
 	
-	--------------------------------------------------------------------
-	-- us — user time
-	IF min_max_rec.min_curr_lwlock != min_max_rec.max_curr_lwlock AND 
-	   min_max_rec.min_cpu_us_long != min_max_rec.max_cpu_us_long 
-	THEN 
-		-- УГОЛ НАКЛОНА ЛИНИИ НАИМЕНЬШИХ КВАДРАТОВ bi
-		-- 	линия регрессии  скорости  : Y = a + bX
-			BEGIN
-				WITH stats AS 
-				(
-				  SELECT 
-					AVG(t.curr_timepoint::DOUBLE PRECISION) as avg1, 
-					STDDEV(t.curr_timepoint::DOUBLE PRECISION) as std1,
-					AVG(s.cpu_us_long::DOUBLE PRECISION) as avg2, 
-					STDDEV(s.cpu_us_long::DOUBLE PRECISION) as std2
-				  FROM
-					os_stat_vmstat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp )
-				  WHERE 
-					t.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				),
-				standardized_data AS 
-				(
-					SELECT 
-						(t.curr_timepoint::DOUBLE PRECISION - avg1) / std1 as x_z,
-						(s.cpu_us_long::DOUBLE PRECISION - avg2) / std2 as y_z
-					FROM
-						os_stat_vmstat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp ) , stats
-					WHERE 
-						t.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				)	
-				SELECT
-					REGR_SLOPE(y_z, x_z) as slope, --bi
-					ATAN(REGR_SLOPE(y_z, x_z)) * 180 / PI() as slope_angle_degrees, --угол наклона
-					REGR_R2(y_z, x_z) as r_squared -- Коэффициент детерминации
-				INTO 
-					us_regr_rec
-				FROM standardized_data;
-			EXCEPTION
-			  --STDDEV(s.op_speed_long::DOUBLE PRECISION) = 0  
-			  WHEN division_by_zero THEN  -- Конкретное исключение для деления на ноль
-				SELECT 
-					1.0 as slope, --b
-					0.0  as slope_angle_degrees, --угол наклона
-					0.0  as r_squared -- Коэффициент детерминации
-				INTO 
-				us_regr_rec ;
-			END;
-		-- УГОЛ НАКЛОНА ЛИНИИ НАИМЕНЬШИХ КВАДРАТОВ bi
-		-- 	линия регрессии  скорости  : Y = a + bX
-			
-			IF  us_regr_rec.slope_angle_degrees <= 0 
-			THEN 
-				result_str[line_count] = 'us (user time)- не растёт | ' ;
-				line_count=line_count+1;	
-			ELSE 
-				WITH 
-				lwlock_values AS
-				(
-					SELECT 
-						cl.curr_timestamp , curr_lwlock  AS curr_lwlock 
-					FROM 
-						os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-					WHERE				
-						cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-						AND curr_lwlock > 0 
-				) ,
-				lwlock_us_values AS
-				(
-					SELECT 
-						cl.curr_timestamp , cpu_us_long  AS cpu_us_long 
-					FROM 
-						os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-					WHERE				
-						cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-						AND cpu_us_long > 0 					
-				) 
-				SELECT COALESCE( corr( v1.curr_lwlock , v2.cpu_us_long ) , 0 ) AS correlation_value 
-				INTO corr_lwlock_us
-				FROM
-					lwlock_values v1 JOIN lwlock_us_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ; 			
-			END IF;
-			
-	ELSE
-		corr_lwlock_us = 0 ;
-	END IF;
-
-	line_count=line_count+1;	
-	result_str[line_count] = 'Корреляция LWLock и us(user time):| ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_lwlock_us::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-
-	IF corr_lwlock_us <= 0 
-	THEN 
-		result_str[line_count] = 'OK: Корреляция LWLock и us(user time) - отрицательная или отсутствует' ; 
-		line_count=line_count+1;				
-	ELSIF corr_lwlock_us > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (LWLock-us)' ; 
-		line_count=line_count+1;
-		---------------------------------------------------------------------------------------------
-		result_str[line_count] = 'Причины и последствия: ' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Высокая нагрузка на CPU из-за сложных запросов (агрегации, JOINs).' ;
-		line_count=line_count+1;
-		result_str[line_count] = 'Конкуренция за ресурсы CPU (например, из-за параллельных процессов).' ;
-		line_count=line_count+1;		
-	ELSIF corr_lwlock_us > 0.5 AND corr_lwlock_us <= 0.7
+	----------------------------------------------------------------------------
+	-- Корреляция: vmstat/buff(буферы) и iostat/wps(Количество операций записи в секунду).
+	IF min_max_rec.min_memory_buff_long != min_max_rec.max_memory_buff_long AND 
+	   min_max_rec.min_dev_wps_long != min_max_rec.max_dev_wps_long
 	THEN 	
-		result_str[line_count] = 'WARNING : Высокая корреляция (LWLock-us)' ; 
-		line_count=line_count+1;
-		---------------------------------------------------------------------------------------------
-		result_str[line_count] = 'Причины и последствия: ' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Высокая нагрузка на CPU из-за сложных запросов (агрегации, JOINs).' ;
-		line_count=line_count+1;
-		result_str[line_count] = 'Конкуренция за ресурсы CPU (например, из-за параллельных процессов).' ;
-		line_count=line_count+1;	
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (LWLock-us)' ; 
-		line_count=line_count+1;
-		---------------------------------------------------------------------------------------------
-		result_str[line_count] = 'Причины и последствия: ' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Высокая нагрузка на CPU из-за сложных запросов (агрегации, JOINs).' ;
-		line_count=line_count+1;
-		result_str[line_count] = 'Конкуренция за ресурсы CPU (например, из-за параллельных процессов).' ;
-		line_count=line_count+1;
-	END IF ; 
-	line_count=line_count+1;	
-	-- us — user time
-	--------------------------------------------------------------------
-	
-	--------------------------------------------------------------------
-	-- sy — system time
-	IF min_max_rec.min_curr_lwlock != min_max_rec.max_curr_lwlock AND 
-	   min_max_rec.min_cpu_sy_long != min_max_rec.max_cpu_sy_long 
-	THEN 
-		-- УГОЛ НАКЛОНА ЛИНИИ НАИМЕНЬШИХ КВАДРАТОВ bi
-		-- 	линия регрессии  скорости  : Y = a + bX
-			BEGIN
-				WITH stats AS 
-				(
-				  SELECT 
-					AVG(t.curr_timepoint::DOUBLE PRECISION) as avg1, 
-					STDDEV(t.curr_timepoint::DOUBLE PRECISION) as std1,
-					AVG(s.cpu_sy_long::DOUBLE PRECISION) as avg2, 
-					STDDEV(s.cpu_sy_long::DOUBLE PRECISION) as std2
-				  FROM
-					os_stat_vmstat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp )
-				  WHERE 
-					t.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				),
-				standardized_data AS 
-				(
-					SELECT 
-						(t.curr_timepoint::DOUBLE PRECISION - avg1) / std1 as x_z,
-						(s.cpu_sy_long::DOUBLE PRECISION - avg2) / std2 as y_z
-					FROM
-						os_stat_vmstat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp ) , stats
-					WHERE 
-						t.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-				)	
-				SELECT
-					REGR_SLOPE(y_z, x_z) as slope, --bi
-					ATAN(REGR_SLOPE(y_z, x_z)) * 180 / PI() as slope_angle_degrees, --угол наклона
-					REGR_R2(y_z, x_z) as r_squared -- Коэффициент детерминации
-				INTO 
-					sy_regr_rec
-				FROM standardized_data;
-			EXCEPTION
-			  --STDDEV(s.op_speed_long::DOUBLE PRECISION) = 0  
-			  WHEN division_by_zero THEN  -- Конкретное исключение для деления на ноль
-				SELECT 
-					1.0 as slope, --b
-					0.0  as slope_angle_degrees, --угол наклона
-					0.0  as r_squared -- Коэффициент детерминации
-				INTO 
-				sy_regr_rec ;
-			END;
-		-- УГОЛ НАКЛОНА ЛИНИИ НАИМЕНЬШИХ КВАДРАТОВ bi
-		-- 	линия регрессии  скорости  : Y = a + bX
-			
-			IF  sy_regr_rec.slope_angle_degrees <= 0 
-			THEN 
-				result_str[line_count] = 'sy (system time)- не растёт | ' ;
-				line_count=line_count+1;	
-			ELSE 
-				WITH 
-				lwlock_values AS
-				(
-					SELECT 
-						cl.curr_timestamp , curr_lwlock  AS curr_lwlock 
-					FROM 
-						os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-					WHERE				
-						cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-						AND curr_lwlock > 0 
-				) ,
-				lwlock_sy_values AS
-				(
-					SELECT 
-						cl.curr_timestamp , cpu_sy_long  AS cpu_sy_long 
-					FROM 
-						os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-					WHERE				
-						cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-						AND cpu_sy_long > 0 					
-				) 
-				SELECT COALESCE( corr( v1.curr_lwlock , v2.cpu_sy_long ) , 0 ) AS correlation_value 
-				INTO corr_lwlock_sy
-				FROM
-					lwlock_values v1 JOIN lwlock_sy_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ; 			
-			END IF;
-			
-	ELSE
-		corr_lwlock_sy = 0 ;
-	END IF;
+		CALL truncate_time_series();
+		INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , memory_buff_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+		
+		INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , dev_wps_long 
+		FROM 	os_stat_iostat_device_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+				AND device = device_name ;
+		
+		SELECT * INTO correlation_rec FROM quick_significance_check();
+		
+		reason_casulas_list := '{}'::text[]; 				
+		reason_casulas_list[1] = 'ПОСЛЕДСТВИЯ: Не эффективное использование памяти для снижения нагрузки на диск' ; 
+		
+		part = part + 1 ;
+		SELECT fill_in_comprehensive_analysis_correlation('2.'||part||'. Корреляция: vmstat/buff(буферы) и iostat/wps(Количество операций записи в секунду)','vmstat/buff(буферы)', 'iostat/wps(Количество операций записи в секунду)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+		INTO report_str ; 
+		
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT result_str || report_str
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;
+	END IF ;
+	-- -- Корреляция: vmstat/buff(буферы) и iostat/wps(Количество операций записи в секунду)
+	----------------------------------------------------------------------------
 
-	result_str[line_count] = 'Корреляция LWLock и sy(system time):| ' ||
-	REPLACE ( TO_CHAR( ROUND( corr_lwlock_sy::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
-
-	IF corr_lwlock_sy <= 0 
-	THEN 
-		result_str[line_count] = 'OK: Корреляция LWLock и sy(system time) - отрицательная или отсутствует' ; 
-		line_count=line_count+1;				
-	ELSIF corr_lwlock_sy > 0.7 
-	THEN 
-		result_str[line_count] = 'ALARM : Очень высокая корреляция (LWLock-sy)' ; 
-		line_count=line_count+1;
-		---------------------------------------------------------------------------------------------
-		result_str[line_count] = 'Причины и последствия: ' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Высокая нагрузка на CPU из-за сложных запросов (агрегации, JOINs).' ;
-		line_count=line_count+1;
-		result_str[line_count] = 'Конкуренция за ресурсы CPU (например, из-за параллельных процессов).' ;
-		line_count=line_count+1;	
-		result_str[line_count] = 'Резкий рост sy может указывать на проблемы с системными вызовами (например, частое переключение контекста).';
-		line_count=line_count+1;		
-	ELSIF corr_lwlock_sy > 0.5 AND corr_lwlock_sy <= 0.7
+	----------------------------------------------------------------------------
+	-- Корреляция: vmstat/buff(буферы) и iostat/wMBps Скорость записи (МБ/с)
+	IF min_max_rec.min_memory_buff_long != min_max_rec.max_memory_buff_long AND 
+	   min_max_rec.min_dev_wps_long != min_max_rec.max_dev_wps_long
 	THEN 	
-		result_str[line_count] = 'WARNING : Высокая корреляция (LWLock-sy)' ; 
-		line_count=line_count+1;
-		---------------------------------------------------------------------------------------------
-		result_str[line_count] = 'Причины и последствия: ' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Высокая нагрузка на CPU из-за сложных запросов (агрегации, JOINs).' ;
-		line_count=line_count+1;
-		result_str[line_count] = 'Конкуренция за ресурсы CPU (например, из-за параллельных процессов).' ;
-		line_count=line_count+1;	
-		result_str[line_count] = 'Резкий рост sy может указывать на проблемы с системными вызовами (например, частое переключение контекста).';
-		line_count=line_count+1;				
-	ELSE
-		result_str[line_count] = 'INFO : Слабая или средняя корреляция (LWLock-sy)' ; 
-		line_count=line_count+1;
-		---------------------------------------------------------------------------------------------
-		result_str[line_count] = 'Причины и последствия: ' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Высокая нагрузка на CPU из-за сложных запросов (агрегации, JOINs).' ;
-		line_count=line_count+1;
-		result_str[line_count] = 'Конкуренция за ресурсы CPU (например, из-за параллельных процессов).' ;
-		line_count=line_count+1;
-		result_str[line_count] = 'Резкий рост sy может указывать на проблемы с системными вызовами (например, частое переключение контекста).';
-		line_count=line_count+1;				
-	END IF ; 
+		CALL truncate_time_series();
+		INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , memory_buff_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+		
+		INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , dev_wmbps_long 
+		FROM 	os_stat_iostat_device_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+				AND device = device_name ;
+		
+		SELECT * INTO correlation_rec FROM quick_significance_check();
+		
+		reason_casulas_list := '{}'::text[]; 				
+		reason_casulas_list[1] = 'ПОСЛЕДСТВИЯ: Не эффективное использование памяти для снижения нагрузки на диск' ; 
+		
+		part = part + 1 ;
+		SELECT fill_in_comprehensive_analysis_correlation('2.'||part||'. Корреляция: vmstat/buff(буферы) и iostat/wMBps Скорость записи (МБ/с)','vmstat/buff(буферы)', 'iostat/wMBps Скорость записи (МБ/с)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+		INTO report_str ; 
+		
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT result_str || report_str
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;
+	END IF ;
+	-- Корреляция: vmstat/buff(буферы) и iostat/wMBps Скорость записи (МБ/с)
+	----------------------------------------------------------------------------
+	
+	line_count=line_count+2;	
+	result_str[line_count] = '3. КЭШИРОВАНИЕ ВВОДА-ВЫВОДА' ; 
+	line_count=line_count+1;			
+	result_str[line_count] = 'cache - Объем памяти, используемый в качестве кэша страниц.' ; 
 	line_count=line_count+1;	
-	-- sy — system time
-	--------------------------------------------------------------------	
-	--Низкое значение id (idle time) при высоком us (user time) или sy (system time)
-	---------------------------------------------------------------------------
-	
-	
-	---------------------------------------------------------------------------
-	-- Высокие si, so (активный своппинг)	
-	--IO - si 
-		IF min_max_rec.min_vmstat_curr_io != min_max_rec.max_curr_io AND 
-		   min_max_rec.min_swap_si_long != min_max_rec.max_swap_si_long
-		THEN 
-			WITH 
-			io_values AS
-			(
-				SELECT 
-					cl.curr_timestamp , curr_io  AS curr_io 
-				FROM 
-					os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-				WHERE				
-					cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-					AND curr_io > 0 
-			) ,
-			swap_si_values AS
-			(
-				SELECT 
-					cl.curr_timestamp , swap_si_long  AS swap_si_long 
-				FROM 
-					os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-				WHERE				
-					cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-					AND swap_si_long > 0 					
-			) 
-			SELECT COALESCE( corr( v1.curr_io , v2.swap_si_long ) , 0 ) AS correlation_value 
-			INTO corr_io_si
-			FROM
-				io_values v1 JOIN swap_si_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-		ELSE
-			corr_io_si = 0 ;
-		END IF;
+	part = 0 ;
 
+	----------------------------------------------------------------------------
+	-- Корреляция: vmstat/cache(кэш) и iostat/rps(Количество операций чтения в секунду)
+	IF min_max_rec.min_memory_cache_long != min_max_rec.max_memory_cache_long AND 
+	   min_max_rec.min_dev_rps_long != min_max_rec.max_dev_rps_long
+	THEN 	
+		CALL truncate_time_series();
+		INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , memory_cache_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
 		
-		result_str[line_count] = 'Корреляция ожиданий IO и si (swap in): Объем данных, загружаемых с свопа в оперативную память: IO-si | ' ||
-		REPLACE ( TO_CHAR( ROUND( corr_io_si::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-		line_count=line_count+1;	
-
-		IF corr_io_si <= 0 
-		THEN 
-			result_str[line_count] = 'OK: Корреляция (IO-si)  - отрицательная или отсутствует' ; 
-			line_count=line_count+1;				
-		ELSIF corr_io_si > 0.7 
-		THEN 
-			result_str[line_count] = 'ALARM : Очень высокая корреляция (IO-si)' ; 
-			line_count=line_count+1;
-			---------------------------------------------------------------------------------------------
-			result_str[line_count] = 'Причины и последствия: ' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'Системе не хватает оперативной памяти. Данные, которые должны быть в кеше, вытесняются на медленный диск (своп),' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'что создает дополнительную дисковую нагрузку и увеличивает время чтения.' ; 
-			line_count=line_count+1;				
-			result_str[line_count] = 'Чтение страниц БД с диска, которые должны были быть в кеше, теперь требует еще и своппинга,' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'что создает двойную нагрузку на I/O и катастрофически замедляет работу.' ; 
-			line_count=line_count+1;	
-			---------------------------------------------------------------------------------------------	
-								
-		ELSIF corr_io_si > 0.5 AND corr_io_si <= 0.7
-		THEN 
-			result_str[line_count] = 'WARNING : Высокая корреляция (IO-si)' ; 
-			line_count=line_count+1;
-			---------------------------------------------------------------------------------------------
-			result_str[line_count] = 'Причины и последствия: ' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'Системе не хватает оперативной памяти. Данные, которые должны быть в кеше, вытесняются на медленный диск (своп),' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'что создает дополнительную дисковую нагрузку и увеличивает время чтения.' ; 
-			line_count=line_count+1;				
-			result_str[line_count] = 'Чтение страниц БД с диска, которые должны были быть в кеше, теперь требует еще и своппинга,' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'что создает двойную нагрузку на I/O и катастрофически замедляет работу.' ; 
-			line_count=line_count+1;	
-			---------------------------------------------------------------------------------------------						
-		ELSE
-			result_str[line_count] = 'INFO : Слабая или средняя корреляция (IO-si)' ; 
-			line_count=line_count+1;	
-
-			---------------------------------------------------------------------------------------------
-			result_str[line_count] = 'Причины и последствия: ' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'Системе не хватает оперативной памяти. Данные, которые должны быть в кеше, вытесняются на медленный диск (своп),' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'что создает дополнительную дисковую нагрузку и увеличивает время чтения.' ; 
-			line_count=line_count+1;				
-			result_str[line_count] = 'Чтение страниц БД с диска, которые должны были быть в кеше, теперь требует еще и своппинга,' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'что создает двойную нагрузку на I/O и катастрофически замедляет работу.' ; 
-			line_count=line_count+1;	
-			---------------------------------------------------------------------------------------------							
-		END IF;
-		line_count=line_count+1;
-		--------------------------------------------------------------------------------------------------------------------------
-	--IO - si 
-	------------------------------------------------------------------------------------------------------------------------------
-	--IO - so 
-		IF min_max_rec.min_vmstat_curr_io != min_max_rec.max_curr_io AND 
-		   min_max_rec.min_swap_so_long != min_max_rec.max_swap_so_long
-		THEN 
-			WITH 
-			io_values AS
-			(
-				SELECT 
-					cl.curr_timestamp , curr_io  AS curr_io 
-				FROM 
-					os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-				WHERE				
-					cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-					AND curr_io > 0 
-			) ,
-			swap_so_values AS
-			(
-				SELECT 
-					cl.curr_timestamp , swap_so_long  AS swap_so_long 
-				FROM 
-					os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
-				WHERE				
-					cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
-					AND swap_so_long > 0 					
-			) 
-			SELECT COALESCE( corr( v1.curr_io , v2.swap_so_long ) , 0 ) AS correlation_value 
-			INTO corr_io_so
-			FROM
-				io_values v1 JOIN swap_so_values v2 ON ( v1.curr_timestamp = v2.curr_timestamp ) ;
-		ELSE
-			corr_io_so = 0 ;
-		END IF;
+		INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , dev_rps_long 
+		FROM 	os_stat_iostat_device_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+				AND device = device_name ;
 		
-		result_str[line_count] = 'Корреляция ожиданий IO и si (swap in): Объем данных, загружаемых из оперативную память в своп: IO-so | ' ||
-		REPLACE ( TO_CHAR( ROUND( corr_io_so::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-		line_count=line_count+1;	
-
-		IF corr_io_so <= 0 
-		THEN 
-			result_str[line_count] = 'OK: Корреляция (IO-si)  - отрицательная или отсутствует' ; 
-			line_count=line_count+1;				
-		ELSIF corr_io_so > 0.7 
-		THEN 
-			result_str[line_count] = 'ALARM : Очень высокая корреляция (IO-si)' ; 
-			line_count=line_count+1;
-			---------------------------------------------------------------------------------------------
-			result_str[line_count] = 'Причины и последствия: ' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'Системе не хватает оперативной памяти. Данные, которые должны быть в кеше, вытесняются на медленный диск (своп),' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'что создает дополнительную дисковую нагрузку и увеличивает время чтения.' ; 
-			line_count=line_count+1;				
-			result_str[line_count] = 'Чтение страниц БД с диска, которые должны были быть в кеше, теперь требует еще и своппинга,' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'что создает двойную нагрузку на I/O и катастрофически замедляет работу.' ; 
-			line_count=line_count+1;	
-			---------------------------------------------------------------------------------------------	
-								
-		ELSIF corr_io_so > 0.5 AND corr_io_so <= 0.7
-		THEN 
-			result_str[line_count] = 'WARNING : Высокая корреляция (IO-si)' ; 
-			line_count=line_count+1;
-			---------------------------------------------------------------------------------------------
-			result_str[line_count] = 'Причины и последствия: ' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'Системе не хватает оперативной памяти. Данные, которые должны быть в кеше, вытесняются на медленный диск (своп),' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'что создает дополнительную дисковую нагрузку и увеличивает время чтения.' ; 
-			line_count=line_count+1;				
-			result_str[line_count] = 'Чтение страниц БД с диска, которые должны были быть в кеше, теперь требует еще и своппинга,' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'что создает двойную нагрузку на I/O и катастрофически замедляет работу.' ; 
-			line_count=line_count+1;	
-			---------------------------------------------------------------------------------------------						
-		ELSE
-			result_str[line_count] = 'INFO : Слабая или средняя корреляция (IO-si)' ; 
-			line_count=line_count+1;	
-
-			---------------------------------------------------------------------------------------------
-			result_str[line_count] = 'Причины и последствия: ' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'Системе не хватает оперативной памяти. Данные, которые должны быть в кеше, вытесняются на медленный диск (своп),' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'что создает дополнительную дисковую нагрузку и увеличивает время чтения.' ; 
-			line_count=line_count+1;				
-			result_str[line_count] = 'Чтение страниц БД с диска, которые должны были быть в кеше, теперь требует еще и своппинга,' ; 
-			line_count=line_count+1;	
-			result_str[line_count] = 'что создает двойную нагрузку на I/O и катастрофически замедляет работу.' ; 
-			line_count=line_count+1;	
-			---------------------------------------------------------------------------------------------							
-		END IF;
-		line_count=line_count+1;
-		--------------------------------------------------------------------------------------------------------------------------
-	--IO - so 
-	-- 2. Высокие si, so (активный своппинг)	
-	---------------------------------------------------------------------------
-
-	
-  return result_str ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_waitings_os_corr IS 'Корреляция ожиданий СУБД и метрик vmstat';
--- Корреляция ожиданий СУБД и метрик vmstat
--------------------------------------------------------------------------------
-
---------------------------------------------------------------------------------
--- wait_event_kb_functions.sql
--- version 3.0
---------------------------------------------------------------------------------
---
--- advice_for_wait_event  Получить ответ нейросети по данному событию ожидания
--- get_min_id_4_tmp_wait_events ПОЛУЧИТЬ МИНИМАЛЬНЫЙ id ИЗ tmp_wait_events
--- get_max_id_4_tmp_wait_events ПОЛУЧИТЬ МАКСИМАЛЬНЫЙ id ИЗ tmp_wait_events
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- Получить ответ нейросети по данному событию ожидания
-CREATE OR REPLACE FUNCTION advice_for_wait_event_by_id( curr_id integer) RETURNS text AS $$
-DECLARE 
-  request_text text ;
-  tmp_wait_events_rec record ;
-BEGIN
-	SELECT 
-		* 
-	INTO
-		tmp_wait_events_rec 
-	FROM 
-		tmp_wait_events
-	WHERE id = curr_id ; 
-	
-	IF tmp_wait_events_rec.id IS NULL 
-	THEN 
-		return 'NEW';
-	END IF ;
-
-	SELECT 
-		advice 
-	INTO 
-		request_text
-	FROM 
-		wait_event_knowledge_base
-	WHERE 
-		wait_event = tmp_wait_events_rec.wait_event ;	
-
-	IF request_text IS NULL 
-	THEN 
-		return 'NEW';
-	END IF ;
-
-  return request_text ;
-END
-$$ LANGUAGE plpgsql ;
-COMMENT ON FUNCTION advice_for_wait_event_by_id IS 'Получить ответ нейросети по данному событию ожидания';
--- Получить ответ нейросети по данному событию ожидания
--------------------------------------------------------------------------------
-
---------------------------------------------------------------------------------
--- ПОЛУЧИТЬ МИНИМАЛЬНЫЙ id ИЗ tmp_wait_events
-CREATE OR REPLACE FUNCTION get_min_id_4_tmp_wait_events( curr_wait_event_type text ) RETURNS integer AS $$
-DECLARE
-min_id integer ;
-BEGIN
-	SELECT MIN(id)
-	INTO min_id
-	FROM tmp_wait_events 
-	WHERE wait_event_type = curr_wait_event_type; 
-	
-	IF min_id IS NULL 
-	THEN 
-	 return 0;
-	END IF ;
-	
-	return min_id ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION get_min_id_4_tmp_wait_events IS 'ПОЛУЧИТЬ МИНИМАЛЬНЫЙ id ИЗ tmp_wait_events';
--- ПОЛУЧИТЬ МИНИМАЛЬНЫЙ id ИЗ tmp_wait_events
---------------------------------------------------------------------------------
-
---------------------------------------------------------------------------------
--- ПОЛУЧИТЬ МАКСИМАЛЬНЫЙ id ИЗ tmp_wait_events
-CREATE OR REPLACE FUNCTION get_max_id_4_tmp_wait_events( curr_wait_event_type text ) RETURNS integer AS $$
-DECLARE
-max_id integer ;
-BEGIN
-	SELECT MAX(id)
-	INTO max_id
-	FROM tmp_wait_events 
-	WHERE wait_event_type = curr_wait_event_type; 
-	
-	IF max_id IS NULL 
-	THEN 
-	 return 0;
-	END IF ;
-	
-	return max_id ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION get_max_id_4_tmp_wait_events IS 'ПОЛУЧИТЬ МАКСИМАЛЬНЫЙ id ИЗ tmp_wait_events';
--- ПОЛУЧИТЬ МАКСИМАЛЬНЫЙ id ИЗ tmp_wait_events
---------------------------------------------------------------------------------
-
-
--------------------------------------------------------------------------------------
--- wait_event_kb_tables.sql
--- version 3.0
--------------------------------------------------------------------------------------
--- База знаний по ответам нейросети на промпт 
--- Как снизить количество событий ожидания wait_event=XXX в СУБД PostgreSQL?
--------------------------------------------------------------------------------------
--- База знаний по ответам нейросети
-DROP TABLE IF EXISTS wait_event_knowledge_base ; 
-CREATE UNLOGGED TABLE wait_event_knowledge_base
-(  
-  wait_event text , --Событие ожидания
-  advice text       --Совет нейросети по снижению ожиданий
-);
-
-ALTER TABLE wait_event_knowledge_base ADD CONSTRAINT wait_event_knowledge_base_pk PRIMARY KEY (wait_event);
-
-COMMENT ON TABLE wait_event_knowledge_base IS 'База знаний по ответам нейросети';
-COMMENT ON COLUMN wait_event_knowledge_base.wait_event IS 'Событие ожидания ';
-COMMENT ON COLUMN wait_event_knowledge_base.advice IS 'Совет нейросети по снижению ожиданий ';
--- База знаний по ответам нейросети
--------------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------------
--- События ожидания в ходе выполнения отчета report_wait_event_for_pareto
-DROP TABLE IF EXISTS tmp_wait_events;
-CREATE UNLOGGED TABLE tmp_wait_events
-(
-	id integer PRIMARY KEY ,
-	wait_event_type text  , --тип ожидания
-	wait_event text         --событие ожидания
-);
-COMMENT ON TABLE tmp_wait_events IS 'События ожидания в ходе выполнения отчета report_wait_event_for_pareto';
-COMMENT ON COLUMN tmp_wait_events.wait_event_type IS 'тип ожидания';
-COMMENT ON COLUMN tmp_wait_events.wait_event IS 'событие ожидания';
--- События ожидания в ходе выполнения отчета report_wait_event_for_pareto
--------------------------------------------------------------------------------------
-
-----------------------------------------------------------------------------------
--- report_queryid_for_pareto_tables.sql
--- version 3.0
-----------------------------------------------------------------------------------
--- Таблицы для обеспечения отчета и семантического анализа SQL запросов нейросетью
-
---------------------------------------------------
--- SQL запросы по wait_event_type
-DROP TABLE IF EXISTS tmp_queryid_for_pareto ; 
-CREATE UNLOGGED TABLE tmp_queryid_for_pareto
-(
-	id integer PRIMARY KEY ,
-	wait_event_type text , 
-	queryid bigint  
-);
-
-COMMENT ON TABLE tmp_queryid_for_pareto IS 'База знаний по ответам нейросети';
-COMMENT ON COLUMN tmp_queryid_for_pareto.wait_event_type IS 'Тип события ожидания ';
-COMMENT ON COLUMN tmp_queryid_for_pareto.queryid IS 'id SQL запроса';	
--- SQL запросы по wait_event_type
---------------------------------------------------
-
---------------------------------------------------------------------------------
--- report_queryid_for_pareto_functions.sql
--- version 3.0
---------------------------------------------------------------------------------------------
--- Сервисные функции для обеспечения отчета и семантического анализа SQL запросов нейросетью
---
--- get_min_id_tmp_queryid  Минимальный id для заданного wait_event_type
--- get_max_id_tmp_queryid  Максимальный id для заданного wait_event_type
--- get_queryid_by_id       queryid по заданному индексу 
--- get_sql_by_queryid      текст SQL запроса по queryid
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- Минимальный id для заданного wait_event_type
-CREATE OR REPLACE FUNCTION get_min_id_tmp_queryid( curr_wait_event_type text ) RETURNS integer AS $$
-DECLARE
-min_id integer ;
-BEGIN
-	SELECT MIN(id)
-	INTO min_id
-	FROM tmp_queryid_for_pareto 
-	WHERE wait_event_type = curr_wait_event_type; 
-	
-	IF min_id IS NULL 
-	THEN 
-	 return 0;
-	END IF ;
-	
-	return min_id ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION get_min_id_tmp_queryid IS 'Минимальный id для заданного wait_event_type';
--- Минимальный id для заданного wait_event_type
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- Максимальный id для заданного wait_event_type
-CREATE OR REPLACE FUNCTION get_max_id_tmp_queryid( curr_wait_event_type text ) RETURNS integer AS $$
-DECLARE
-max_id integer ;
-BEGIN
-	SELECT MAX(id)
-	INTO max_id
-	FROM tmp_queryid_for_pareto 
-	WHERE wait_event_type = curr_wait_event_type; 
-	
-	IF max_id IS NULL 
-	THEN 
-	 return 0;
-	END IF ;
-	
-	return max_id ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION get_max_id_tmp_queryid IS 'Максимальный id для заданного wait_event_type';
--- Максимальный id для заданного wait_event_type
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- queryid по заданному индексу 
-CREATE OR REPLACE FUNCTION get_queryid_by_id( curr_id integer  ) RETURNS bigint AS $$
-DECLARE
-curr_queryid bigint ;
-BEGIN
-	SELECT queryid
-	INTO curr_queryid
-	FROM tmp_queryid_for_pareto 
-	WHERE id = curr_id; 
-
-	return curr_queryid ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION get_queryid_by_id IS 'queryid по заданному индексу ';
--- queryid по заданному индексу 
--------------------------------------------------------------------------------
-
-
--------------------------------------------------------------------------------
--- текст SQL запроса по queryid
-CREATE OR REPLACE FUNCTION get_sql_by_queryid( curr_queryid bigint  ) RETURNS text AS $$
-DECLARE
- sql_text text ;
-BEGIN
-	SELECT 
-		query 
-	INTO 
-		sql_text
-	FROM 
-		statement_stat_sql
-	WHERE 
-		queryid = curr_queryid;
+		SELECT * INTO correlation_rec FROM quick_significance_check();
 		
- return sql_text ;
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION get_sql_by_queryid IS 'текст SQL запроса по queryid';
--- текст SQL запроса по queryid
--------------------------------------------------------------------------------
-
-
---------------------------------------------------------------------------------
--- reports_io_performance.sql
--- version 6.0
---------------------------------------------------------------------------------
---
--- reports_io_performance IO-performance
---
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- Чек-лист IO
-CREATE OR REPLACE FUNCTION reports_io_performance( cpu_count integer , device_name text  , start_timestamp text , finish_timestamp text  ) RETURNS text[] AS $$
-DECLARE
- result_str text[] ;
- line_count integer ;
- min_timestamp timestamptz ; 
- max_timestamp timestamptz ; 
- 
- line_counter integer ; 
- counter integer;
-
- io_perf_rec record;  
- 
- speed_iops_corr DOUBLE PRECISION ;
- speed_mbps_corr DOUBLE PRECISION ; 
- delta_corr DOUBLE PRECISION ; 
- 
- 
- 
- 
- 
- 
-BEGIN
-	line_count = 1 ;
-	
-	
-	
-	
-	IF finish_timestamp = 'CURRENT_TIMESTAMP'
-	THEN 
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-
-		min_timestamp = max_timestamp - interval '1 hour'; 	
-	ELSE
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	min_timestamp ; 
+		reason_casulas_list := '{}'::text[]; 				
+		reason_casulas_list[1] = 'ПОСЛЕДСТВИЯ: Не эффективное использование памяти для снижения нагрузки на диск' ; 
 		
-		SELECT 	date_trunc('minute' ,  to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
+		part = part + 1 ;
+		SELECT fill_in_comprehensive_analysis_correlation( '3.'||part||'. Корреляция: vmstat/cache(кэш) и iostat/rps(Количество операций чтения в секунду)','vmstat/cache(кэш)', 'iostat/rps(Количество операций чтения в секунду)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+		INTO report_str ; 
+		
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT result_str || report_str
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;
 	END IF ;
+	-- Корреляция: vmstat/cache(кэш) и iostat/rps(Количество операций чтения в секунду)
+	----------------------------------------------------------------------------
 
+	----------------------------------------------------------------------------
+	-- Корреляция: vmstat/cache(кэш) и iostat/rMBps Скорость чтения (МБ/с)
+	IF min_max_rec.min_memory_cache_long != min_max_rec.max_memory_cache_long AND 
+	   min_max_rec.min_dev_rmbs_long != min_max_rec.max_dev_rmbs_long
+	THEN 	
+		CALL truncate_time_series();
+		INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , memory_cache_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+		
+		INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , dev_rmbs_long 
+		FROM 	os_stat_iostat_device_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+				AND device = device_name ;
+		
+		SELECT * INTO correlation_rec FROM quick_significance_check();
+		
+		reason_casulas_list := '{}'::text[]; 				
+		reason_casulas_list[1] = 'ПОСЛЕДСТВИЯ: Не эффективное использование памяти для снижения нагрузки на диск' ; 
+		
+		part = part + 1 ;
+		SELECT fill_in_comprehensive_analysis_correlation( '3.'||part||'. Корреляция: vmstat/cache(кэш) и iostat/rMBps Скорость чтения (МБ/с)','vmstat/cache(кэш)', 'iostat/rMBps Скорость чтения (МБ/с)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+		INTO report_str ; 
+		
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT result_str || report_str
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;
+	END IF ;
+	-- Корреляция: vmstat/cache(кэш) и iostat/rMBps Скорость чтения (МБ/с)
+	----------------------------------------------------------------------------
+	
+	----------------------------------------------------------------------------
+	-- Корреляция: vmstat/cache(кэш) и iostat/wps(Количество операций записи в секунду).
+	IF min_max_rec.min_memory_cache_long != min_max_rec.max_memory_cache_long AND 
+	   min_max_rec.min_dev_wps_long != min_max_rec.max_dev_wps_long
+	THEN 	
+		CALL truncate_time_series();
+		INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , memory_cache_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+		
+		INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , dev_wps_long 
+		FROM 	os_stat_iostat_device_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+				AND device = device_name ;
+		
+		SELECT * INTO correlation_rec FROM quick_significance_check();
+		
+		reason_casulas_list := '{}'::text[]; 				
+		reason_casulas_list[1] = 'ПОСЛЕДСТВИЯ: Не эффективное использование памяти для снижения нагрузки на диск' ; 
+		
+		part = part + 1 ;
+		SELECT fill_in_comprehensive_analysis_correlation( '3.'||part||'. Корреляция: vmstat/cache(кэш) и iostat/wps(Количество операций записи в секунду)','vmstat/cache(кэш)', 'iostat/wps(Количество операций записи в секунду)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+		INTO report_str ; 
+		
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT result_str || report_str
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;
+	END IF ;
+	-- -- Корреляция: vmstat/cache(кэш) и iostat/wps(Количество операций записи в секунду)
+	----------------------------------------------------------------------------
 
-	
-	result_str[line_count] = 'Производительность подсистемы IO' ; 
-	line_count=line_count+1;
-	
-	result_str[line_count] = 'DEVICE = '||device_name ; 
-	line_count=line_count+1;
+	----------------------------------------------------------------------------
+	-- Корреляция: vmstat/cache(кэш) и iostat/wMBps Скорость записи (МБ/с)
+	IF min_max_rec.min_memory_cache_long != min_max_rec.max_memory_cache_long AND 
+	   min_max_rec.min_dev_wps_long != min_max_rec.max_dev_wps_long
+	THEN 	
+		CALL truncate_time_series();
+		INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , memory_cache_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
 		
-	result_str[line_count] = 'CPU | '||cpu_count||'|' ;  
-	line_count=line_count+2;
-	
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+2; 
+		INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , dev_wmbps_long 
+		FROM 	os_stat_iostat_device_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+				AND device = device_name ;
 		
+		SELECT * INTO correlation_rec FROM quick_significance_check();
+		
+		reason_casulas_list := '{}'::text[]; 				
+		reason_casulas_list[1] = 'ПОСЛЕДСТВИЯ: Не эффективное использование памяти для снижения нагрузки на диск' ; 
+		
+		part = part + 1 ;
+		SELECT fill_in_comprehensive_analysis_correlation( '3.'||part||'. Корреляция: vmstat/cache(кэш) и iostat/wMBps Скорость записи (МБ/с)','vmstat/cache(кэш)', 'iostat/wMBps Скорость записи (МБ/с)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+		INTO report_str ; 
+		
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT result_str || report_str
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;
+	END IF ;
+	-- Корреляция: vmstat/cache(кэш) и iostat/wMBps Скорость записи (МБ/с)
+	----------------------------------------------------------------------------	
+	
+	line_count=line_count+2;	
+	result_str[line_count] = '4. КОРРЕЛЯЦИЯ ОПЕРАЦИОННОЙ СКОРОСТИ И МЕТРИК ПРОИЗВОДИТЕЛЬНОСТИ ДИСКОВОГО УСТРОЙСТВА' ; 
+	line_count=line_count+1;			
+	part = 0 ;
+	
 	-----------------------------------------------------------------------------
 	-- Корреляция операционная скорость - IOPS
-	SELECT COALESCE( corr( v1.curr_op_speed , v2.dev_rps_long + v2.dev_wps_long ) , 0 ) AS correlation_value 
-	INTO speed_iops_corr
-	FROM
-		cluster_stat_median v1 JOIN os_stat_iostat_device_median v2 ON ( v1.curr_timestamp = v2.curr_timestamp )
-	WHERE 	
-		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
-		AND v2.device = device_name ;
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT 	cl.curr_timestamp , memory_cache_long 
+	FROM 	os_stat_vmstat_median cl 
+	WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
 	
-	line_count=line_count+1;
-    result_str[line_count] = 'Корреляция операционная скорость - IOPS |' ||
-	REPLACE ( TO_CHAR( ROUND( speed_iops_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT 	cl.curr_timestamp , dev_rps_long + dev_wps_long 
+	FROM 	os_stat_iostat_device_median cl 
+	WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+			AND device = device_name ;
 	
-	IF speed_iops_corr >= 0.7
-	THEN 
-		result_str[line_count] = 'INFO: Очень высокая корреляция (speed - IOPS ).' ; 
-		line_count=line_count+1;		
-	ELSIF speed_iops_corr >= 0  AND speed_iops_corr < 0.7
-	THEN 
-		result_str[line_count] = 'WARNING: Слабая корреляция (speed - IOPS ).' ; 
-		line_count=line_count+1;		
-	ELSE
-		result_str[line_count] = 'ALARM: Отрицательная корреляция (speed - IOPS ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Производительность НЕ ограничена IO.' ; 
-		line_count=line_count+1;	
-		result_str[line_count] = 'Возможны  проблемы с CPU, блокировками, памятью' ; 
-		line_count=line_count+1;		
-	END IF;	
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+	
+	reason_casulas_list := '{}'::text[]; 	
+	reason_casulas_list[1] = 'Производительность НЕ ограничена IO.' ; 
+	reason_casulas_list[2] = 'Возможны  проблемы с CPU, блокировками, памятью' ; 
+	
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '4.'||part||'. Корреляция: ОПЕРАЦИОННАЯ СКОРОСТЬ и IOPS','ОПЕРАЦИОННАЯ СКОРОСТЬ', 'IOPS', -1 , reason_casulas_list ) --Анализируется отрицательная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;	
+	
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 	
+		speed_iops_corr = correlation_rec.correvation_value ;
+		IF correlation_rec.correvation_value < 0 
+		THEN 
+			result_str[line_count] = 'Производительность НЕ ограничена IO.' ; 
+			line_count=line_count+1;	
+			result_str[line_count] = 'Возможны  проблемы с CPU, блокировками, памятью' ; 
+			line_count=line_count+1;		
+		END IF;		
+	END IF;
 	-- Корреляция операционная скорость - IOPS
 	-----------------------------------------------------------------------------
 	
 	-----------------------------------------------------------------------------
 	-- Корреляция операционная скорость - MBps
-	SELECT COALESCE( corr( v1.curr_op_speed , v2.dev_rmbs_long + v2.dev_wmbps_long ) , 0 ) AS correlation_value 
-	INTO speed_mbps_corr
-	FROM
-		cluster_stat_median v1 JOIN os_stat_iostat_device_median v2 ON ( v1.curr_timestamp = v2.curr_timestamp )
-	WHERE 	
-		v1.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
-		AND v2.device = device_name ;
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT 	cl.curr_timestamp , memory_cache_long 
+	FROM 	os_stat_vmstat_median cl 
+	WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
 	
-	line_count=line_count+1;
-    result_str[line_count] = 'Корреляция операционная скорость - MB/s |' ||
-	REPLACE ( TO_CHAR( ROUND( speed_mbps_corr::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
-	line_count=line_count+1;	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT 	cl.curr_timestamp , dev_rmbs_long + dev_wmbps_long 
+	FROM 	os_stat_iostat_device_median cl 
+	WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+			AND device = device_name ;
 	
-	IF speed_mbps_corr >= 0.7
-	THEN 
-		result_str[line_count] = 'ALARM: Очень высокая корреляция (speed - MB/s ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Производительность ограничена пропускной способностью диска' ; 
-		line_count=line_count+1;
-	ELSIF speed_mbps_corr >= 0  AND speed_mbps_corr < 0.7
-	THEN 
-		result_str[line_count] = 'WARNING: Слабая корреляция (speed - MB/s ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Нагрузка чувствительна к объему передаваемых данных.' ; 
-		line_count=line_count+1;		
-	ELSE
-		result_str[line_count] = 'INFO: Отрицательная корреляция (speed - MB/s ).' ; 
-		line_count=line_count+1;
-		result_str[line_count] = 'Проблема не в пропускной способности диска.' ; 
-		line_count=line_count+1;			
-	END IF;	
-	line_count=line_count+1;			
-	-- Корреляция операционная скорость - MB/s
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+	
+	reason_casulas_list := '{}'::text[]; 	
+	
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '4.'||part||'. Корреляция: ОПЕРАЦИОННАЯ СКОРОСТЬ и MBps','ОПЕРАЦИОННАЯ СКОРОСТЬ', 'MBps', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;	
+	
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 	
+		speed_mbps_corr = correlation_rec.correvation_value ;
+		IF correlation_rec.correvation_value >= 0.7
+		THEN 
+			result_str[line_count] = 'ALARM: Очень высокая корреляция ОПЕРАЦИОННАЯ СКОРОСТЬ и MBps.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Производительность ограничена пропускной способностью диска' ; 
+			line_count=line_count+1;
+		ELSIF correlation_rec.correvation_value >= 0  AND correlation_rec.correvation_value < 0.7
+		THEN 
+			result_str[line_count] = 'WARNING: Слабая корреляция ОПЕРАЦИОННАЯ СКОРОСТЬ и MBps.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Нагрузка чувствительна к объему передаваемых данных.' ; 
+			line_count=line_count+1;		
+		ELSE
+			result_str[line_count] = 'INFO: Отрицательная корреляция ОПЕРАЦИОННАЯ СКОРОСТЬ и MBps.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Проблема не в пропускной способности диска.' ; 
+			line_count=line_count+1;			
+		END IF;	
+	END IF;
+
+	-- Корреляция операционная скорость - IOPS
 	-----------------------------------------------------------------------------
 	
 	-----------------------------------------------------------------------------
 	-- Сценарии нагрузки 
-	result_str[line_count] = 'Тип нагрузки ' ; 
+	line_count=line_count+1;
+	result_str[line_count] = 'ТИП НАГРУЗКИ ' ; 
 	line_count=line_count+1;
 	--Сценарий 1: Высокая корреляция по обоим показателям (r > 0.7)
 	IF speed_iops_corr >= 0.7 AND speed_mbps_corr >= 0.7
@@ -11647,40 +7189,3519 @@ BEGIN
 		result_str[line_count] = 'Однозначно не определен.' ; 
 		line_count=line_count+1;		
 	END IF ;
-	line_count=line_count+1;
+	line_count=line_count+1;	
 	
-	-- Сценарии нагрузки 
-	-----------------------------------------------------------------------------
-/*	
-	-----------------------------------------------------------------------------
-	--Характер нагрузки
-	line_count=line_count+1;
-	delta_corr = ABS( speed_iops_corr - speed_mbps_corr );
-	result_str[line_count] = 'Характер нагрузки' ; 
-	line_count=line_count+1;
 	
-	IF delta_corr >= 0.5 
-	THEN 
-		result_str[line_count] = 'Ярко выраженный: OLTP или OLAP' ; 
+	---------------------------------------------------------------------
+	-- Расчитать Матрицу для расчета Индекса Приоритета Корреляции (Correlation Priority Index, CPI)
+	CALL calculate_cpi_matrix();
+	-- Расчитать Матрицу для расчета Индекса Приоритета Корреляции (Correlation Priority Index, CPI)
+	---------------------------------------------------------------------
+	
+	line_count=line_count+2;
+	result_str[line_count] = 'ИНДЕКС ПРИОРИТЕТА КОРРЕЛЯЦИИ (Correlation Priority Index, CPI)';
+	line_count=line_count+1;
+	result_str[line_count] = 'КОРРЕЛИРУЕМЫЕ ЗНАЧЕНИЯ | CPI ';
+	line_count=line_count+1;
+	FOR cpi_matrix_rec IN 
+	SELECT * FROM cpi_matrix
+	ORDER BY curr_value DESC
+	LOOP 
+		result_str[line_count] = cpi_matrix_rec.current_pair||'|'|| REPLACE ( TO_CHAR( ROUND( cpi_matrix_rec.curr_value::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' );
 		line_count=line_count+1;
-	ELSIF delta_corr >= 0.3 AND delta_corr < 0.5
+	END LOOP ;
+	
+    
+
+
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION report_vmstat_iostat IS 'Корреляция метрик vmstat и iopstat';
+-- Корреляция метрик vmstat и iopstat
+-------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- report_vmstat_performance.sql
+-- version 7.0
+--------------------------------------------------------------------------------
+-- report_vmstat_performance.sql Статистика производительности vmstat
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Статистика производительности vmstat
+CREATE OR REPLACE FUNCTION report_vmstat_performance(  cluster_performance_start_timestamp text , cluster_performance_finish_timestamp text   ) RETURNS text[] AS $$
+DECLARE
+result_str text[] ;
+ line_count integer ;
+ min_timestamp timestamptz ; 
+ max_timestamp timestamptz ; 
+ 
+ counter integer ; 
+ min_max_rec record ;
+ line_counter integer ; 
+ 
+ least_squares_rec record ; 
+ corr_values   text[] ;
+ 
+ b_norm DOUBLE PRECISION;
+ K DOUBLE PRECISION;
+ trend_analysis   text[] ;
+BEGIN
+	line_count = 1 ;
+	
+	IF cluster_performance_finish_timestamp = 'CURRENT_TIMESTAMP'
 	THEN 
-		result_str[line_count] = 'Смешанная нагрузка ' ; 
-		line_count=line_count+1;
+		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+
+		min_timestamp = max_timestamp - interval '1 hour'; 	
 	ELSE
-		result_str[line_count] = 'Снижение производительности не вызвано IO' ; 
+		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	min_timestamp ; 
+		
+		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+	END IF ;
+	
+	result_str[line_count] = '2.ТРЕНДОВЫЙ АНАЛИЗ ПРОИЗВОДИТЕЛЬНОСТИ vmstat' ; 
+	line_count=line_count+1;
+	
+	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+1; 
+	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+2; 
+
+	----------------------------------------------------------------------------------------------------------------------------------------------	
+	-- Граничные значения и медиана 
+	SELECT 
+		MIN( cl.procs_r_long) AS min_procs_r_long, MAX( cl.procs_r_long) AS max_procs_r_long, (percentile_cont(0.5) within group (order by cl.procs_r_long))::numeric AS median_procs_r_long , 
+		MIN( cl.procs_b_long) AS min_procs_b_long, MAX( cl.procs_b_long) AS max_procs_b_long,  (percentile_cont(0.5) within group (order by cl.procs_b_long))::numeric AS median_procs_b_long , 
+		MIN( cl.cpu_wa_long) AS min_cpu_wa_long, MAX( cl.cpu_wa_long) AS max_cpu_wa_long, (percentile_cont(0.5) within group (order by cl.cpu_wa_long))::numeric AS median_cpu_wa_long , 
+		MIN( cl.cpu_id_long) AS min_cpu_id_long, MAX( cl.cpu_id_long) AS max_cpu_id_long, (percentile_cont(0.5) within group (order by cl.cpu_id_long))::numeric AS median_cpu_id_long  
+	INTO  	min_max_rec
+	FROM 
+		os_stat_vmstat_median cl 
+	WHERE 	
+		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	;
+		
+	
+	----------------------------------------------------------------------------------------------------		
+	--ГРАНИЧНЫЕ ЗНАЧЕНИЯ И МЕДИАНА
+    line_count=line_count+1; 
+	result_str[line_count] = 	'ГРАНИЧНЫЕ ЗНАЧЕНИЯ И МЕДИАНА|'||
+								'№'||'|'||		
+								'procs -> r '||'|'||
+								'procs -> b' ||'|'||
+								'cpu -> wa' ||'|'||
+								'cpu -> id' ||'|'
+									;							
+	line_count=line_count+1; 
+
+	result_str[line_count] = 	'MIN'||'|'||
+									1 ||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_procs_r_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_procs_b_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_cpu_wa_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.min_cpu_id_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
+									;							
+	line_count=line_count+1; 	
+
+	result_str[line_count] = 	'MEDIAN'||'|'||
+									' ' ||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.median_procs_r_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.median_procs_b_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.median_cpu_wa_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.median_cpu_id_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
+									;							
+	line_count=line_count+1; 	
+
+	
+	SELECT 
+		count(curr_timestamp)
+	INTO line_counter
+	FROM 
+		cluster_stat_median
+	WHERE 	
+		curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+			
+	result_str[line_count] = 	'MAX'||'|'||
+									line_counter||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_procs_r_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_procs_b_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_cpu_wa_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+									REPLACE ( TO_CHAR( ROUND( min_max_rec.max_cpu_id_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
+									;	
+	line_count=line_count+1;
+	result_str[line_count] = 'procs -> r: Количество процессов в очереди на выполнение.';
+	line_count=line_count+1;
+	result_str[line_count] = 'procs -> b: Количество процессов, находящихся в состоянии';
+	line_count=line_count+1;
+	result_str[line_count] = '  непрерываемого сна (обычно ожидание IO). ';
+	line_count=line_count+1;
+	result_str[line_count] = '  Рост b — прямой признак того, что процессы не могут продолжить работу.';
+	line_count=line_count+1;
+	result_str[line_count] = 'cpu -> wa: Процент простоя CPU в ожидании IO.';
+	line_count=line_count+1;
+	result_str[line_count] = 'cpu -> id: Процент полного простоя CPU ';
+	line_count=line_count+1;	
+	result_str[line_count] = '  (если id низкий, а ожиданий много — ';
+	line_count=line_count+1;	
+	result_str[line_count] = '  значит CPU занят обработкой других задач или переключениями).';
+	line_count=line_count+2;	
+	
+	--ГРАНИЧНЫЕ ЗНАЧЕНИЯ И МЕДИАНА
+	----------------------------------------------------------------------------------------------------------------------------------------------	
+/*
+1. Корректировка направления тренда
+В зависимости от того, какое изменение метрики считается ухудшением, введём скорректированный коэффициент наклона b′:
+Метрика						Ухудшение		Улучшение		Корректировка
+procs r (очередь на CPU)	рост (b>0)		снижение (b<0)	b′=b
+procs b (ожидание IO)		рост (b>0)		снижение (b<0)	b′=b
+cpu wa (ожидание IO)		рост (b>0)		снижение (b<0)	b′=b
+cpu id (простой CPU)		снижение(b<0)	рост (b>0)		b′=−b
+Таким образом, положительное значение b′ всегда соответствует ухудшению, отрицательное — улучшению.
+
+2. Учёт силы тренда
+Коэффициент детерминации R2 показывает, какая доля дисперсии объясняется линейной моделью, то есть силу (надёжность) тренда. 
+Чем выше R2, тем более выражен тренд.
+
+3. Итоговый коэффициент тренда
+Комбинируем скорректированный наклон и силу связи:
+K=b′×R2
+где:
+•	K — коэффициент тренда (положительный при ухудшении, отрицательный при улучшении);
+•	b′ — скорректированный наклон (в исходных единицах измерения метрики за шаг времени);
+•	R2 — коэффициент детерминации (от 0 до 1).
+Абсолютная величина ∣K∣∣K∣ характеризует выраженность тренда с учётом его статистической значимости: 
+даже большой наклон при низком R2 даст небольшой вклад, и наоборот.
+
+*/
+
+
+	------------------------------------------------------------------------------
+	-- procs -> r
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT cl.curr_timestamp , procs_r_long 
+	FROM   os_stat_vmstat_median cl 
+	WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+			
+	SELECT * INTO least_squares_rec FROM the_line_of_least_squares();	
+
+	line_count=line_count+1;
+	result_str[line_count] = 'procs -> r: Количество процессов в очереди на выполнение' ; 
+	line_count=line_count+1;
+    result_str[line_count] = 'ЛИНИЯ РЕГРЕССИИ по t: Y = a + bt ' ; 
+	line_count=line_count+1; 
+	result_str[line_count] = 'Коэффициент детерминации R^2 ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.current_r_squared::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 	
+	result_str[line_count] = 'угол наклона  ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.slope_angle_degrees::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 	
+	SELECT interpretation_r2_coefficient( least_squares_rec.current_r_squared::numeric ) 
+	INTO corr_values ; 
+	result_str[line_count] = corr_values[1] ; 
+	line_count=line_count+1;
+	result_str[line_count] = corr_values[2] ; 
+	line_count=line_count+1;
+	result_str[line_count] = corr_values[3] ; 
+	line_count=line_count+1;	
+	--------------------------------------------
+	-- Тренд
+		b_norm = least_squares_rec.slope_angle_degrees ;		
+		IF least_squares_rec.slope_angle_degrees > 0 
+		THEN 
+			result_str[line_count] = 'Негативный тренд (ухудшение)';
+			line_count=line_count+1;
+		ELSIF least_squares_rec.slope_angle_degrees < 0 
+		THEN 
+			result_str[line_count] = 'Позитивный тренд (улучшение)';
+			line_count=line_count+1;			
+		ELSE 
+			result_str[line_count] = 'Тренд отсутствует';
+			line_count=line_count+1;			
+			b_norm = 0 ;
+		END IF ;
+		K = b_norm * least_squares_rec.current_r_squared ;
+
+		SELECT interpretation_K_coefficient( K )		
+		INTO trend_analysis;
+		
+		SELECT result_str || trend_analysis
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;	
+
+		IF K >= 20.0
+		THEN 
+			result_str[line_count] = 'РЕКОМЕНДУЕМЫЕ МЕРОПРИЯТИЯ' ;
+			line_count=line_count+1;	
+			result_str[line_count] = 'Проверить загрузку процессора, выявить процессы-потребители, проанализировать планировщик.' ; 
+			line_count=line_count+1;			
+		END IF ;
+	-- Тренд
+	--------------------------------------------
+	
+	
+	
+-- procs -> r
+	------------------------------------------------------------------------------
+	
+	------------------------------------------------------------------------------
+	-- procs -> b
+	line_count=line_count+1;	
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT cl.curr_timestamp , procs_b_long 
+	FROM   os_stat_vmstat_median cl 
+	WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+			
+	SELECT * INTO least_squares_rec FROM the_line_of_least_squares();	
+
+	line_count=line_count+1;
+	result_str[line_count] = 'procs -> b: Количество процессов, находящихся в состоянии';
+	line_count=line_count+1;
+	result_str[line_count] = '  непрерываемого сна (обычно ожидание IO). ';	
+	line_count=line_count+1; 
+    result_str[line_count] = 'ЛИНИЯ РЕГРЕССИИ по t: Y = a + bt ' ; 
+	line_count=line_count+1; 
+	result_str[line_count] = 'Коэффициент детерминации R^2 ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.current_r_squared::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 	
+	result_str[line_count] = 'угол наклона  ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.slope_angle_degrees::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 	
+	SELECT interpretation_r2_coefficient( least_squares_rec.current_r_squared::numeric ) 
+	INTO corr_values ; 
+	result_str[line_count] = corr_values[1] ; 
+	line_count=line_count+1;
+	result_str[line_count] = corr_values[2] ; 
+	line_count=line_count+1;
+	result_str[line_count] = corr_values[3] ; 
+	line_count=line_count+1;	
+	--------------------------------------------
+	-- Тренд
+		b_norm = least_squares_rec.slope_angle_degrees ;		
+		IF least_squares_rec.slope_angle_degrees > 0 
+		THEN 
+			result_str[line_count] = 'Негативный тренд (ухудшение)';
+			line_count=line_count+1;
+		ELSIF least_squares_rec.slope_angle_degrees < 0 
+		THEN 
+			result_str[line_count] = 'Позитивный тренд (улучшение)';
+			line_count=line_count+1;			
+		ELSE 
+			result_str[line_count] = 'Тренд отсутствует';
+			line_count=line_count+1;			
+			b_norm = 0 ;
+		END IF ;
+		K = b_norm * least_squares_rec.current_r_squared ; 
+
+		SELECT interpretation_K_coefficient( K )		
+		INTO trend_analysis;
+		
+		SELECT result_str || trend_analysis
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;	
+
+		IF K >= 20.0
+		THEN 
+			result_str[line_count] = 'РЕКОМЕНДУЕМЫЕ МЕРОПРИЯТИЯ' ;
+			line_count=line_count+1;	
+			result_str[line_count] = 'Исследовать дисковую подсистему (iostat, iotop), проверить наличие медленных устройств, конфликтов ввода-вывода.' ; 
+			line_count=line_count+1;			
+		END IF ;
+		
+		
+	-- Тренд
+	--------------------------------------------
+	
+	-- procs -> b
+	------------------------------------------------------------------------------
+	
+
+	------------------------------------------------------------------------------
+	-- cpu -> wa
+	line_count=line_count+1;	
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT cl.curr_timestamp , cpu_wa_long 
+	FROM   os_stat_vmstat_median cl 
+	WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+			
+	SELECT * INTO least_squares_rec FROM the_line_of_least_squares();	
+
+	line_count=line_count+1;
+	result_str[line_count] = 'cpu -> wa: Процент простоя CPU в ожидании IO.';
+	line_count=line_count+1;
+	result_str[line_count] = 'ЛИНИЯ РЕГРЕССИИ по t: Y = a + bt ' ; 
+	line_count=line_count+1; 
+	result_str[line_count] = 'Коэффициент детерминации R^2 ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.current_r_squared::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 	
+	result_str[line_count] = 'угол наклона  ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.slope_angle_degrees::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 	
+	SELECT interpretation_r2_coefficient( least_squares_rec.current_r_squared::numeric ) 
+	INTO corr_values ; 
+	result_str[line_count] = corr_values[1] ; 
+	line_count=line_count+1;
+	result_str[line_count] = corr_values[2] ; 
+	line_count=line_count+1;
+	result_str[line_count] = corr_values[3] ; 
+	line_count=line_count+1;	
+	--------------------------------------------
+	-- Тренд
+		b_norm = least_squares_rec.slope_angle_degrees ;		
+		IF least_squares_rec.slope_angle_degrees > 0 
+		THEN 
+			result_str[line_count] = 'Негативный тренд (ухудшение)';
+			line_count=line_count+1;
+		ELSIF least_squares_rec.slope_angle_degrees < 0 
+		THEN 
+			result_str[line_count] = 'Позитивный тренд (улучшение)';
+			line_count=line_count+1;			
+		ELSE 
+			result_str[line_count] = 'Тренд отсутствует';
+			line_count=line_count+1;			
+			b_norm = 0 ;
+		END IF ;
+		K = b_norm * least_squares_rec.current_r_squared ; 
+		
+		SELECT interpretation_K_coefficient( K )		
+		INTO trend_analysis;
+		
+		SELECT result_str || trend_analysis
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;	
+		
+		IF K >= 20.0
+		THEN 
+			result_str[line_count] = 'РЕКОМЕНДУЕМЫЕ МЕРОПРИЯТИЯ' ;
+			line_count=line_count+1;	
+			result_str[line_count] = 'Исследовать дисковую подсистему (iostat, iotop), проверить наличие медленных устройств, конфликтов ввода-вывода.' ; 
+			line_count=line_count+1;		
+			result_str[line_count] = 'Дополнительно проверить файловые системы, swap.' ; 
+			line_count=line_count+1;		
+		END IF ;
+		
+	-- Тренд
+	--------------------------------------------
+	
+	-- cpu -> wa
+	------------------------------------------------------------------------------
+	
+	------------------------------------------------------------------------------
+	-- cpu -> id
+	line_count=line_count+1;	
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT cl.curr_timestamp , cpu_id_long 
+	FROM   os_stat_vmstat_median cl 
+	WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+			
+	SELECT * INTO least_squares_rec FROM the_line_of_least_squares();	
+
+	line_count=line_count+1;
+	result_str[line_count] = 'cpu -> id: Процент полного простоя CPU.';
+	line_count=line_count+1;
+	result_str[line_count] = 'ЛИНИЯ РЕГРЕССИИ по t: Y = a + bt ' ; 
+	line_count=line_count+1; 
+	result_str[line_count] = 'Коэффициент детерминации R^2 ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.current_r_squared::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 	
+	result_str[line_count] = 'угол наклона  ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.slope_angle_degrees::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1; 	
+	SELECT interpretation_r2_coefficient( least_squares_rec.current_r_squared::numeric ) 
+	INTO corr_values ; 
+	result_str[line_count] = corr_values[1] ; 
+	line_count=line_count+1;
+	result_str[line_count] = corr_values[2] ; 
+	line_count=line_count+1;
+	result_str[line_count] = corr_values[3] ; 
+	line_count=line_count+1;	
+	--------------------------------------------
+	-- Тренд
+		b_norm = -least_squares_rec.slope_angle_degrees ;
+		IF least_squares_rec.slope_angle_degrees > 0 
+		THEN			
+			result_str[line_count] = 'Позитивный тренд (улучшение)';
+			line_count=line_count+1;
+		ELSIF least_squares_rec.slope_angle_degrees < 0 
+		THEN 
+			result_str[line_count] = 'Негативный тренд (ухудшение)';
+			line_count=line_count+1;			
+		ELSE 
+			result_str[line_count] = 'Тренд отсутствует';
+			line_count=line_count+1;			
+			b_norm = 0 ;
+		END IF ;
+		K = b_norm * least_squares_rec.current_r_squared ; 
+		
+		SELECT interpretation_K_coefficient( K )		
+		INTO trend_analysis;
+		
+		SELECT result_str || trend_analysis
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;
+		
+		IF K >= 20.0
+		THEN 
+			result_str[line_count] = 'РЕКОМЕНДУЕМЫЕ МЕРОПРИЯТИЯ' ;
+			line_count=line_count+1;	
+			result_str[line_count] = 'Проверить, не связано ли с уменьшением полезной работы.' ; 
+			line_count=line_count+1;		
+		END IF ;
+		
+		
+	-- Тренд
+	--------------------------------------------	
+	-- cpu -> id
+	------------------------------------------------------------------------------
+		
+
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION report_vmstat_performance IS 'Статистика производительности vmstat';
+-- Статистика производительности vmstat
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- report_wait_event_type_for_pareto.sql
+-- version 7.0
+--------------------------------------------------------------------------------
+--
+-- report_wait_event_type_for_pareto Диаграмма Парето по wait_event_type
+--
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
+-- Сформировать диаграмму Парето по wait_event
+CREATE OR REPLACE FUNCTION report_wait_event_type_for_pareto(  start_timestamp text , finish_timestamp text ) RETURNS text[] AS $$
+DECLARE
+ result_str text[] ;
+ line_count integer ;
+ min_timestamp timestamptz ; 
+ max_timestamp timestamptz ;   
+ wait_event_queryid_rec record ;
+ wait_event_type_rec record ;
+ wait_event_rec record ;
+ 
+ 
+ sql_stats_history_rec record ;  
+ 
+ query_min_timestamp timestamptz ; 
+ query_max_timestamp timestamptz ; 
+ total_wait_event_count integer ;
+ pct_for_80 numeric ;
+ 
+ report_wait_event_for_pareto text[];
+ report_wait_event_for_pareto_count integer ;
+ index_for_wait_event integer ;
+ 
+ corr_bufferpin DOUBLE PRECISION ; 
+ corr_extension DOUBLE PRECISION ; 
+ corr_io DOUBLE PRECISION ; 
+ corr_ipc DOUBLE PRECISION ; 
+ corr_lock DOUBLE PRECISION ; 
+ corr_lwlock DOUBLE PRECISION ; 
+ corr_timeout DOUBLE PRECISION ; 
+ 
+ wait_event_type_corr_rec  record ; 
+  
+ tmp_wait_event_type_corr_index integer ; 
+ 	
+ wait_event_type_counter integer ; 
+ wait_event_type_Pi_rec record ; 
+BEGIN
+	line_count = 1 ;
+	
+	result_str[line_count] = '4. ДИАГРАММА ПАРЕТО ПО WAIT_EVENT';	
+	line_count=line_count+1;
+	
+	
+	SELECT date_trunc( 'minute' , to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) )
+	INTO    min_timestamp ; 
+  
+	SELECT date_trunc( 'minute' , to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) )
+	INTO    max_timestamp ; 
+	
+	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+1; 
+	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+2; 
+
+	result_str[line_count] =' WAIT_EVENT_TYPE  '||'|'||
+							' WAIT_EVENT  '||'|'||
+							' COUNT '||'|' ||
+							' PCT '||'|' 
+							;	
+	line_count=line_count+1;
+	
+	wait_event_type_counter = 1 ;
+	FOR wait_event_type_Pi_rec IN 
+	SELECT * 
+	FROM wait_event_type_Pi
+	WHERE integral_priority > 0 
+	ORDER BY integral_priority DESC 	
+	LOOP
+		
+		
+
+		
+		pct_for_80 = 0;
+		
+		FOR wait_event_rec IN 
+		SELECT 	
+			wait_event , 
+			SUM(curr_value_long) AS count
+		FROM 	
+			statement_stat_waitings_median
+		WHERE 
+			curr_timestamp  BETWEEN min_timestamp AND max_timestamp
+			AND wait_event_type = wait_event_type_Pi_rec.wait_event_type 
+		GROUP BY 
+			wait_event
+		ORDER BY 
+			2 desc 
+		LOOP	
+			WITH report_wait_event_for_pareto AS
+			(
+			SELECT 	
+				wait_event , 			
+				SUM(curr_value_long) AS counter 
+			FROM 	
+				statement_stat_waitings_median
+			WHERE 
+				curr_timestamp  BETWEEN min_timestamp AND max_timestamp
+				AND wait_event_type = wait_event_type_Pi_rec.wait_event_type
+			GROUP BY 				
+				wait_event
+			)
+			SELECT SUM(counter) 
+			INTO total_wait_event_count 
+			FROM report_wait_event_for_pareto ; 
+			
+			IF pct_for_80 = 0 
+			THEN 
+				pct_for_80 = (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric ; 
+			ELSE
+			    pct_for_80 = pct_for_80 + (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric ; 
+			END IF;
+			
+			result_str[line_count] =  wait_event_type_Pi_rec.wait_event_type  ||'|'||
+			                          wait_event_rec.wait_event  ||'|'||
+									  wait_event_rec.count  ||'|'||
+									  REPLACE ( TO_CHAR( ROUND( (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ||'|'
+									  ;
+			line_count=line_count+1; 
+			
+			IF pct_for_80 > 80.0 
+			THEN 
+				EXIT;
+			END IF;
+			
+		END LOOP ; --FOR wait_event_rec IN 
+	END LOOP ; --FOR wait_event_type_Pi_rec IN 
+	
+
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION report_queryid_for_pareto IS 'Сформировать диаграмму Парето по wait_event_type';
+-- Сформировать диаграмму Парето по wait_event_type
+-------------------------------------------------------------------------------
+
+	
+
+
+	
+--------------------------------------------------------------------------------
+-- report_wait_event_type_vmstat.sql
+-- version 7.0
+--------------------------------------------------------------------------------
+-- report_wait_event_type_vmstat.sql КОРРЕЛЯЦИЯ И ПРИЧИННОСТЬ ОЖИДАНИЙ СУБД и vmstat
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Статистика производительности vmstat
+CREATE OR REPLACE FUNCTION report_wait_event_type_vmstat(  cpu_count integer ,  ram_all integer  , cluster_performance_start_timestamp text , cluster_performance_finish_timestamp text   ) RETURNS text[] AS $$
+DECLARE
+result_str text[] ;
+ line_count integer ;
+ min_timestamp timestamptz ; 
+ max_timestamp timestamptz ; 
+ 
+ counter integer ; 
+ min_max_rec record ;
+ line_counter integer ; 
+
+ wait_event_type_Pi_rec record;
+ correlation_rec record ; 
+ corr_values text[];
+ report_str text[];
+ correlation_regression_flags_rec record ; 
+ 
+ subpart_counter integer ; 
+ part integer ;
+ reason_casulas_list text[];
+ 
+ r_pct DOUBLE PRECISION;
+ cs_pct DOUBLE PRECISION;
+ sy_pct DOUBLE PRECISION;
+ 
+ us_sy_pct DOUBLE PRECISION ; 
+  
+ timestamp_counter integer ;
+ 
+ free_pct DOUBLE PRECISION;
+ si_pct DOUBLE PRECISION;
+ so_pct DOUBLE PRECISION;
+ 
+ b_pct DOUBLE PRECISION;
+ wa_pct DOUBLE PRECISION;
+ 
+ shared_blks_read_write_ratio DOUBLE PRECISION ;
+ hit_ratio_rec  record ; 
+ 
+ dirty_percent_rec record ; 
+ dirty_bg_percent_rec record ; 
+ available_mem_mb_rec record ; 
+ dirty_kb_long_rec record;
+ 
+ temp_txt text;
+ 
+ cpi_matrix_rec record ; 
+ 
+BEGIN
+	line_count = 1 ;
+	
+	part = 0 ;
+ 
+ 
+	IF cluster_performance_finish_timestamp = 'CURRENT_TIMESTAMP'
+	THEN 
+		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+
+		min_timestamp = max_timestamp - interval '1 hour'; 	
+	ELSE
+		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	min_timestamp ; 
+		
+		SELECT 	date_trunc('minute' ,  to_timestamp( cluster_performance_finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
+		INTO 	max_timestamp ; 
+	END IF ;
+	
+	--Очистить таблицу для расчета Индекса Приоритета Корреляции (Correlation Priority Index, CPI) .
+	TRUNCATE TABLE cpi_matrix;
+
+	
+	result_str[line_count] = '3. СТАТИСТИЧЕСКИЙ АНАЛИЗ ОЖИДАНИЙ СУБД и МЕТРИК vmstat' ; 
+	line_count=line_count+1;
+	
+	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	line_count=line_count+1; 
+	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
+	
+	line_count=line_count+2; 
+	
+	result_str[line_count] = 'CPU = '||cpu_count; 
+	line_count=line_count+1;
+	result_str[line_count] = 'RAM ='||ROUND((ram_all::numeric / 1024::numeric),3)||'(GB)'; 
+	line_count=line_count+2;
+	
+	----------------------------------------------------------------------------------------------------------------------------------------------	
+	-- Граничные значения и медиана 
+	SELECT 
+		MIN( cl.procs_r_long) AS min_procs_r_long , MAX( cl.procs_r_long) AS max_procs_r_long , (percentile_cont(0.5) within group (order by cl.procs_r_long))::numeric AS median_procs_r_long , 
+		MIN( cl.procs_b_long) AS min_procs_b_long , MAX( cl.procs_b_long) AS max_procs_b_long , (percentile_cont(0.5) within group (order by cl.procs_b_long))::numeric AS median_procs_b_long , 		
+		MIN( cl.memory_swpd_long) AS min_memory_swpd_long , MAX( cl.memory_swpd_long) AS max_memory_swpd_long ,  (percentile_cont(0.5) within group (order by cl.memory_swpd_long))::numeric AS median_memory_swpd_long ,
+		MIN( cl.memory_free_long) AS min_memory_free_long, MAX( cl.memory_free_long) AS max_memory_free_long ,  (percentile_cont(0.5) within group (order by cl.memory_free_long))::numeric AS median_memory_free_long ,
+		MIN( cl.memory_buff_long) AS min_memory_buff_long , MAX( cl.memory_buff_long) AS max_memory_buff_long ,  (percentile_cont(0.5) within group (order by cl.memory_buff_long))::numeric AS median_memory_buff_long ,
+		MIN( cl.memory_cache_long) AS min_memory_cache_long , MAX( cl.memory_cache_long) AS max_memory_cache_long ,  (percentile_cont(0.5) within group (order by cl.memory_cache_long))::numeric AS median_memory_cache_long ,
+		MIN( cl.swap_si_long) AS min_swap_si_long , MAX( cl.swap_si_long) AS max_swap_si_long ,  (percentile_cont(0.5) within group (order by cl.swap_si_long))::numeric AS median_swap_si_long ,
+		MIN( cl.swap_so_long) AS min_swap_so_long , MAX( cl.swap_so_long) AS max_swap_so_long , (percentile_cont(0.5) within group (order by cl.swap_so_long))::numeric AS median_swap_so_long ,
+		MIN( cl.io_bi_long) AS min_io_bi_long , MAX( cl.io_bi_long) AS max_io_bi_long , (percentile_cont(0.5) within group (order by cl.io_bi_long))::numeric AS median_io_bi_long ,
+		MIN( cl.io_bo_long) AS min_io_bo_long , MAX( cl.io_bo_long) AS max_io_bo_long , (percentile_cont(0.5) within group (order by cl.io_bo_long))::numeric AS median_io_bo_long ,
+		MIN( cl.system_in_long) AS min_system_in_long , MAX( cl.system_in_long) AS max_system_in_long , (percentile_cont(0.5) within group (order by cl.system_in_long))::numeric AS median_system_in_long ,
+		MIN( cl.system_cs_long) AS min_system_cs_long , MAX( cl.system_cs_long) AS max_system_cs_long , (percentile_cont(0.5) within group (order by cl.system_cs_long))::numeric AS median_system_cs_long ,
+		MIN( cl.cpu_us_long) AS min_cpu_us_long , MAX( cl.cpu_us_long) AS max_cpu_us_long , (percentile_cont(0.5) within group (order by cl.cpu_us_long))::numeric AS median_cpu_us_long ,
+		MIN( cl.cpu_sy_long) AS min_cpu_sy_long , MAX( cl.cpu_sy_long) AS max_cpu_sy_long , (percentile_cont(0.5) within group (order by cl.cpu_sy_long))::numeric AS median_cpu_sy_long ,
+		MIN( cl.cpu_id_long) AS min_cpu_id_long , MAX( cl.cpu_id_long) AS max_cpu_id_long , (percentile_cont(0.5) within group (order by cl.cpu_id_long))::numeric AS median_cpu_id_long ,
+		MIN( cl.cpu_wa_long) AS min_cpu_wa_long , MAX( cl.cpu_wa_long) AS max_cpu_wa_long , (percentile_cont(0.5) within group (order by cl.cpu_wa_long))::numeric AS median_cpu_wa_long ,
+		MIN( cl.cpu_st_long) AS min_cpu_st_long , MAX( cl.cpu_st_long) AS max_cpu_st_long , (percentile_cont(0.5) within group (order by cl.cpu_st_long))::numeric AS median_cpu_st_long 
+	INTO  	min_max_rec
+	FROM 
+		os_stat_vmstat_median cl 
+	WHERE 	
+		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	;	
+
+    line_count=line_count+1;
+	result_str[line_count] = 	'ГРАНИЧНЫЕ ЗНАЧЕНИЯ И МЕДИАНА|'||	
+								'№'||'|'||									
+								'procs_r' ||'|'||
+								'procs_b ' ||'|'||
+								'memory_swpd ' ||'|'||
+								'memory_free ' ||'|'||
+								'memory_buff ' ||'|'||
+								'memory_cache ' ||'|'||
+								'swap_si ' ||'|' ||
+								'swap_so ' ||'|' ||
+								'io_bi ' ||'|' ||
+								'io_bo ' ||'|' ||
+								'system_in ' ||'|' ||
+								'system_cs ' ||'|' ||
+								'cpu_us ' ||'|' ||
+								'cpu_sy ' ||'|' ||
+								'cpu_id ' ||'|' ||
+								'cpu_wa ' ||'|' ||
+								'cpu_st ' ||'|' 
+								;							
+	line_count=line_count+1; 
+	
+	result_str[line_count] = 	'MIN'||'|'||
+								1 ||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_procs_r_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_procs_b_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_memory_swpd_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_memory_free_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_memory_buff_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_memory_cache_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_swap_si_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_swap_so_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_io_bi_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_io_bo_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_system_in_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_system_cs_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_cpu_us_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_cpu_sy_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_cpu_id_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_cpu_wa_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.min_cpu_st_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
+								;							
+	line_count=line_count+1; 
+	
+	result_str[line_count] = 	'MEDIAN'||'|'||
+								' ' ||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_procs_r_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_procs_b_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_memory_swpd_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_memory_free_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_memory_buff_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_memory_cache_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_swap_si_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_swap_so_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_io_bi_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_io_bo_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_system_in_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_system_cs_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_cpu_us_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_cpu_sy_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_cpu_id_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_cpu_wa_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.median_cpu_st_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
+								;							
+	line_count=line_count+1; 
+	
+	SELECT 
+		count(curr_timestamp)
+	INTO line_counter
+	FROM 
+		cluster_stat_median cl
+	WHERE 	
+		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	
+	result_str[line_count] = 	'MAX'||'|'||
+								line_counter||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_procs_r_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_procs_b_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_memory_swpd_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_memory_free_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_memory_buff_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_memory_cache_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_swap_si_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_swap_so_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_io_bi_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_io_bo_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_system_in_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_system_cs_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_cpu_us_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_cpu_sy_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_cpu_id_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_cpu_wa_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'||
+								REPLACE ( TO_CHAR( ROUND( min_max_rec.max_cpu_st_long::numeric , 0 ) , '000000000000D0000') , '.' , ',' )||'|'
+								;	
+	line_count=line_count+1; 								
+	-- Граничные значения и медиана 		
+	----------------------------------------------------------------------------------------------------------------------------------------------	
+	
+	SELECT 
+		count(curr_timestamp)
+	INTO line_counter
+	FROM 
+		cluster_stat_median cl
+	WHERE 	
+		cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	line_count=line_count+1; 								
+	result_str[line_count] = 'ОТНОСИТЕЛЬНЫЕ ПОКАЗАТЕЛИ vmstat' ; 
+	line_count=line_count+1;		
+		
+		
+	---------------------------------------------------------------------------
+	--us + sy > 80%	
+	WITH 
+	  cpu_counter AS
+	  (
+		SELECT count(*) AS total_counter
+		FROM 
+			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
+		WHERE				
+			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+			AND (cpu_us_long + cpu_sy_long ) > 80
+	  ) 
+	SELECT 
+		(total_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
+	INTO
+		us_sy_pct
+	FROM cpu_counter ;
+	
+	result_str[line_count] = 'us(user time) + sy(system time) (% свыше 80%) | '|| REPLACE ( TO_CHAR( ROUND( us_sy_pct::numeric , 2 ) , '000000000000D0000' ) , '.' , ',' )  ; 
+	line_count=line_count+1;
+	
+	IF us_sy_pct >= 25.0 
+	THEN 
+		IF us_sy_pct >= 50.0 
+		THEN 
+			result_str[line_count] = 'ALARM: более 50% тестового периода' ; 
+			line_count=line_count+1;		
+		ELSE
+			result_str[line_count] = 'WARNING: 25-50% тестового периода' ; 
+			line_count=line_count+1;
+		END IF ;
+		result_str[line_count] = 'Высокая нагрузка на CPU из-за сложных запросов (агрегации, JOINs).';
+		line_count=line_count+1;
+		result_str[line_count] = 'Конкуренция за ресурсы CPU (например, из-за параллельных процессов).';
+		line_count=line_count+1;
+		result_str[line_count] = 'Резкий рост sy может указывать на проблемы с системными вызовами';
+		line_count=line_count+1;		
+		result_str[line_count] = '(например, частое переключение контекста).';
+		line_count=line_count+1;		
+	ELSE
+		result_str[line_count] = 'OK: менее 25% тестового периода' ; 
+		line_count=line_count+1;		
+	END IF;
+		
+	-----------------------------------------------------------------------------
+	--r — процессы в run queue (готовы к выполнению)(% превышение CPU)
+	WITH 
+	  cpu_counter AS
+	  (
+		SELECT count(*) AS total_counter
+		FROM 
+			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
+		WHERE				
+			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+			AND procs_r_long > cpu_count
+	  ) 
+	SELECT 
+		(total_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
+	INTO
+		r_pct
+	FROM cpu_counter ;
+
+	line_count=line_count+1;
+	result_str[line_count] = 'r — процессы в run queue (готовы к выполнению): % превышения ядер CPU | '|| REPLACE ( TO_CHAR( ROUND( r_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
+	line_count=line_count+1;
+	
+	IF r_pct < 25.0 
+	THEN 
+		result_str[line_count] = 'OK: менее 25% тестового периода - очередь процессов превышает количество ядер CPU' ; 
+		line_count=line_count+1;
+	ELSIF r_pct > 25.0 AND r_pct <= 50.0
+	THEN 
+		result_str[line_count] = 'WARNING: 25-50% тестового периода - очередь процессов превышает количество ядер CPU' ; 
+		line_count=line_count+1;
+	ELSE 
+		result_str[line_count] = 'ALARM: более 50% тестового периода - очередь процессов превышает количество ядер CPU' ; 
+		line_count=line_count+1;
+	END IF ;	
+	--r — процессы в run queue (готовы к выполнению)(% превышение CPU)
+	-----------------------------------------------------------------------------
+
+	
+	-----------------------------------------------------------------------------
+	-- sy — system time(% превышение 30%)
+	WITH 
+	  sy_counter AS
+	  (
+		SELECT count(*) AS total_sy_counter
+		FROM 
+			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
+		WHERE				
+			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+			AND cpu_sy_long > 30
+	  ) 
+	SELECT 
+		(total_sy_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
+	INTO
+		sy_pct
+	FROM sy_counter ;
+
+	line_count=line_count+1;
+	result_str[line_count] = 'sy — system time: % превышение 30% | '|| REPLACE ( TO_CHAR( ROUND( sy_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
+	line_count=line_count+1;
+	
+	IF sy_pct < 25.0 
+	THEN 
+		result_str[line_count] = 'OK: менее 25% тестового периода - доля system time  превышает 30%' ; 
+		line_count=line_count+1;
+	ELSIF sy_pct > 25.0 AND sy_pct <= 50.0
+	THEN 
+		result_str[line_count] = 'WARNING: 25-50% тестового периода - доля system time превышает 30%' ; 
+		line_count=line_count+1;
+	ELSE 
+		result_str[line_count] = 'ALARM: более 50% тестового периода - доля system time превышает 30%' ; 
+		line_count=line_count+1;
+	END IF ;
+	-- sy — system time(% превышение 30%)
+	----------------------------------------------------------------------------
+	
+	-----------------------------------------------------------------------------
+	--free — свободная RAM менее 5%
+	WITH 
+	  free_counter AS
+	  (
+		SELECT count(*) AS total_counter
+		FROM 
+			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
+		WHERE				
+			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+			AND memory_free_long::numeric < ( ram_all::numeric * 0.05::numeric )
+	  ) 
+	SELECT 
+		(total_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
+	INTO
+		free_pct
+	FROM free_counter ;
+
+	result_str[line_count] = 'free — свободная RAM  (% менее 5%) | '|| REPLACE ( TO_CHAR( ROUND( free_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
+	line_count=line_count+1;
+	
+	IF free_pct < 25.0 
+	THEN 
+		result_str[line_count] = 'OK: менее 25% тестового периода - свободная RAM менее 5%' ; 
+		line_count=line_count+1;
+	ELSIF free_pct > 25.0 AND free_pct <= 50.0
+	THEN 
+		result_str[line_count] = 'WARNING: 25-50% тестового периода - свободная RAM менее 5%' ; 
+		line_count=line_count+1;
+	ELSE 
+		result_str[line_count] = 'ALARM: более 50% тестового периода - свободная RAM менее 5%' ; 
+		line_count=line_count+1;
+	END IF ;	
+	--free — свободная RAM
+	-----------------------------------------------------------------------------	
+	
+	-----------------------------------------------------------------------------
+	--swap_si -- si — swap in (из swap в RAM) > 0 
+	WITH 
+	  si_counter AS
+	  (
+		SELECT count(*) AS total_counter
+		FROM 
+			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
+		WHERE				
+			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+			AND swap_si_long > 0 
+	  ) 
+	SELECT 
+		(total_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
+	INTO
+		si_pct
+	FROM si_counter ;
+
+	line_count=line_count+1;
+	result_str[line_count] = 'swap in (% тестового периода) | '|| REPLACE ( TO_CHAR( ROUND( si_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
+	line_count=line_count+1;
+	
+	IF si_pct = 0 
+	THEN 
+		result_str[line_count] = 'ОК : Свопинг в RAM не используется' ; 
+		line_count=line_count+1;	
+	ELSIF si_pct < 25.0 
+	THEN 
+		result_str[line_count] = 'INFO: менее 25% тестового периода - используется cвопинг в RAM' ; 
+		line_count=line_count+1;
+	ELSIF si_pct > 25.0 AND si_pct <= 50.0
+	THEN 
+		result_str[line_count] = 'WARNING: 25-50% тестового периода - используется cвопинг в RAM' ;
+		line_count=line_count+1;
+	ELSE 
+		result_str[line_count] = 'ALARM : более 50% тестового периода - используется cвопинг в RAM' ;
+		line_count=line_count+1;
+	END IF ;	
+	--swap_si -- si — swap in (из swap в RAM) > 0 
+	-----------------------------------------------------------------------------
+	
+	-----------------------------------------------------------------------------
+	--so — swap out (из RAM в swap) > 0
+	WITH 
+	  so_counter AS
+	  (
+		SELECT count(*) AS total_counter
+		FROM 
+			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
+		WHERE				
+			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+			AND swap_so_long > 0 
+	  ) 
+	SELECT 
+		(total_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
+	INTO
+		so_pct
+	FROM so_counter ;
+
+	line_count=line_count+1;
+	result_str[line_count] = 'swap out (% тестового периода) | '|| REPLACE ( TO_CHAR( ROUND( so_pct::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )  ; 
+	line_count=line_count+1;
+	
+	IF so_pct = 0 
+	THEN 
+		result_str[line_count] = 'ОК : Свопинг из RAM не используется' ; 
+		line_count=line_count+1;	
+	ELSIF so_pct < 25.0 
+	THEN 
+		result_str[line_count] = 'INFO: менее 25% тестового периода - используется cвопинг из RAM' ; 
+		line_count=line_count+1;
+	ELSIF so_pct > 25.0 AND so_pct <= 50.0
+	THEN 
+		result_str[line_count] = 'WARNING: 25-50% тестового периода - используется cвопинг из RAM' ;
+		line_count=line_count+1;
+	ELSE 
+		result_str[line_count] = 'ALARM : более 50% тестового периода - используется cвопинг из RAM' ;
+		line_count=line_count+1;
+	END IF ;	
+	--so — swap out (из RAM в swap) > 0
+	-----------------------------------------------------------------------------	
+	
+	----------------------------------------------------------------------------
+	-- wa(ожидание IO)
+	WITH 
+	  wa_counter AS
+	  (
+		SELECT count(*) AS total_wa_counter
+		FROM 
+			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)			
+		WHERE				
+			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+			AND cpu_wa_long > 10
+	  ) 
+	SELECT 
+		(total_wa_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
+	INTO
+		wa_pct
+	FROM wa_counter ;
+
+	line_count=line_count+1;
+	result_str[line_count] = 'wa(ожидание IO) свыше 10% | '|| REPLACE ( TO_CHAR( ROUND( wa_pct::numeric , 2 ) , '000000000000D0000' ) , '.' , ',' )  ; 
+	line_count=line_count+1;
+	
+	IF wa_pct < 25.0 
+	THEN 
+		result_str[line_count] = 'OK: менее 25% тестового периода - wa > 10%' ; 
+		line_count=line_count+1;
+	ELSIF wa_pct > 25.0 AND wa_pct <= 50.0
+	THEN 
+		result_str[line_count] = 'WARNING: 25-50% тестового периода - wa > 10%' ; 
+		line_count=line_count+1;
+	ELSE 
+		result_str[line_count] = 'ALARM: более 50% тестового периода - wa > 10%' ; 
+		line_count=line_count+1;
+	END IF ;
+	-- wa(ожидание IO)
+	----------------------------------------------------------------------------
+
+    -----------------------------------------------------------------------------
+	--b — процессы в uninterruptible sleep (обычно ждут IO)(% превышение CPU)
+	WITH 
+	  cpu_counter AS
+	  (
+		SELECT count(*) AS total_counter
+		FROM 
+			os_stat_vmstat_median cl JOIN cluster_stat_median cl_w ON ( cl.curr_timestamp = cl_w.curr_timestamp)
+		WHERE				
+			cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp 
+			AND procs_b_long > cpu_count
+	  ) 
+	SELECT 
+		(total_counter::DOUBLE PRECISION / line_counter::DOUBLE PRECISION)*100.0 
+	INTO
+		b_pct
+	FROM cpu_counter ;
+	
+	line_count=line_count+1;
+	result_str[line_count] = 'b(процессы в uninterruptible sleep): % превышения ядер CPU | '|| REPLACE ( TO_CHAR( ROUND( b_pct::numeric , 2 ) , '000000000000D0000' ) , '.' , ',' )  ; 
+	line_count=line_count+1;
+	
+	IF b_pct < 25.0 
+	THEN 
+		result_str[line_count] = 'OK: менее 25% тестового периода - b(процессы в uninterruptible sleep) превышает количество ядер CPU' ; 
+		line_count=line_count+1;
+	ELSIF b_pct > 25.0 AND b_pct <= 50.0
+	THEN 
+		result_str[line_count] = 'WARNING: 25-50% тестового периода - b(процессы в uninterruptible sleep) превышает количество ядер CPU' ; 
+		line_count=line_count+1;
+	ELSE 
+		result_str[line_count] = 'ALARM: более 50% тестового периода - b(процессы в uninterruptible sleep) превышает количество ядер CPU' ; 
+		line_count=line_count+1;
+	END IF ;	
+	--b — процессы в uninterruptible sleep (обычно ждут IO)(% превышение CPU)
+	-----------------------------------------------------------------------------	
+
+
+	-----------------------------------------------------------------------------------------------------------------------
+	--ЧАСТЬ-1. АНАЛИЗ ОЖИДАНИЙ СУБД и МЕТРИК vmstat
+	
+	
+	line_count=line_count+1;
+	result_str[line_count] = 'ЧАСТЬ-1. АНАЛИЗ ОЖИДАНИЙ СУБД и МЕТРИК vmstat' ; 
+	line_count=line_count+1;
+	
+	FOR wait_event_type_Pi_rec IN 
+	SELECT *
+	FROM wait_event_type_Pi
+	WHERE integral_priority > 0 
+	ORDER BY integral_priority DESC	
+	LOOP
+		part = part + 1 ;	
+		result_str[line_count] = '1.'||part||'. '||wait_event_type_Pi_rec.wait_event_type ||'(ИНТЕГРАЛЬНЫЙ ПРИОРИТЕТ) | '|| REPLACE ( TO_CHAR( ROUND( wait_event_type_Pi_rec.integral_priority::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' );
+		line_count=line_count+1;
+			
+		
+		---------------------------------------------------------------
+		--2х этапный метод статистического анализа 
+		CALL truncate_time_series();
+		subpart_counter = 0 ;
+		
+		-------------------------------------------------------
+		-- BufferPin
+		IF wait_event_type_Pi_rec.wait_event_type = 'BufferPin'
+		THEN 
+			INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+			SELECT curr_timestamp , curr_bufferpin
+			FROM  cluster_stat_median 
+			WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;		
+			
+			
+			
+			result_str[line_count] = 'ПРИРОДА ОЖИДАНИЯ: Процесс ждет доступа к блоку данных, ' ; 
+			line_count=line_count+1;
+			result_str[line_count] = ' который в данный момент изменяется другим процессом (пингуется). ' ; 
+			line_count=line_count+1;
+			result_str[line_count] = ' Конкуренция за буферный кеш. Вероятны сбросы "грязных" страниц на диск.' ; 
+			line_count=line_count+1;
+			
+			--bo (Block Out): Блоки, отправленные на дисковые устройства.
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , io_bo_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????
+				reason_casulas_list[1] = '*INFO: Всплески этого показателя могут коррелировать с моментом,' ; 
+				reason_casulas_list[2] = ' когда фоновые процессы записывают буферы на диск,' ; 
+				reason_casulas_list[3] = ' вызывая задержки снятия пинов.' ; 
+				
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: BufferPin и bo(блоки, записанные на устройства)' , 'BufferPin', 'bo(блоки, записанные на устройства)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+				
+
+			--bo (Block Out): Блоки, отправленные на дисковые устройства.
+
+			--swpd (Swap Used): Объем используемого свопа.
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , memory_swpd_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Если памяти не хватает и буферный кеш страдает,' ; 
+				reason_casulas_list[2] = '  это косвенно влияет на конкуренцию за буферы.' ; 
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: BufferPin и swpd(объём свопа)' , 'BufferPin', 'swpd(объём свопа)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+
+
+			--swpd (Swap Used): Объем используемого свопа.
+			
+			
+		END IF ;
+		-- BufferPin
+		-------------------------------------------------------
+		
+		-------------------------------------------------------
+		-- Extension
+		IF wait_event_type_Pi_rec.wait_event_type = 'Extension'
+		THEN 
+			INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+			SELECT curr_timestamp , curr_extension
+			FROM  cluster_stat_median 
+			WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+			
+			result_str[line_count] = 'ПРИРОДА ОЖИДАНИЯ: Процесс ожидает события, управляемого кодом расширения ' ; 
+			line_count=line_count+1;			
+			result_str[line_count] = ' (например, выполнения внешнего скрипта, вызова API, блокировки внутри расширения). ' ; 
+			line_count=line_count+1;			
+			result_str[line_count] = '  Такие ожидания не являются частью ядра PostgreSQL и могут быть вызваны любой активностью,' ; 
+			line_count=line_count+1;
+			result_str[line_count] = '   которую реализует расширение.' ; 
+			line_count=line_count+1;
+			
+			--cs(переключения контекста)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , system_cs_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Если расширение использует межпроцессное взаимодействие ' ; 
+				reason_casulas_list[2] = ' (например, расширение, общающееся с внешним сервисом через сокеты)' ; 
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: Extension и cs(переключения контекста)' , 'Extension', 'cs(переключения контекста)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+			--cs(переключения контекста)
+			
+			--in — прерывания
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , system_in_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Если расширение использует межпроцессное взаимодействие  ' ; 
+				reason_casulas_list[2] = ' (например, расширение, общающееся с внешним сервисом через сокеты)' ; 
+				
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: Extension и in(прерывания)' , 'Extension', 'in(прерывания)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+			--in — прерывания		
+
+			--us(user time)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , cpu_us_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Если расширение потребляет много процессорного времени ' ; 
+				reason_casulas_list[2] = '(например, выполнение сложных вычислений внутри расширения)' ; 
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: Extension и us(user time)' , 'Extension', 'us(user time)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+
+			--us(user time)		
+
+			--sy(system time)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , cpu_sy_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Если расширение потребляет много процессорного времени ' ; 
+				reason_casulas_list[2] = '(например, выполнение сложных вычислений внутри расширения)' ; 
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: Extension и sy(system time)' , 'Extension', 'sy(system time)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+			--us(user time)		
+		
+		END IF ;
+		-- Extension
+		-------------------------------------------------------
+		
+		-------------------------------------------------------
+		-- IO
+		IF wait_event_type_Pi_rec.wait_event_type = 'IO'
+		THEN 			
+			INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+			SELECT curr_timestamp , curr_io
+			FROM  cluster_stat_median 
+			WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+			
+			result_str[line_count] = 'ПРИРОДА ОЖИДАНИЯ: Процесс ждет завершения операции ввода-вывода' ; 
+			line_count=line_count+1;	
+			result_str[line_count] = ' (чтения страницы с диска или записи на диск). Наиболее "дисковый" тип ожидания. ' ; 
+			line_count=line_count+1;	
+			result_str[line_count] = ' Наиболее "дисковый" тип ожидания. ' ; 
+			line_count=line_count+1;	
+			
+			
+			--bi (Blocks In): Блоки, поступившие с диска. Рост bi при появлении событий IO указывает на чтение данных, которых не было в кеше.
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , io_bi_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Рост bi указывает на чтение данных, которых не было в кеше. ' ; 
+				
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: IO и bi(блоки, считанные с устройств)' , 'IO', 'bi(блоки, считанные с устройств)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+
+			--bi (Blocks In): Блоки, поступившие с диска. Рост bi при появлении событий IO указывает на чтение данных, которых не было в кеше.
+		
+			--bo (Blocks Out): Блоки, отправленные на диск. Указывает на сброс "грязных" страниц (checkpointer, bgwriter).
+				line_count=line_count+1;	
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , io_bo_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Указывает на сброс "грязных" страниц (checkpointer, bgwriter).' ; 
+				
+				
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: IO и bo(блоки, записанные на устройства)' , 'IO', 'bo(блоки, записанные на устройства)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+
+			--bo (Blocks Out): Блоки, отправленные на диск. Указывает на сброс "грязных" страниц (checkpointer, bgwriter).
+			
+			--wa: Процент времени CPU, потраченного на ожидание IO
+				line_count=line_count+1;	
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , cpu_wa_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+			
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Рост ожиданий завершения операций IO' ; 
+			
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: IO и wa(ожидание IO)' , 'IO', 'wa(ожидание IO)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+
+			--wa: Процент времени CPU, потраченного на ожидание IO
+		END IF ;
+		-- IO
+		-------------------------------------------------------
+		
+		-------------------------------------------------------
+		-- IPC
+		IF wait_event_type_Pi_rec.wait_event_type = 'IPC'
+		THEN 
+			INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+			SELECT curr_timestamp , curr_ipc
+			FROM  cluster_stat_median 
+			WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+			
+			result_str[line_count] = 'ПРИРОДА ОЖИДАНИЯ: Межпроцессное взаимодействие (Inter-Process Communication).' ; 
+			line_count=line_count+1;	
+			result_str[line_count] = ' Обычно это ожидание ответа от фоновых процессов ' ; 
+			line_count=line_count+1;	
+			result_str[line_count] = ' (например, WalWriter при отправке синхронной репликации) или сигналов.' ; 
+			line_count=line_count+1;	
+			
+			--cs(переключения контекста)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , system_cs_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Высокое число cs часто сопровождает интенсивный обмен ' ;
+				reason_casulas_list[2] = ' сигналами между процессами PostgreSQL.' ; 
+				reason_casulas_list[3] = '  Рост cs на фоне роста IPC ожиданий — маркер проблемы.' ; 
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: IPC и cs(переключения контекста)' , 'IPC', 'cs(переключения контекста)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+
+			--cs(переключения контекста)
+
+			--in(прерывания)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , system_in_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO:  Может указывать на активность сети или таймеров. ' ;
+				
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: IPC и in(прерывания)' , 'IPC', 'in(прерывания)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+			--in(прерывания)			
+			
+			--sy(system time)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , cpu_sy_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Обработка IPC требует системных вызовов, что увеличивает sy.' ;
+				
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: IPC и sy(system time)' , 'IPC', 'sy(system time)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+			--in(прерывания)						
+		
+		END IF ;
+		-- IPC
+		-------------------------------------------------------
+		
+		-------------------------------------------------------
+		-- Lock
+		IF wait_event_type_Pi_rec.wait_event_type = 'Lock'
+		THEN 
+			INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+			SELECT curr_timestamp , curr_lock
+			FROM  cluster_stat_median 
+			WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+			result_str[line_count] = 'ПРИРОДА ОЖИДАНИЯ: Ожидание получения обычной блокировки транзакций' ; 
+			line_count=line_count+1;	
+			result_str[line_count] = ' (например, блокировка строки или таблицы другим процессом). ' ; 
+			line_count=line_count+1;	
+			result_str[line_count] = '  Это логическая блокировка, а не физическая.' ; 
+			line_count=line_count+1;	
+			
+			--r(процессы в run queue)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , procs_r_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Количество процессов, ожидающих выполнения на CPU.' ;
+				reason_casulas_list[2] = ' Если много процессов заблокированы (Lock) и ждут снятия блокировки, они не потребляют CPU, ' ; 
+				reason_casulas_list[3] = ' но висят в очереди. Высокое r при низком us/sy может указывать на то, ' ; 
+				reason_casulas_list[4] = ' что потоки простаивают из-за блокировок.' ; 
+				
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: Lock и r(процессы в run queue)' , 'Lock', 'r(процессы в run queue)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+			--r(процессы в run queue)
+
+			--us(user time)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , cpu_us_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Падение us при росте Lock ожиданий — признак простоя.' ;
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: Lock и us(user time)' , 'Lock', 'us(user time)', -1 , reason_casulas_list ) --Анализируется отрицательная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+			--us(user time)
+		END IF ;
+		-- Lock
+		-------------------------------------------------------
+		
+		-------------------------------------------------------
+		-- LWLock
+		IF wait_event_type_Pi_rec.wait_event_type = 'LWLock'
+		THEN 
+			INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+			SELECT curr_timestamp , curr_lwlock
+			FROM  cluster_stat_median 
+			WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+			result_str[line_count] = 'ПРИРОДА ОЖИДАНИЯ: Легковесная блокировка (Lightweight Lock). ' ; 
+			line_count=line_count+1;	
+			result_str[line_count] = ' Защита структур данных в общей памяти (например, буферного кеша, clog).' ; 
+			line_count=line_count+1;	
+			result_str[line_count] = ' Тесно связана с ядром СУБД.' ; 
+			line_count=line_count+1;	
+			
+			--cs(переключения контекста)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , system_cs_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Интенсивная борьба за LWLocks приводит к частой смене активных процессов.' ;
+				
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: LWLock и cs(переключения контекста)' , 'LWLock', 'cs(переключения контекста)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+			--cs(переключения контекста)
+			
+			--sy(system time)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , cpu_sy_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Управление LWLocks осуществляется через системные примитивы синхронизации, что требует времени ядра.' ;
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: LWLock и sy(system time)' , 'LWLock', 'sy(system time)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+				
+			--sy(system time)			
+
+			--swap out (из RAM в swap)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , swap_so_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Если начинаются проблемы с памятью и структуры в shared buffers начинают вытесняться (своп),' ;
+				reason_casulas_list[2] = '  борьба за LWLock может усилиться.' ;
+				
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: LWLock и swap out (из RAM в swap)' , 'LWLock', 'swap out (из RAM в swap)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+
+			--swap out (из RAM в swap)			
+
+			--swap in (из swap в RAM)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , swap_si_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Если начинаются проблемы с памятью и структуры в shared buffers начинают вытесняться (своп),' ;
+				reason_casulas_list[2] = '  борьба за LWLock может усилиться.' ;
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: LWLock и swap in (из swap в RAM' , 'LWLock', 'swap in (из swap в RAM)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+			--swap in (из swap в RAM)			
+		
+		END IF ;
+		-- LWLock
+		-------------------------------------------------------
+		
+		-------------------------------------------------------
+		-- Timeout
+		IF wait_event_type_Pi_rec.wait_event_type = 'Timeout'
+		THEN 
+			INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+			SELECT curr_timestamp , curr_timeout
+			FROM  cluster_stat_median 
+			WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+			result_str[line_count] = 'ПРИРОДА ОЖИДАНИЯ: Процесс приостановлен на заданный интервал ' ; 
+			line_count=line_count+1;	
+			result_str[line_count] = ' (например, при выполнении pg_sleep или внутренних периодических проверок). ' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Эти ожидания, как правило, не создают высокой нагрузки на систему, ' ; 
+			line_count=line_count+1;
+			result_str[line_count] = ' если они не становятся чрезмерно частыми.' ; 
+			line_count=line_count+2;			
+			
+			--in(прерывания)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , system_in_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Таймеры генерируют прерывания, поэтому аномальный рост in' ;
+				reason_casulas_list[2] = '   может указывать на слишком большое количество запланированных таймеров ' ;
+				
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: Timeout и in(прерывания)' , 'Timeout', 'in(прерывания)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+			--in(прерывания)			
+
+			--cs(переключения контекста)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , system_cs_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Пробуждение процессов по таймеру увеличивает число переключений контекста.' ;
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: Timeout и cs(переключения контекста)' , 'Timeout', 'cs(переключения контекста)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+			--cs(переключения контекста)			
+/*			
+			result_str[line_count] = 'Timeout/SpinDelay' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'wait_event=SpinDelay (циклическое ожидание блокировки) – наиболее критично для производительности.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'ПРИРОДА ОЖИДАНИЯ: Процесс активно «крутится» в цикле (spin), ожидая освобождения легковесной блокировки (LWLock).' ; 
+			line_count=line_count+1;
+			result_str[line_count] = ' В отличие от обычного ожидания, при spin-цикле процессор не переключается на другую задачу, а постоянно проверяет состояние блокировки,' ; 
+			line_count=line_count+1;
+			result_str[line_count] = '  что приводит к высокому потреблению CPU и увеличению времени отклика. ' ; 
+			line_count=line_count+1;
+			result_str[line_count] = ' Часто возникает при интенсивной конкуренции за общие структуры данных (например, буферный кеш, clog).' ; 
+			line_count=line_count+1;
+			result_str[line_count] = ' Часто возникает при интенсивной конкуренции за общие структуры данных (например, буферный кеш, clog).' ; 
+			line_count=line_count+1;
+			result_str[line_count] = ' Почему SpinDelay наиболее критичен?' ; 
+			line_count=line_count+1;
+			result_str[line_count] = ' В отличие от Timeout, который обычно не создаёт нагрузки, spin-циклы утилизируют процессор,' ; 
+			line_count=line_count+1;
+			result_str[line_count] = '  снижая пропускную способность системы. Длительные spin-ожидания могут привести к исчерпанию CPU,' ; 
+			line_count=line_count+1;
+			result_str[line_count] = '  росту очередей и значительному падению производительности СУБД.' ; 
+			line_count=line_count+1;
+*/			
+
+
+			--sy(system time)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , cpu_sy_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Увеличивается из-за системных вызовов, связанных с синхронизацией.' ;
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: Timeout и sy(system time)' , 'Timeout', 'sy(system time)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+			--sy(system time)		
+
+			--r(процессы в run queue)
+				TRUNCATE TABLE second_time_series ; 
+				INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+				SELECT curr_timestamp , procs_r_long
+				FROM  os_stat_vmstat_median 
+				WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+				
+				reason_casulas_list := '{}'::text[]; --??????				
+				reason_casulas_list[1] = '*INFO: Увеличивается из-за системных вызовов, связанных с синхронизацией.' ;
+				
+
+				subpart_counter = subpart_counter + 1 ;
+				SELECT fill_in_comprehensive_analysis_correlation( '1.'||part||'.'||subpart_counter||'. Корреляция: Timeout и r(процессы в run queue)' , 'Timeout', 'r(процессы в run queue)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+				INTO report_str ; 
+				
+				SELECT result_str || report_str
+				INTO result_str ; 
+				SELECT array_append( result_str , ' ')
+				INTO result_str ;
+				SELECT array_length( result_str , 1 )
+				INTO line_count;	
+			--r(процессы в run queue)	
+		END IF ;
+		-- Timeout
+		-------------------------------------------------------
+		
+		--2х этапный метод статистического анализа 
+		---------------------------------------------------------------	
+		line_count=line_count+1;			
+	END LOOP ;
+	--ЧАСТЬ-1. АНАЛИЗ ОЖИДАНИЙ СУБД и МЕТРИК vmstat
+	-----------------------------------------------------------------------------------------------------------------------
+
+
+	-----------------------------------------------------------------------------------------------------------------
+	--ЧАСТЬ-2. АНАЛИЗ МЕТРИК vmstat
+	line_count=line_count+1;
+	result_str[line_count] = 'ЧАСТЬ-2. АНАЛИЗ МЕТРИК vmstat' ; 
+	line_count=line_count+1;
+    part = 0;	
+	subpart_counter = 0 ;	
+		
+	----------------------------------------------------------------------------
+	--1. КОРРЕЛЯЦИЯ system_cs system_in		
+	IF min_max_rec.min_system_cs_long != min_max_rec.max_system_cs_long AND 
+	   min_max_rec.min_system_in_long != min_max_rec.max_system_in_long
+	THEN
+		CALL truncate_time_series();
+		INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , system_cs_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+		
+		INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , system_in_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+		
+		reason_casulas_list := '{}'::text[]; --??????				
+		reason_casulas_list[1] = '*INFO: Переключения контекста могут быть вызваны прерываниями.' ;
+		
+		part = part + 1 ;
+		SELECT fill_in_comprehensive_analysis_correlation( '2.'||part||'. Корреляция cs(переключения контекста) и in(прерывания)' , 'cs(переключения контекста)', 'in(прерывания)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+		INTO report_str ; 
+		
+		SELECT result_str || report_str
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;	
+	END IF;	
+	
+	----------------------------------------------------------------------------
+	--2. КОРРЕЛЯЦИЯ system_cs cpu_us
+	line_count=line_count+1;
+	IF min_max_rec.min_system_cs_long != min_max_rec.max_system_cs_long AND 
+	   min_max_rec.min_cpu_us_long != min_max_rec.max_cpu_us_long
+	THEN
+		CALL truncate_time_series();
+		INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , system_cs_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+		
+		INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , cpu_us_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+		
+		reason_casulas_list := '{}'::text[]; --??????				
+		reason_casulas_list[1] = '*INFO: Возможно проблема в пользовательском приложении(resource contention).' ;
+		
+		part = part + 1 ;
+		SELECT fill_in_comprehensive_analysis_correlation( '2.'||part||'. Корреляция cs(переключения контекста) и us(user time)' , 'cs(переключения контекста)', 'us(user time)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+		INTO report_str ; 
+		
+		SELECT result_str || report_str
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;	
+	END IF;	
+
+	----------------------------------------------------------------------------
+	--3. Корреляция cs(переключения контекста) и sy(system time)	
+	line_count=line_count+1;
+	IF min_max_rec.min_system_cs_long != min_max_rec.max_system_cs_long AND 
+	   min_max_rec.min_cpu_sy_long != min_max_rec.max_cpu_sy_long
+	THEN	
+		CALL truncate_time_series();
+		INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , system_cs_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+		
+		INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+		SELECT 	cl.curr_timestamp , cpu_sy_long 
+		FROM 	os_stat_vmstat_median cl 
+		WHERE	cl.curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+		
+		reason_casulas_list := '{}'::text[]; --??????				
+		reason_casulas_list[1] = '*INFO: Ядро тратит много времени на переключение контекста и планирование,' ;
+		reason_casulas_list[2] = '  вместо полезной работы.' ;
+		
+		part = part + 1 ;
+		SELECT fill_in_comprehensive_analysis_correlation( '2.'||part||'. Корреляция cs(переключения контекста) и sy(system time)', 'cs(переключения контекста)', 'sy(system time)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+		INTO report_str ; 
+		
+		SELECT result_str || report_str
+		INTO result_str ; 
+		SELECT array_append( result_str , ' ')
+		INTO result_str ;
+		SELECT array_length( result_str , 1 )
+		INTO line_count;		
+	END IF;
+	
+	--ЧАСТЬ-2. АНАЛИЗ МЕТРИК vmstat
+	-----------------------------------------------------------------------------------------------------------------
+	
+	-----------------------------------------------------------------------------------------------------------------
+	--ЧАСТЬ-3. АНАЛИЗ IO
+	line_count=line_count+1;
+	result_str[line_count] = 'ЧАСТЬ-3. АНАЛИЗ IO' ; 
+	line_count=line_count+1;
+    part = 0;	
+	
+	-----------------------------------------------------------------------------
+	-- Отношение прочитанных блоков к записанным(новые+измененные)
+	SELECT 
+		CASE 
+			WHEN SUM(curr_shared_blks_dirtied) > 0
+			THEN ROUND(SUM(curr_shared_blks_read+curr_shared_blks_hit)::numeric / SUM(curr_shared_blks_dirtied), 4)
+			ELSE NULL -- избегаем деления на ноль, если нет изменений
+		END 
+	INTO 
+		shared_blks_read_write_ratio
+	FROM 
+		cluster_stat_median
+	WHERE 
+		curr_timestamp BETWEEN min_timestamp AND max_timestamp ;	
+	
+	part=part+1;
+    result_str[line_count] = '3.'||part||'. Отношение прочитанных блоков shared_buffers ';
+	line_count=line_count+1;	
+	result_str[line_count] = '    к измененным блокам shared_buffers |' ||REPLACE ( TO_CHAR( ROUND( shared_blks_read_write_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' ); 
+
+
+	IF shared_blks_read_write_ratio IS NULL
+	THEN 
+		result_str[line_count] = 'Только читающая нагрузка.' ; 
+		line_count=line_count+1;		 
+	ELSE
+		result_str[line_count] = 'Эмпирические ориентиры ' ; 
+		line_count=line_count+1;
+		result_str[line_count] = ' для оценки типа нагрузки(OLAP/OLTP): ' ; 
+		line_count=line_count+1;
+
+		IF shared_blks_read_write_ratio >= 200
+		THEN 
+			result_str[line_count] = 'OLAP сценарий.' ; 
+			line_count=line_count+1;		
+		ELSE 
+			result_str[line_count] = 'OLTP сценарий.' ; 
+			line_count=line_count+1;		
+		END IF;
+	
+	END IF ;
+	-- Отношение прочитанных блоков к записанным(новые+измененные)
+	-----------------------------------------------------------------------------
+
+	-----------------------------------------------------------------------------
+	-- Hit Ratio
+	line_count=line_count+1;
+	WITH 
+	hit_ratio AS
+	(
+		SELECT 
+			( curr_shared_blks_hit / NULLIF(curr_shared_blks_hit + curr_shared_blks_read, 0))*100.0 as value 
+		FROM 
+			cluster_stat_median
+		WHERE 
+			curr_timestamp BETWEEN min_timestamp AND max_timestamp
+	) 
+	SELECT 
+		MIN(value) as min_hit_ratio ,
+		MAX(value) as max_hit_ratio , 
+		(percentile_cont(0.5) within group (order by value))::numeric as median_hit_ratio
+	INTO 
+		hit_ratio_rec
+	FROM 
+		hit_ratio ;
+
+	part=part+1;
+    result_str[line_count] = '3.'||part||'. SHARED_BUFFERS HIT RATIO | MIN | MEDIAN | MAX | ';
+	line_count=line_count+1;
+	temp_txt = 	REPLACE ( TO_CHAR( ROUND( hit_ratio_rec.min_hit_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|'||
+				REPLACE ( TO_CHAR( ROUND( hit_ratio_rec.median_hit_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|'||
+				REPLACE ( TO_CHAR( ROUND( hit_ratio_rec.max_hit_ratio::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|' ;
+	
+	IF hit_ratio_rec.median_hit_ratio >= 99.0 
+	THEN 
+		result_str[line_count] = 'OK : Идеальный результат для OLTP |'||temp_txt ; 
+		line_count=line_count+2;
+	ELSIF hit_ratio_rec.median_hit_ratio >= 90.0 AND hit_ratio_rec.median_hit_ratio < 99.0
+	THEN 
+		result_str[line_count] = 'INFO: приемлемо для OLAP, особенно при работе с большими таблицами |'||temp_txt ;
+		line_count=line_count+2;
+	ELSIF hit_ratio_rec.median_hit_ratio >= 85.0 AND hit_ratio_rec.median_hit_ratio < 90.0
+	THEN 
+		result_str[line_count] = 'WARNING: низкое значение HIT RATIO |'||temp_txt ;
+		line_count=line_count+2;
+	ELSE
+		result_str[line_count] = 'ALARM: критически низкое значение HIT RATIO |'||temp_txt ;
+		line_count=line_count+2;
+	END IF;			 		
+	-- Hit Ratio
+	-----------------------------------------------------------------------------
+
+	-----------------------------------------------------------------------------
+	-- Корреляция операционная скорость - прочитанные блоки
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT 	curr_timestamp , curr_op_speed
+	FROM    cluster_stat_median 
+	WHERE	curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT 	curr_timestamp , curr_shared_blks_read
+	FROM  	cluster_stat_median 
+	WHERE	curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+	
+	reason_casulas_list := '{}'::text[]; --??????				
+	
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '3.'||part||'. Корреляция: операционная скорость и прочитанные блоки','операционная скорость', 'прочитанные блоки', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+    
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 
+		IF correlation_rec.correvation_value >= 0.7 
+		THEN				
+			result_str[line_count] = 'ALARM : Очень высокая корреляция.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Рост скорости операций напрямую зависит от роста чтений с диска.' ; 
+			line_count=line_count+1;
+		ELSIF correlation_rec.correvation_value >= 0.5 AND correlation_rec.correvation_value < 0.7
+		THEN 
+			result_str[line_count] = 'WARNING : Высокая корреляция.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Производительности IO - недостаточно для данной нагрузки.' ; 
+			line_count=line_count+1;
+		ELSE
+			result_str[line_count] = 'INFO : Слабая корреляция.' ; 
+			line_count=line_count+1;		
+		END IF ;
+	END IF ;	
+	-- Корреляция операционная скорость - прочитанные блоки
+	-----------------------------------------------------------------------------
+	
+	-----------------------------------------------------------------------------
+	-- Корреляция операционная скорость - записанные блоки
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_op_speed
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_shared_blks_dirtied+curr_shared_blks_written
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+
+	reason_casulas_list := '{}'::text[]; --??????				
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '3.'||part||'. Корреляция: операционная скорость и записанные блоки','операционная скорость', 'записанные блоки', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+	
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 
+		IF correlation_rec.correvation_value >= 0.7 
+		THEN				
+			result_str[line_count] = 'ALARM : Очень высокая корреляция .' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Система ограничена производительностью записи на диск' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Точки для анализа: скорость дисков, настройки commit_delay, wal_buffers.' ; 
+			line_count=line_count+1;
+		ELSIF correlation_rec.correvation_value >= 0.5 AND correlation_rec.correvation_value < 0.7
+		THEN 
+			result_str[line_count] = 'WARNING : Высокая корреляция.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Рост операций записи приводит к падению общей скорости.' ; 
+			line_count=line_count+1;
+		ELSE
+			result_str[line_count] = 'INFO : Слабая корреляция.' ; 
+			line_count=line_count+1;		
+		END IF ;
+	END IF ;	
+	-- Корреляция операционная скорость - записанные блоки
+	-----------------------------------------------------------------------------
+	
+	
+	-----------------------------------------------------------------------------
+	-- корреляция shared_blks_hit - shared_blks_read
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_shared_blks_hit
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_shared_blks_read
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+	
+	reason_casulas_list := '{}'::text[]; --??????				
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '3.'||part||'. Корреляция: shared_buffers hit и прочитанные блоки','shared_buffers hit', 'прочитанные блоки', -1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+	
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 
+		IF correlation_rec.correvation_value <= -0.7 
+		THEN 
+			result_str[line_count] = 'OK : Эффективное кэширование.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Высокая предсказуемость.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Когда нагрузка попадает в кэш, это реально снижает дисковую нагрузку.' ; 
+			line_count=line_count+2;
+		END IF;
+		
+		IF correlation_rec.correvation_value  > -0.7 AND correlation_rec.correvation_value <= -0.3
+		THEN 
+			result_str[line_count] = 'INFO : Нелинейная зависимость от кэша.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Нелинейная зависимость от кэша.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Увеличение hit помогает, но не пропорционально.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Возможные причины' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Фрагментация доступа: Даже при повторных запросах нужно подчитывать новые данные с диска.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Конкуренция за кэш: OLTP и аналитические запросы "вытесняют" данные друг друга.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Разные рабочие наборы: Несколько приложений с разными паттернами доступа.' ; 
+			line_count=line_count+2;
+		END IF;
+		
+		IF correlation_rec.correvation_value > -0.3 AND correlation_rec.correvation_value < 0 
+		THEN 
+			result_str[line_count] = 'WARNING :  Кэширование практически не влияет на дисковую нагрузку.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Производительность определяется дисковыми характеристиками.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Кэш работает как буфер, но не как ускоритель.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Нагрузка: Аналитическая или "сканирующая":' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Рабочий набор >> shared_buffers: Данные читаются один раз и вытесняются.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Случайные большие запросы: Каждый запрос читает уникальные данные.' ; 
+			line_count=line_count+1;
+			result_str[line_count] = 'Проблемы с эффективностью кэша: Неправильные настройки autovacuum, много мёртвых кортежей.' ; 
+			line_count=line_count+1;
+		END IF;		
+	END IF ;	
+	-- корреляция shared_blks_hit - shared_blks_read
+	
+	--------------------------------------------------------------------------------------
+	--Корреляция: прочитанные блоки - swap in(из swap в RAM)
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_shared_blks_read
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , swap_si_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+	
+	reason_casulas_list := '{}'::text[]; --??????				
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '3.'||part||'. Корреляция: прочитанные блоки и swap in','прочитанные блоки', 'swap in', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+	
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 
+		IF correlation_rec.correvation_value >= 0.7
+		THEN				
+			result_str[line_count] = 'ALARM';
+			line_count=line_count+1;
+			result_str[line_count] = 'Чем больше PostgreSQL читает данных с диска,';
+			line_count=line_count+1;
+			result_str[line_count] = 'тем больше система вынуждена подкачивать страницы из раздела свопа.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Прямой индикатор нехватки оперативной памяти.';
+			line_count=line_count+1;
+			
+			result_str[line_count] = 'ВОЗМОЖНЫЕ ПРИЧИНЫ:';
+			line_count=line_count+1;
+			result_str[line_count] = 'Размер shared_buffers и общий кэш ОС превышают доступную физическую память.';
+			line_count=line_count+1;
+			result_str[line_count] = 'На сервере запущены другие процессы, потребляющие много памяти.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Неадекватно низкие настройки work_mem, ведущие к свопингу.';
+			line_count=line_count+1;
+			result_str[line_count] = 'РЕКОМЕНДУЕМЫЕ ДЕЙСТВИЯ:';
+			line_count=line_count+1;
+			result_str[line_count] = 'Увеличить объем физической ОЗУ на сервере.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Оптимизировать настройки памяти PostgreSQL (shared_buffers, work_mem).';
+			line_count=line_count+1;
+			result_str[line_count] = 'Проверить и ограничить память других процессов.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Увеличить параметр ядра vm.swappiness (временное решение).';
+			line_count=line_count+1;						
+		END IF ;
+	END IF ;
+	--Корреляция: прочитанные блоки - swap in(из swap в RAM)
+	--------------------------------------------------------------------------------------
+	
+	--------------------------------------------------------------------------------------
+	-- Корреляция: грязные блоки и bo(блоки записанные на устройства)
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_shared_blks_dirtied
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , io_bo_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+
+	reason_casulas_list := '{}'::text[]; --??????				
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '3.'||part||'. Корреляция: грязные блоки и bo(блоки записанные на устройства)','грязные блоки', 'bo(блоки записанные на устройства)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+	
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN
+		IF correlation_rec.correvation_value > 0.2 AND correlation_rec.correvation_value < 0.9  
+		THEN
+			result_str[line_count] = 'ВОЗМОЖНЫЕ ПРИЧИНЫ:';
+			line_count=line_count+1;
+			result_str[line_count] = 'Неоптимальные настройки контрольных точек (checkpoint_timeout, max_wal_size).';
+			line_count=line_count+1;
+			result_str[line_count] = 'Слишком агрессивные настройки фоновых писателей (bgwriter_delay, bgwriter_lru_maxpages).';
+			line_count=line_count+1;
+			result_str[line_count] = 'Медленный диск под WAL или табличным пространством.';
+			line_count=line_count+1;
+			result_str[line_count] = 'РЕКОМЕНДУЕМЫЕ ДЕЙСТВИЯ:';
+			line_count=line_count+1;
+			result_str[line_count] = 'Настроить контрольные точки, увеличив checkpoint_timeout и max_wal_size для более плавной записи.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Отрегулировать параметры bgwriter.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Мониторить buffers_checkpoint, buffers_clean, buffers_backend в pg_stat_bgwriter.';
+			line_count=line_count+1;
+		ELSIF correlation_rec.correvation_value >= 0.9
+		THEN
+			result_str[line_count] = 'ALARM';
+			line_count=line_count+1;			
+			result_str[line_count] = 'Возможна чрезмерная агрессивная запись.';
+			line_count=line_count+1;
+		ELSIF correlation_rec.correvation_value <= 0.2
+		THEN
+			result_str[line_count] = 'ALARM';
+			line_count=line_count+1;	
+			result_str[line_count] = 'Возможна проблема с отложенной записью,';
+			line_count=line_count+1;
+			result_str[line_count] = 'ведущая к накоплению грязных страниц в памяти.';
+			line_count=line_count+1;					
+		END IF;
+	END IF ;	
+	
+	-- Корреляция: грязные блоки и bo(блоки записанные на устройства)
+	--------------------------------------------------------------------------------------
+	
+	--------------------------------------------------------------------------------------
+	-- Корреляция: записанные блоки и bo(блоки записанные на устройства)
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_shared_blks_written
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , io_bo_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+	
+	reason_casulas_list := '{}'::text[]; --??????				
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '3.'||part||'. Корреляция: записанные блоки и bo(блоки записанные на устройства)','записанные блоки', 'bo(блоки записанные на устройства)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+	
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 
+		IF correlation_rec.correvation_value > 0.2 AND correlation_rec.correvation_value < 0.9  
+		THEN
+			result_str[line_count] = 'ВОЗМОЖНЫЕ ПРИЧИНЫ:';
+			line_count=line_count+1;
+			result_str[line_count] = 'Неоптимальные настройки контрольных точек (checkpoint_timeout, max_wal_size).';
+			line_count=line_count+1;
+			result_str[line_count] = 'Слишком агрессивные настройки фоновых писателей (bgwriter_delay, bgwriter_lru_maxpages).';
+			line_count=line_count+1;
+			result_str[line_count] = 'Медленный диск под WAL или табличным пространством.';
+			line_count=line_count+1;
+			result_str[line_count] = 'РЕКОМЕНДУЕМЫЕ ДЕЙСТВИЯ:';
+			line_count=line_count+1;
+			result_str[line_count] = 'Настроить контрольные точки, увеличив checkpoint_timeout и max_wal_size для более плавной записи.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Отрегулировать параметры bgwriter.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Мониторить buffers_checkpoint, buffers_clean, buffers_backend в pg_stat_bgwriter.';
+			line_count=line_count+1;
+		ELSIF correlation_rec.correvation_value >= 0.9
+		THEN
+			result_str[line_count] = 'ALARM';
+			line_count=line_count+1;			
+			result_str[line_count] = 'Возможна чрезмерная агрессивная запись.';
+			line_count=line_count+1;
+		ELSIF correlation_rec.correvation_value <= 0.2
+		THEN
+			result_str[line_count] = 'ALARM';
+			line_count=line_count+1;	
+			result_str[line_count] = 'Возможна проблема с отложенной записью,';
+			line_count=line_count+1;
+			result_str[line_count] = 'ведущая к накоплению грязных страниц в памяти.';
+			line_count=line_count+1;					
+		END IF;
+	END IF ;	
+	-- Корреляция: записанные блоки и bo(блоки записанные на устройства)
+	--------------------------------------------------------------------------------------
+	
+	--------------------------------------------------------------------------------------
+	--Корреляция: hit и us(user time)
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_shared_blks_hit
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , cpu_us_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+	
+	reason_casulas_list := '{}'::text[]; --??????				
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '3.'||part||'. Корреляция: hit и us(user time)','hit', 'us(user time)', -1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+	
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 
+		IF correlation_rec.correvation_value <= -0.7
+		THEN				
+			result_str[line_count] = 'ALARM';
+			line_count=line_count+1;
+			result_str[line_count] = 'Возможно при высокой нагрузке на CPU';
+			line_count=line_count+1;
+			result_str[line_count] = 'не хватает памяти для кэша (при падении hit ratio).';
+			line_count=line_count+1;
+			
+			result_str[line_count] = 'ВОЗМОЖНЫЕ ПРИЧИНЫ:';
+			line_count=line_count+1;
+			result_str[line_count] = 'Нехватка оперативной памяти для кэша (shared_buffers + OS cache).';
+			line_count=line_count+1;
+			result_str[line_count] = 'Очень тяжелые запросы, вытесняющие полезные данные из кэша.';
+			line_count=line_count+1;
+			result_str[line_count] = 'РЕКОМЕНДУЕМЫЕ ДЕЙСТВИЯ:';
+			line_count=line_count+1;
+			result_str[line_count] = 'Увеличение shared_buffers';
+			line_count=line_count+1;
+			result_str[line_count] = 'Оптимизация запросов';
+			line_count=line_count+1;
+		END IF;
+	END IF ;	
+	--Корреляция: hit и us(user time)
+	--------------------------------------------------------------------------------------
+	
+	--------------------------------------------------------------------------------------
+	--Корреляция: hit и sy(system time)
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_shared_blks_hit
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , cpu_sy_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+	
+	reason_casulas_list := '{}'::text[]; --??????				
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '3.'||part||'. Корреляция: hit и sy(system time)','hit', 'sy(system time)', -1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+	
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 
+		IF correlation_rec.correvation_value <= -0.7
+		THEN				
+			result_str[line_count] = 'ALARM';
+			line_count=line_count+1;
+			result_str[line_count] = 'Возможно при высокой нагрузке на CPU';
+			line_count=line_count+1;
+			result_str[line_count] = 'не хватает памяти для кэша (при падении hit ratio).';
+			line_count=line_count+1;
+			
+			result_str[line_count] = 'ВОЗМОЖНЫЕ ПРИЧИНЫ:';
+			line_count=line_count+1;
+			result_str[line_count] = 'Нехватка оперативной памяти для кэша (shared_buffers + OS cache).';
+			line_count=line_count+1;
+			result_str[line_count] = 'Очень тяжелые запросы, вытесняющие полезные данные из кэша.';
+			line_count=line_count+1;
+			result_str[line_count] = 'РЕКОМЕНДУЕМЫЕ ДЕЙСТВИЯ:';
+			line_count=line_count+1;
+			result_str[line_count] = 'Увеличение shared_buffers';
+			line_count=line_count+1;
+			result_str[line_count] = 'Оптимизация запросов';
+			line_count=line_count+1;
+		END IF;
+	END IF ;	
+	--Корреляция: hit и us(user time)
+	--------------------------------------------------------------------------------------
+	
+	--------------------------------------------------------------------------------------
+	--Корреляция: грязные блоки и wa(ожидание IO)
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , curr_shared_blks_dirtied
+	FROM  cluster_stat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , cpu_wa_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+	
+	reason_casulas_list := '{}'::text[]; --??????				
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '3.'||part||'. Корреляция: грязные блоки и wa(ожидание IO)','грязные блоки', 'wa(ожидание IO)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+	
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 
+		IF correlation_rec.correvation_value >= 0.7
+		THEN				
+			result_str[line_count] = 'ALARM';
+			line_count=line_count+1;
+			result_str[line_count] = 'Cистема не справляется с записью грязных страниц.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Фоновые процессы не успевают, и backend-процессы начинают самостоятельно синхронно записывать данные,';
+			line_count=line_count+1;
+			result_str[line_count] = 'блокируясь на вводе-выводе.';
+			line_count=line_count+1;
+			
+			result_str[line_count] = 'ВОЗМОЖНЫЕ ПРИЧИНЫ:';
+			line_count=line_count+1;
+			result_str[line_count] = 'Очень медленные диски (особенно если WAL и данные на одном устройстве).';
+			line_count=line_count+1;
+			result_str[line_count] = 'Слишком частые или интенсивные контрольные точки.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Всплеск операций UPDATE/INSERT.';
+			line_count=line_count+1;
+			result_str[line_count] = 'РЕКОМЕНДУЕМЫЕ ДЕЙСТВИЯ:';				
+			line_count=line_count+1;
+			result_str[line_count] = 'Срочно оптимизировать подсистему ввода-вывода:';
+			line_count=line_count+1;
+			result_str[line_count] = 'использовать более быстрые SSD, отделить WAL на отдельный диск.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Пересмотреть настройки контрольных точек.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Увеличить параметр bgwriter_lru_maxpages.';
+			line_count=line_count+1;
+		END IF;
+	END IF ;	
+	--Корреляция: грязные блоки и wa(ожидание IO)
+	--------------------------------------------------------------------------------------
+	
+	line_count=line_count+2;	
+	result_str[line_count] = 'Часть-4. СТАТИСТИКА VM_DIRTY*';
+	line_count=line_count+1;
+	result_str[line_count] = 'dirty_kb/dirty_ratio/dirty_background_ratio | MIN | MEDIAN | MAX |';
+	line_count=line_count+1;
+	
+	--dirty pages size (KB)
+	WITH 
+	dirty_kb AS
+	(
+		SELECT 
+			dirty_kb_long as value 
+		FROM 
+			os_stat_vmstat_median
+		WHERE 
+			curr_timestamp BETWEEN min_timestamp AND max_timestamp
+	) 
+	SELECT 
+		MIN(value) as min_dirty_kb ,
+		MAX(value) as max_dirty_kb , 
+		(percentile_cont(0.5) within group (order by value))::numeric as median_dirty_kb
+	INTO 
+		dirty_kb_long_rec
+	FROM 
+		dirty_kb ;
+	
+	result_str[line_count] =  'dirty pages size (KB) |'||REPLACE ( TO_CHAR( ROUND( dirty_kb_long_rec.min_dirty_kb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|'|| 
+							 REPLACE ( TO_CHAR( ROUND( dirty_kb_long_rec.median_dirty_kb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|'||
+							 REPLACE ( TO_CHAR( ROUND( dirty_kb_long_rec.max_dirty_kb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|';
+							 
+	line_count=line_count+1;
+	
+
+   	--vm_dirty_percent
+	WITH 
+	vm_dirty_percent AS
+	(
+		SELECT 
+			dirty_percent_long as value 
+		FROM 
+			os_stat_vmstat_median
+		WHERE 
+			curr_timestamp BETWEEN min_timestamp AND max_timestamp
+	) 
+	SELECT 
+		MIN(value) as min_dirty_percent ,
+		MAX(value) as max_dirty_percent , 
+		(percentile_cont(0.5) within group (order by value))::numeric as median_dirty_percent
+	INTO 
+		dirty_percent_rec
+	FROM 
+		vm_dirty_percent ;
+		
+	result_str[line_count] =  'dirty_ratio |'||REPLACE ( TO_CHAR( ROUND( dirty_percent_rec.min_dirty_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|'|| 
+							 REPLACE ( TO_CHAR( ROUND( dirty_percent_rec.median_dirty_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|'||
+							 REPLACE ( TO_CHAR( ROUND( dirty_percent_rec.max_dirty_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|'; 
+							 
+	line_count=line_count+1;
+	
+	--vm_dirty_bg_percent
+	WITH 
+	vm_dirty_bg_percent AS
+	(
+		SELECT 
+			dirty_bg_percent_long as value 
+		FROM 
+			os_stat_vmstat_median
+		WHERE 
+			curr_timestamp BETWEEN min_timestamp AND max_timestamp
+	) 
+	SELECT 
+		MIN(value) as min_dirty_bg_percent ,
+		MAX(value) as max_dirty_bg_percent , 
+		(percentile_cont(0.5) within group (order by value))::numeric as median_dirty_bg_percent
+	INTO 
+		dirty_bg_percent_rec
+	FROM 
+		vm_dirty_bg_percent ;		
+	
+	result_str[line_count] = 'dirty_bg_percent |'||REPLACE ( TO_CHAR( ROUND( dirty_bg_percent_rec.min_dirty_bg_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|'|| 
+							 REPLACE ( TO_CHAR( ROUND( dirty_bg_percent_rec.median_dirty_bg_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|'||
+							 REPLACE ( TO_CHAR( ROUND( dirty_bg_percent_rec.max_dirty_bg_percent::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|';  
+							 
+	line_count=line_count+1;
+		
+	--available_mem_mb
+	WITH 
+	available_mem_mb AS
+	(
+		SELECT 
+			available_mem_mb_long as value 
+		FROM 
+			os_stat_vmstat_median
+		WHERE 
+			curr_timestamp BETWEEN min_timestamp AND max_timestamp
+	) 
+	SELECT 
+		MIN(value) as min_available_mem_mb ,
+		MAX(value) as max_available_mem_mb , 
+		(percentile_cont(0.5) within group (order by value))::numeric as median_available_mem_mb
+	INTO 
+		available_mem_mb_rec
+	FROM 
+		available_mem_mb ;	    
+	
+	result_str[line_count] = 'available_mem_mb |'||REPLACE ( TO_CHAR( ROUND( available_mem_mb_rec.min_available_mem_mb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|'|| 
+							 REPLACE ( TO_CHAR( ROUND( available_mem_mb_rec.median_available_mem_mb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|'||
+							 REPLACE ( TO_CHAR( ROUND( available_mem_mb_rec.max_available_mem_mb::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' )||'|';  
+							 
+	line_count=line_count+2;	
+	
+	part = 0 ;
+	---------------------------------------------------------------------
+	--Корреляция: dirty pages size(KB) и  so(swap-out)
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , dirty_kb_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , swap_so_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+	
+	reason_casulas_list := '{}'::text[]; --??????				
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '4.'||part||'. Корреляция: dirty pages size(KB) и so(swap-out)','dirty pages size(KB)', 'so(swap-out)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+	
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 
+		IF correlation_rec.correvation_value >= 0.5 
+		THEN 
+			result_str[line_count] = 'ALARM';
+			line_count=line_count+1;
+			result_str[line_count] = 'Из-за большого объёма отложенной на запись памяти (dirty_pages)';
+			line_count=line_count+1;
+			result_str[line_count] = 'система начинает вытеснять страницы процесса PostgreSQL в своп.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Признак нехватки оперативной памяти  ';
+			line_count=line_count+1;
+			result_str[line_count] = 'и гарантированное катастрофическое падение производительности.';
+			line_count=line_count+1;
+			
+			result_str[line_count] = 'ОПЕРАТИВНЫЕ МЕРЫ:';
+			line_count=line_count+1;
+			result_str[line_count] = 'Увеличить shared_buffers';
+			line_count=line_count+1;
+			result_str[line_count] = 'Проверить и уменьшить work_mem для предотвращения избыточного использования';
+			line_count=line_count+1;
+			result_str[line_count] = 'Настроить параметры ядра: уменьшить vm.dirty_background_ratio и vm.dirty_ratio';
+			line_count=line_count+1;
+			result_str[line_count] = 'Рассмотреть добавление оперативной памяти';
+			line_count=line_count+1;
+			result_str[line_count] = 'ДОЛГОСРОЧНЫЕ РЕШЕНИЯ:';
+			line_count=line_count+1;
+			result_str[line_count] = 'Оптимизировать запросы с большими сортировками/hash';
+			line_count=line_count+1;
+			result_str[line_count] = 'Внедрить мониторинг OOM-рисков';
+			line_count=line_count+1;
+			result_str[line_count] = 'Рассмотреть партиционирование больших таблиц';
+			line_count=line_count+1;
+		END IF ;
+	END IF ;
+	
+	--Корреляция: dirty pages size (KB) и  so(swap-out)
+	---------------------------------------------------------------------
+	
+	---------------------------------------------------------------------
+	--Корреляция: dirty pages size(KB) и wa(ожидание IO)
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , dirty_kb_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , cpu_wa_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	SELECT * INTO correlation_rec FROM quick_significance_check();	
+
+	reason_casulas_list := '{}'::text[]; --??????				
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '4.'||part||'. Корреляция: dirty pages size(KB) и wa(ожидание IO)','dirty pages size(KB)', 'wa(ожидание IO)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+	
+	
+
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 
+		IF correlation_rec.correvation_value >= 0.7 
+		THEN				
+			result_str[line_count] = 'ALARM';
+			line_count=line_count+1;
+			result_str[line_count] = 'Критическая нехватка пропускной способности подсистемы I/O.';
+			line_count=line_count+1;
+			result_str[line_count] = 'База данных задыхается при записи checkpoint, WAL или данных.';
+			line_count=line_count+1;
+			
+			result_str[line_count] = 'ОПТИМИЗАЦИЯ ОС И ЖЕЛЕЗА:';
+			line_count=line_count+1;
+			result_str[line_count] = 'Размещение WAL на отдельном быстром диске (NVMe)';
+			line_count=line_count+1;
+			result_str[line_count] = 'Использование более быстрого RAID-массива';
+			line_count=line_count+1;
+			result_str[line_count] = 'Настройка elevator noop или deadline для SSD';
+			line_count=line_count+1;
+			result_str[line_count] = 'Увеличение параметров ядра vm.dirty_writeback_centisecs';
+			line_count=line_count+1;
+		END IF ;
+	END IF ;	
+
+	--Корреляция: dirty pages size(KB) и wa(ожидание IO)	
+	---------------------------------------------------------------------
+	
+	---------------------------------------------------------------------
+	--Корреляция: dirty pages size(KB) и b(процессы в uninterruptible sleep)
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , dirty_kb_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , procs_b_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+
+	reason_casulas_list := '{}'::text[]; --??????				
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '4.'||part||'. Корреляция: dirty pages size(KB) и b(процессы в uninterruptible sleep)','dirty pages size(KB)', 'b(процессы в uninterruptible sleep)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+
+	
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 
+		IF correlation_rec.correvation_value >= 0.7 
+		THEN
+			result_str[line_count] = 'ALARM';
+			line_count=line_count+1;
+			result_str[line_count] = 'Процессы СУБД (например, backend-процессы) массово блокируются в состоянии I/O wait.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Подтверждает корреляцию с wa и требует настройки vm.dirty_* параметров и/или улучшения дисков.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Очередь процессов в состоянии b указывает на системный I/O bottleneck.';
+			line_count=line_count+1;				
+		END IF ;
+	END IF ;
+	--Корреляция: dirty pages size(KB) и b(процессы в uninterruptible sleep)
+	---------------------------------------------------------------------
+	
+	---------------------------------------------------------------------
+	-- Корреляция: dirty pages size (KB) и free(свободная RAM)
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , dirty_kb_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , memory_free_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+
+	reason_casulas_list := '{}'::text[]; --??????				
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '4.'||part||'. Корреляция: dirty pages size (KB) и free(свободная RAM)','dirty pages size(KB)', 'free(свободная RAM)', -1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+
+	
+	
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 
+		IF correlation_rec.correvation_value <= -0.7 
+		THEN			
+			result_str[line_count] = 'ALARM';
+			line_count=line_count+1;
+			result_str[line_count] = 'Система агрессивно использует всю доступную память для кэширования,';
+			line_count=line_count+1;
+			result_str[line_count] = 'практически не оставляя свободного запаса. Это риск перехода в состояние memory pressure.';
+			line_count=line_count+1;
+		END IF ;
+	END IF ;
+	-- Корреляция: dirty pages size (KB) и free(свободная RAM)
+	---------------------------------------------------------------------
+	
+	---------------------------------------------------------------------
+	-- Корреляция: dirty pages size(KB) и bo(блоки записанные на устройства)
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , dirty_kb_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , io_bo_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+
+	reason_casulas_list := '{}'::text[]; --??????				
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '4.'||part||'. Корреляция: dirty pages size(KB) и bo(блоки записанные на устройства)','dirty pages size(KB)', 'bo(блоки записанные на устройства)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+
+
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 
+		IF correlation_rec.correvation_value >= 0.7 
+		THEN		
+			result_str[line_count] = 'ALARM';
+			line_count=line_count+1;
+			result_str[line_count] = 'Механизм обратной записи не успевает за генерацией dirty pages. ';
+			line_count=line_count+1;
+			result_str[line_count] = 'Это может быть как из-за медленного диска, так и из-за агрессивной работы приложения.';
+			line_count=line_count+1;				
+		END IF ;
+	END IF ;
+	
+	
+	-- Корреляция: dirty pages size(KB) и bo(блоки записанные на устройства)
+	---------------------------------------------------------------------
+	
+	---------------------------------------------------------------------
+	-- Корреляция: dirty pages size(KB) и sy(system time)
+	CALL truncate_time_series();
+	INSERT INTO first_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , dirty_kb_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	INSERT INTO second_time_series ( curr_timestamp , curr_value	)
+	SELECT curr_timestamp , cpu_sy_long
+	FROM  os_stat_vmstat_median 
+	WHERE curr_timestamp BETWEEN min_timestamp AND max_timestamp ;
+	
+	SELECT * INTO correlation_rec FROM quick_significance_check();
+	
+	reason_casulas_list := '{}'::text[]; --??????				
+	part = part + 1 ;
+	SELECT fill_in_comprehensive_analysis_correlation( '4.'||part||'. Корреляция: dirty pages size(KB) и sy(system time)','dirty pages size(KB)', 'sy(system time)', 1 , reason_casulas_list ) --Анализируется положительная корреляция
+	INTO report_str ; 
+	
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT result_str || report_str
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+	SELECT array_length( result_str , 1 )
+	INTO line_count;
+	
+
+	IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	THEN 
+		IF correlation_rec.correvation_value >= 0.6
+		THEN	
+			result_str[line_count] = 'ALARM';
+			line_count=line_count+1;
+			result_str[line_count] = 'Высокие накладные расходы ядра ОС ';
+			line_count=line_count+1;
+			result_str[line_count] = 'на управление памятью и операциями ввода-вывода.';
+			line_count=line_count+1;
+			result_str[line_count] = 'Ядро тратит значительное время ';
+			line_count=line_count+1;				
+			result_str[line_count] = 'на обработку страниц памяти, что может снижать общую производительность.';
+			line_count=line_count+1;
+		END IF ;
+	END IF ;
+	-- Корреляция: dirty pages size(KB) и sy(system time
+	---------------------------------------------------------------------
+	
+	
+	---------------------------------------------------------------------
+	-- Расчитать Матрицу для расчета Индекса Приоритета Корреляции (Correlation Priority Index, CPI)
+	CALL calculate_cpi_matrix();
+	-- Расчитать Матрицу для расчета Индекса Приоритета Корреляции (Correlation Priority Index, CPI)
+	---------------------------------------------------------------------
+	
+	line_count=line_count+2;
+	result_str[line_count] = 'ИНДЕКС ПРИОРИТЕТА КОРРЕЛЯЦИИ (Correlation Priority Index, CPI)';
+	line_count=line_count+1;
+	result_str[line_count] = 'КОРРЕЛИРУЕМЫЕ ЗНАЧЕНИЯ | CPI ';
+	line_count=line_count+1;
+	FOR cpi_matrix_rec IN 
+	SELECT * FROM cpi_matrix
+	ORDER BY curr_value DESC
+	LOOP 
+		result_str[line_count] = cpi_matrix_rec.current_pair||'|'|| REPLACE ( TO_CHAR( ROUND( cpi_matrix_rec.curr_value::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' );
+		line_count=line_count+1;
+	END LOOP ;
+	
+	
+	
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION report_wait_event_type_vmstat IS 'КОРРЕЛЯЦИЯОЖИДАНИЙ СУБД и vmstat';
+-- КОРРЕЛЯЦИЯ ОЖИДАНИЙ СУБД и vmstat
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- stats_proсessing_functions.sql
+-- version 7.0
+--------------------------------------------------------------------------------
+-- Функции для статистической обработки  данных
+--------------------------------------------------------------------------------
+-- truncate_time_series БЫСТРАЯ ОЧИСТКА ТАБЛИЦ ВРЕМЕННЫХ РЯДОВ
+-- quick_significance_check() БЫСТРАЯ ПРОВЕРКА ЗНАЧИМОСТИ КОРРЕЛЯЦИИ 
+-- fill_corr_values_for_positive_corr Заполнить значения корреляции для положительного коэффициента
+-- fill_corr_values_for_negative_corr Заполнить значения корреляции для отрицательного коэффициента
+-- the_line_of_least_squares() ЛИНИЯ НАИМЕНЬШИХ КВАДРАТОВ для линии регрессии вида Y = a + bt
+-- Y_X_regression_line()	ЛИНИЯ НАИМЕНЬШИХ КВАДРАТОВ для линии регрессии вида Y = a + bX
+-- interpretation_r2_coefficient  Интерпретация коэффициента детерминации
+-- fill_in_wce_activities() ЗАПОЛНЕНИЕ ТАБЛИЦЫ activities
+-- fill_in_comprehensive_analysis_wait_event_type Заполнить данные по комплексному анализу ожиданий
+-- fill_in_comprehensive_analysis_correlation Заполнить данные по комплексному анализу корреляции
+-- calculate_cpi_matrix()  Вычислить значение Индекса Приоритета Корреляции (Correlation Priority Index, CPI)
+-- get_wce_activities Получить активности по заданному wait_event_type и значению ВКО 
+-- calc_wait_event_type_criteria_weight() Расчет весов критериев для wait_event_type
+-- norm_wait_event_type_criteria_matrix() Нормализовать значения в матрице критериев 
+-- interpretation_K_coefficient Интерпретация коэффициента тренда 
+
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- БЫСТРАЯ ОЧИСТКА ТАБЛИЦ ВРЕМЕННЫХ РЯДОВ
+CREATE OR REPLACE PROCEDURE truncate_time_series() 
+AS $$
+BEGIN	
+	TRUNCATE TABLE first_time_series ; 
+	TRUNCATE TABLE second_time_series ; 
+END
+$$ LANGUAGE plpgsql; 
+COMMENT ON PROCEDURE truncate_time_series IS 'БЫСТРАЯ ОЧИСТКА ТАБЛИЦ ВРЕМЕННЫХ РЯДОВ';
+-- БЫСТРАЯ ОЧИСТКА ТАБЛИЦ ВРЕМЕННЫХ РЯДОВ
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+-- БЫСТРАЯ ПРОВЕРКА ЗНАЧИМОСТИ КОРРЕЛЯЦИИ
+CREATE OR REPLACE FUNCTION quick_significance_check() RETURNS 
+TABLE 
+(
+	correvation_value  DOUBLE PRECISION , 
+	p_value numeric ,
+	significance_empirical text , 
+	significance_t_test text 
+)
+AS $$ 
+DECLARE 
+	diff_sum numeric := 0;
+    diff_sq_sum numeric := 0;
+    mean_diff numeric;
+    sd_diff numeric;
+    t_stat numeric;
+    df INT;
+    p_val numeric;
+	i integer ;
+	total_n integer ; 
+	t_value_rec record ; 
+BEGIN	
+
+	------------------------------------------------------------------
+	-- Расчет p-value
+		SELECT COUNT(*) 
+		INTO total_n
+		FROM first_time_series ; 
+		
+		-- Вычисление суммы разностей и суммы квадратов разностей
+		FOR t_value_rec IN 
+		SELECT t1.curr_value AS t1_value , t2.curr_value AS t2_value
+		FROM first_time_series t1 JOIN second_time_series t2 ON ( t1.curr_timestamp = t2.curr_timestamp )
+		ORDER BY  t1.curr_timestamp
+		LOOP 
+			diff_sum := diff_sum + (t_value_rec.t1_value - t_value_rec.t2_value);
+			diff_sq_sum := diff_sq_sum + (t_value_rec.t1_value - t_value_rec.t2_value)^2;
+		END LOOP;
+		
+		-- Среднее разностей
+		mean_diff := diff_sum / total_n;
+		-- Стандартное отклонение разностей (несмещённое)
+		IF total_n > 1 THEN
+			sd_diff := sqrt((diff_sq_sum - diff_sum^2 / total_n) / (total_n - 1));
+		ELSE
+			sd_diff := 0;
+		END IF;
+
+		-- t-статистика
+		IF sd_diff = 0 THEN
+			-- Если все разности равны нулю
+			p_val =  1.0;
+		END IF;
+		t_stat := mean_diff / (sd_diff / sqrt(total_n));
+		df := total_n - 1;
+
+		-- Вычисление двустороннего p-значения
+		p_val := 2 * (1 - student_t_cdf(t_stat, df));
+	-- Расчет p-value
+	------------------------------------------------------------------
+
+	RETURN QUERY 
+	WITH stats AS (
+		SELECT 
+			COALESCE( CORR(v2.curr_value, v1.curr_value) , 0 ) as r,
+			COUNT(*) as n,
+			SQRT(COUNT(*) - 2) / 
+			SQRT(1 - POWER(CORR(v2.curr_value, v1.curr_value), 2)) as test_value
+		FROM
+			first_time_series v1 JOIN second_time_series v2 ON (v1.curr_timestamp = v2.curr_timestamp )		
+	)
+	SELECT 
+		r AS correvation_value,
+		-- p-value
+        p_val  AS p_value , 
+		-- p-value		
+		-- Эмпирическое правило: для n > 30 и |r| > 2/√n корреляция значима
+		CASE 
+			WHEN n > 30 AND ABS(r) > 2 / SQRT(n) THEN 'Значима (p < ~0.05)'
+			WHEN n > 100 AND ABS(r) > 1.65 / SQRT(n) THEN 'Значима (p < ~0.1)'
+			WHEN n > 10 AND ABS(r) > 3 / SQRT(n) THEN 'Значима (p < ~0.01)'
+			ELSE 'Незначима'
+		END as significance_empirical,
+		-- Более точная проверка через t-критерий
+		CASE 
+			WHEN ABS(r * SQRT((n - 2) / (1 - r*r))) > 1.96 THEN 'Значима (95% уровень)'
+			WHEN ABS(r * SQRT((n - 2) / (1 - r*r))) > 1.645 THEN 'Значима (90% уровень)'
+			ELSE 'Незначима'
+		END as significance_t_test
+	FROM stats;	
+	
+END
+$$ LANGUAGE plpgsql; 
+COMMENT ON FUNCTION quick_significance_check IS 'БЫСТРАЯ ПРОВЕРКА ЗНАЧИМОСТИ КОРРЕЛЯЦИИ';
+-- БЫСТРАЯ ПРОВЕРКА ЗНАЧИМОСТИ КОРРЕЛЯЦИИ
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+--Вспомогательная функция student_t_cdf и реализация неполной бета-функции:
+CREATE OR REPLACE FUNCTION student_t_cdf(t numeric, df INT)
+RETURNS numeric
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    x numeric;
+    a numeric;
+    b numeric := 0.5;
+    ibeta numeric;
+BEGIN
+    IF df <= 0 THEN
+        --RAISE EXCEPTION 'Степени свободы должны быть положительными';
+    END IF;
+
+    IF t >= 0 THEN
+        x := df / (df + t^2);
+        a := df::numeric / 2;
+        ibeta := incomplete_beta(x, a, b);
+        RETURN 1 - 0.5 * ibeta;
+    ELSE
+        x := df / (df + t^2);
+        a := df::numeric / 2;
+        ibeta := incomplete_beta(x, a, b);
+        RETURN 0.5 * ibeta;
+    END IF;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION incomplete_beta(x numeric, a numeric, b numeric)
+RETURNS numeric
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    max_iter INT := 200;
+    tol numeric := 1e-12;
+    m INT;
+    aa numeric;
+    bb numeric;
+    c numeric;
+    d numeric;
+    del numeric;
+    h numeric;
+    qab numeric;
+    qam numeric;
+    qap numeric;
+BEGIN
+    IF x < 0 OR x > 1 THEN
+        --RAISE EXCEPTION 'x должен быть в [0,1]';
+    END IF;
+
+    IF x = 0 THEN
+        RETURN 0;
+    ELSIF x = 1 THEN
+        RETURN 1;
+    END IF;
+
+    qab := a + b;
+    qap := a + 1;
+    qam := a - 1;
+    c := 1;
+    d := 1 - qab * x / qap;
+    IF abs(d) < 1e-30 THEN
+        d := 1e-30;
+    END IF;
+    d := 1 / d;
+    h := d;
+
+    FOR m IN 1..max_iter LOOP
+        aa := m * (b - m) * x / ((qam + 2*m) * (a + 2*m));
+        d := 1 + aa * d;
+        IF abs(d) < 1e-30 THEN
+            d := 1e-30;
+        END IF;
+        c := 1 + aa / c;
+        IF abs(c) < 1e-30 THEN
+            c := 1e-30;
+        END IF;
+        d := 1 / d;
+        h := h * d * c;
+
+        aa := -(a + m) * (qab + m) * x / ((a + 2*m) * (qap + 2*m));
+        d := 1 + aa * d;
+        IF abs(d) < 1e-30 THEN
+            d := 1e-30;
+        END IF;
+        c := 1 + aa / c;
+        IF abs(c) < 1e-30 THEN
+            c := 1e-30;
+        END IF;
+        d := 1 / d;
+        del := d * c;
+        h := h * del;
+
+        IF abs(del - 1) < tol THEN
+            EXIT;
+        END IF;
+    END LOOP;
+
+    RETURN h * exp(a * ln(x) + b * ln(1 - x) - (log_gamma(a) + log_gamma(b) - log_gamma(a+b)));
+END;
+$$;
+--Модифицированная функция incomplete_beta 
+CREATE OR REPLACE FUNCTION log_gamma(z numeric)
+RETURNS numeric
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    -- Коэффициенты Lanczos для g=7, n=9
+    p numeric[] := ARRAY[
+        0.99999999999980993,
+        676.5203681218851,
+        -1259.1392167224028,
+        771.32342877765313,
+        -176.61502916214059,
+        12.507343278686905,
+        -0.13857109526572012,
+        9.9843695780195716e-6,
+        1.5056327351493116e-7
+    ];
+    g numeric := 7;
+    i INT;
+    x numeric := z;
+    y numeric;
+    t numeric;
+    s numeric;
+BEGIN
+    IF x < 0.5 THEN
+        -- Используем формулу отражения для отрицательных/малых аргументов
+        RETURN log(pi()) - log(sin(pi() * x)) - log_gamma(1 - x);
+    END IF;
+
+    x := x - 1;
+    y := x + g + 0.5;
+    s := p[1];
+
+    FOR i IN 2..array_length(p,1) LOOP
+        s := s + p[i] / (x + i - 1);
+    END LOOP;
+
+    t := x + g + 0.5;
+    RETURN (x + 0.5) * ln(t) - t + ln(sqrt(2 * pi())) + ln(s);
+END;
+$$;
+/*
+Пояснения
+Приближение Ланцоша выбрано как стандартный способ вычисления логарифма гамма-функции с высокой точностью. 
+Коэффициенты взяты для g=7 и обеспечивают погрешность менее 10⁻¹⁵ для всех z > 0. 
+Для аргументов менее 0.5 использована формула отражения, что расширяет область применимости.
+
+Замена lgamma на log_gamma произведена в финальном вычислении фактора factor. Все остальные части алгоритма неполной бета-функции остались без изменений.
+
+Проверка граничных случаев сохранена для обеспечения корректной работы при x=0 и x=1.
+*/
+/*
+Примечания
+Функция использует PL/pgSQL и встроенные математические функции (sqrt, power, ln, exp, lgamma – доступна с PostgreSQL 8.4).
+
+Алгоритм неполной бета-функции сходится для всех x, кроме крайних значений; точность контролируется параметрами tol и max_iter.
+
+При очень малых объёмах выборки и экстремальных t-статистиках может потребоваться увеличение числа итераций.
+
+Функция lgamma (логарифм гамма-функции) доступна в PostgreSQL, что обеспечивает численную устойчивость.
+
+Если необходим критерий корреляции Пирсона с p-значением, можно построить аналогичную функцию, 
+вычислив коэффициент корреляции r и используя ту же student_t_cdf со статистикой t = r * sqrt((n-2)/(1-r^2)) и степенями свободы n-2.
+*/
+--Вспомогательная функция student_t_cdf и реализация неполной бета-функции:
+--------------------------------------------------------------------------------
+
+
+
+
+-------------------------------------------------------------------------------
+-- Заполнить значения корреляции для положительного коэффициента
+CREATE OR REPLACE FUNCTION fill_corr_values_for_positive_corr( correlation_rec record  ) RETURNS text[] AS $$
+DECLARE
+ result_str text[] ;
+ line_count integer ;
+BEGIN
+	line_count = 1 ;
+	
+	IF  correlation_rec.correvation_value IS NULL OR correlation_rec.correvation_value <=0 
+	THEN 
+		result_str[line_count] = '  Отрицательная или отсутствует' ; 
+		line_count=line_count+1;			 
+	ELSE			
+		UPDATE correlation_regression_flags SET correlation_flag = TRUE ;
+		result_str[line_count] = '  КОЭФФИЦИЕНТ КОРРЕЛЯЦИИ: |'||REPLACE ( TO_CHAR( ROUND( correlation_rec.correvation_value::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' );
+		line_count=line_count+1;	
+		result_str[line_count] = '  КОЭФФИЦИЕНТ ЗНАЧИМОСТИ ОЦЕНКИ(эмпирическое правило): |'||correlation_rec.significance_empirical;
+		line_count=line_count+1;	
+		result_str[line_count] = '  КОЭФФИЦИЕНТ ЗНАЧИМОСТИ ОЦЕНКИ(t-критерий): |'||correlation_rec.significance_t_test;
 		line_count=line_count+1;
 	END IF;
-	line_count=line_count+1;
-	--Характер нагрузки
-	-----------------------------------------------------------------------------
-*/	
+ 
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION fill_corr_values_for_positive_corr IS 'Заполнить значения корреляции для положительного коэффициента';
+-- Заполнить значения корреляции для положительного коэффициента
+-------------------------------------------------------------------------------
 
-----------------------------------------------------------------------------------------------------------------------
--- RESERVED FOR FUTURE 	
-/*
+-------------------------------------------------------------------------------
+-- Заполнить значения корреляции для отрицательного коэффициента
+CREATE OR REPLACE FUNCTION fill_corr_values_for_negative_corr( correlation_rec record  ) RETURNS text[] AS $$
+DECLARE
+ result_str text[] ;
+ line_count integer ;
+BEGIN
+	line_count = 1 ;
 	
+	IF  correlation_rec.correvation_value IS NULL OR correlation_rec.correvation_value >=0 
+	THEN 
+		result_str[line_count] = '  Положительная или отсутствует' ; 
+		line_count=line_count+1;			 
+	ELSE	
+		UPDATE correlation_regression_flags SET correlation_flag = TRUE ;	
+		result_str[line_count] = '  КОЭФФИЦИЕНТ КОРРЕЛЯЦИИ: |'||REPLACE ( TO_CHAR( ROUND( correlation_rec.correvation_value::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' );
+		line_count=line_count+1;	
+		result_str[line_count] = '  КОЭФФИЦИЕНТ ЗНАЧИМОСТИ ОЦЕНКИ(эмпирическое правило): |'||correlation_rec.significance_empirical;
+		line_count=line_count+1;	
+		result_str[line_count] = '  КОЭФФИЦИЕНТ ЗНАЧИМОСТИ ОЦЕНКИ(t-критерий): |'||correlation_rec.significance_t_test;
+		line_count=line_count+1;
+	END IF;
+ 
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION fill_corr_values_for_negative_corr IS 'Заполнить значения корреляции для отрицательного коэффициента';
+-- Заполнить значения корреляции для положительного коэффициента
+-------------------------------------------------------------------------------
 
+-------------------------------------------------------------------------------
+-- ЛИНИЯ НАИМЕНЬШИХ КВАДРАТОВ для линии регрессии вида Y = a + bt
+CREATE OR REPLACE FUNCTION the_line_of_least_squares() RETURNS 
+TABLE 
+(
+	current_slope  DOUBLE PRECISION , 
+	slope_angle_degrees DOUBLE PRECISION , 
+	current_r_squared DOUBLE PRECISION 	
+)
+AS $$ 
+BEGIN	
 	DROP TABLE IF EXISTS tmp_timepoints;
 	CREATE TEMPORARY TABLE tmp_timepoints
 	(
@@ -11688,273 +10709,1566 @@ BEGIN
 		curr_timepoint integer 
 	);
 
-
 	INSERT INTO tmp_timepoints
 	(
 		curr_timestamp ,	
 		curr_timepoint 
 	)
 	SELECT 
-		curr_timestamp , 
-		row_number() over (order by curr_timestamp) AS x
+		cl.curr_timestamp , 
+		row_number() over (order by cl.curr_timestamp) AS x
 	FROM
-	os_stat_iostat_device_median
-	WHERE 
-		curr_timestamp BETWEEN min_timestamp AND max_timestamp  
-	ORDER BY curr_timestamp	;	
+		first_time_series cl 
+	ORDER BY cl.curr_timestamp	;	
 
-	result_str[line_count] = 	'timestamp'||'|'||  --1
-								'№'||'|'	--2
-								'utilization(%)'||'|'	--3
-								'r_await(ms)'||'|'--4
-								'w_await(ms)'||'|'	--5							
-								'IOPS'||'|'	--6
-								'MB/s'||'|'	--7
-								'aqu_sz'||'|'	--8
-								'proc_b'||'|'	--9
-								'cpu_wa(%)'||'|'	--10								
-								;
-	line_count = line_count + 1;
+	BEGIN
+		RETURN QUERY 
+		WITH stats AS 
+		(
+		  SELECT 
+			AVG(t.curr_timepoint::DOUBLE PRECISION) as avg1, 
+			STDDEV(t.curr_timepoint::DOUBLE PRECISION) as std1,
+			AVG(s.curr_value::DOUBLE PRECISION) as avg2, 
+			STDDEV(s.curr_value::DOUBLE PRECISION) as std2
+		  FROM
+			first_time_series s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp )
+		),
+		standardized_data AS 
+		(
+			SELECT 
+				(t.curr_timepoint::DOUBLE PRECISION - avg1) / std1 as x_z,
+				(s.curr_value::DOUBLE PRECISION - avg2) / std2 as y_z
+			FROM
+				first_time_series s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp ) , stats
+		)	
+		SELECT
+			REGR_SLOPE(y_z, x_z) as slope, --b
+			ATAN(REGR_SLOPE(y_z, x_z)) * 180 / PI() as slope_angle_degrees, --угол наклона
+			REGR_R2(y_z, x_z) as r_squared -- Коэффициент детерминации
+		FROM standardized_data;
+	EXCEPTION
+	  --STDDEV(s.op_speed_long::DOUBLE PRECISION) = 0  
+	  WHEN division_by_zero THEN  -- Конкретное исключение для деления на ноль
+		RETURN QUERY 
+		SELECT 
+			1.0 as slope, --b
+			0.0  as slope_angle_degrees, --угол наклона
+			0.0  as r_squared ; -- Коэффициент детерминации
+	END;
+END
+$$ LANGUAGE plpgsql; 
+COMMENT ON FUNCTION the_line_of_least_squares IS 'ЛИНИЯ НАИМЕНЬШИХ КВАДРАТОВ для линии регрессии вида Y = a + bt';
+----------------------------------------------------------------------------------
+-- 	ЛИНИЯ НАИМЕНЬШИХ КВАДРАТОВ для линии регрессии вида Y = a + bX
+CREATE OR REPLACE FUNCTION Y_X_regression_line() RETURNS 
+TABLE 
+(
+	current_slope  DOUBLE PRECISION , 
+	slope_angle_degrees DOUBLE PRECISION , 
+	current_r_squared numeric 	
+)
+AS $$ 
+BEGIN	
+	BEGIN
+		RETURN QUERY 
+		WITH stats AS 
+		(
+		  SELECT 
+			AVG(X.curr_value::DOUBLE PRECISION) as avg1, 
+			STDDEV(X.curr_value::DOUBLE PRECISION) as std1,
+			AVG(Y.curr_value::DOUBLE PRECISION) as avg2, 
+			STDDEV(Y.curr_value::DOUBLE PRECISION) as std2
+		  FROM
+			first_time_series Y JOIN second_time_series X ON ( Y.curr_timestamp  = X.curr_timestamp )
+		),
+		standardized_data AS 
+		(
+			SELECT 
+				(X.curr_value::DOUBLE PRECISION - avg1) / std1 as x_z,
+				(Y.curr_value::DOUBLE PRECISION - avg2) / std2 as y_z
+			FROM
+				first_time_series Y JOIN second_time_series X ON ( Y.curr_timestamp  = X.curr_timestamp ) , stats
+		)	
+		SELECT
+			REGR_SLOPE(y_z, x_z) as slope, --b
+			ATAN(REGR_SLOPE(y_z, x_z)) * 180 / PI() as slope_angle_degrees, --угол наклона
+			ROUND( REGR_R2(y_z, x_z)::numeric , 2 ) as r_squared -- Коэффициент детерминации
+		FROM standardized_data;
+	EXCEPTION
+	  --STDDEV(Y.op_speed_long::DOUBLE PRECISION) = 0  
+	  WHEN division_by_zero THEN  -- Конкретное исключение для деления на ноль
+		RETURN QUERY 
+		SELECT 
+			1.0::DOUBLE PRECISION as slope, --b
+			0.0::DOUBLE PRECISION  as slope_angle_degrees, --угол наклона
+			0.0::numeric  as r_squared ; -- Коэффициент детерминации
+	END;
+END
+$$ LANGUAGE plpgsql; 
+COMMENT ON FUNCTION Y_X_regression_line IS 'ЛИНИЯ НАИМЕНЬШИХ КВАДРАТОВ для линии регрессии вида Y = a + bX';
+----------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
+-- Интерпретация коэффициента детерминации
+CREATE OR REPLACE FUNCTION interpretation_r2_coefficient ( r_squared numeric  ) RETURNS text[] AS $$
+DECLARE
+ result_str text[] ;
+ line_count integer ;
+BEGIN
+	line_count = 1 ;
 	
-	counter = 0 ; 
-	FOR io_perf_rec IN
-	SELECT 
-		ios.curr_timestamp , --1
-		ios.dev_util_pct_long AS util ,--3
-		ios.dev_r_await_long AS r_await ,--4
-		ios.dev_w_await_long AS w_await ,--5
-		(ios.dev_rps_long + ios.dev_wps_long) AS iops ,--6
-		(ios.dev_rmbs_long + ios.dev_wmbps_long ) AS mbs , --7
-		ios.dev_aqu_sz_long AS aqu_sz , --8
-		vms.procs_b_long AS proc_b , --9 
-		vms.cpu_wa_long AS cpu_wa  --10		
-		
-	FROM 
-		os_stat_iostat_device_median ios 
-		JOIN os_stat_vmstat_median vms ON (ios.curr_timestamp = vms.curr_timestamp )		
-	WHERE 	
-		ios.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
-		AND ios.device = device_name
-    ORDER BY ios.curr_timestamp 
-	LOOP
-		counter = counter + 1 ;
-		
-		result_str[line_count] =
-								to_char( io_perf_rec.curr_timestamp , 'YYYY-MM-DD HH24:MI') ||'|'|| --1
-								counter ||'|'||  --2
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.util::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --3
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.r_await::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --4
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.w_await::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --5
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.iops::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --6
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.mbs::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --7
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.aqu_sz::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --8
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.proc_b::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --9
-								REPLACE ( TO_CHAR( ROUND( io_perf_rec.cpu_wa::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'  --10								
-								;
-		
-		line_count=line_count+1; 			
-	END LOOP;
--- RESERVED FOR FUTURE 									
+	IF r_squared >= 0.8 
+	THEN 
+		result_str[line_count] = '     Качество модели: Очень высокое.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = '     Интерпретация: Модель объясняет более 80% дисперсии зависимой переменной.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = '     Вывод: Связь очень сильная, прогнозная способность высокая.' ; 
+		line_count=line_count+1;	
+	END IF ;
+	
+	IF r_squared >= 0.6 AND  r_squared < 0.8
+	THEN 
+		result_str[line_count] = '     Качество модели: Хорошее.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = '     Интерпретация: Модель объясняет от 60% до 80% вариации.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = '     Вывод: Достоверная и практически полезная модель.' ; 
+		line_count=line_count+1;	
+	END IF ;
+	
+	IF r_squared >= 0.4 AND  r_squared < 0.6
+	THEN  
+		result_str[line_count] = '     Качество модели: Удовлетворительное.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = '     Интерпретация: Модель объясняет от 40% до 60% дисперсии.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = '     Вывод: Модель пригодна для описания и проверки гипотез,' ; 
+		line_count=line_count+1;
+		result_str[line_count] = '      но для точного прогнозирования нуждается в доработке.' ; 
+		line_count=line_count+1;
+	END IF ;
+	
+	IF r_squared >= 0.2 AND  r_squared < 0.4
+	THEN 
+		result_str[line_count] = '     Качество модели: Слабое.' ; 
+		line_count=line_count+1;		
+		result_str[line_count] = '     Интерпретация: Модель объясняет менее 40%, но более 20% вариации.' ; 
+		line_count=line_count+1;		
+		result_str[line_count] = '     Вывод: Влияние факторов подтверждено, но модель ничего не предсказывает. ' ; 
+		line_count=line_count+1;			
+		result_str[line_count] = '      Годится только для констатации факта наличия связи.' ; 
+		line_count=line_count+1;			
+	END IF ;
+	
+	IF r_squared < 0.2 
+	THEN 
+		result_str[line_count] = '     Качество модели: Неудовлетворительное.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = '     Интерпретация: Модель объясняет менее 20% (вплоть до 0%) вариации.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = '     Вывод: Модель бесполезна. Коэффициенты, даже если они значимы, ' ; 
+		line_count=line_count+1;	
+		result_str[line_count] = '      ничего не объясняют с практической точки зрения.' ; 
+		line_count=line_count+1;	
+	END IF ;
+	
+ 
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION interpretation_r2_coefficient IS 'Интерпретация коэффициента детерминации';
+-- Интерпретация коэффицинета детерминации
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
+-- Интерпретация коэффициента тренда 
+/*
+Обоснование границ
+•	≥ 30 – соответствует очень высокой скорости изменения (например, рост очереди процессов на 30 за единицу времени) при отличной объясняющей способности модели (R2>0,8). Такие значения редко встречаются и указывают на серьёзные проблемы.
+•	20–30 – сильные тренды, характерные для систем с высокой нагрузкой, требуют внимания.
+•	10–20 – умеренные тренды, часто связаны с сезонными или постепенными изменениями.
+•	5–10 – слабые тренды, могут быть вызваны флуктуациями.
+•	< 5 – шум или статистически незначимые изменения.
 */
-----------------------------------------------------------------------------------------------------------------------
-
-
-  return result_str ; 
-END
-$$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_io_performance IS 'IO-performance';
--- Чек-лист IO
----------------------------------------------------------------------------------------------------------------------------------------------------------------
--- reports_shared_buffers.sql
--- version 6.0
---------------------------------------------------------------------------------
---
--- reports_shared_buffers Статистика shared_buffers
---
--------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------
--- Статистика shared_buffers
-CREATE OR REPLACE FUNCTION reports_shared_buffers( start_timestamp text , finish_timestamp text   ) RETURNS text[] AS $$
+CREATE OR REPLACE FUNCTION interpretation_K_coefficient ( K_value DOUBLE PRECISION  ) RETURNS text[] AS $$
 DECLARE
  result_str text[] ;
  line_count integer ;
- min_timestamp timestamptz ; 
- max_timestamp timestamptz ; 
- 
- counter integer ; 
- line_counter integer ; 
+BEGIN
+	line_count = 1 ;
+	
+	result_str[line_count] = 'Коэффициента Тренда |'|| REPLACE ( TO_CHAR( ROUND( K_value::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+	line_count=line_count+1;	
 
- shared_buffers_rec record;
+	IF K_value >= 30.0
+	THEN 
+		result_str[line_count] = 'Очень высокая скорость изменения при отличной объясняющей способности модели (R2>0,8).' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Значения редко встречаются и указывают на серьёзные проблемы.' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Создать инцидент, привлечь экспертов.' ; 
+		line_count=line_count+1;
+	END IF ;
+
+	IF K_value >= 20.0 AND K_value < 30
+	THEN 
+		result_str[line_count] = 'Cильный тренд, характерный для систем с высокой нагрузкой, требуется внимание' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Плановое реагирование в ближайшее время, анализ первопричин, корректировка конфигурации.' ; 
+		line_count=line_count+1;		
+	END IF ;
+
+	IF K_value >= 10.0 AND K_value < 20
+	THEN 
+		result_str[line_count] = 'Умеренный тренд, часто связан с сезонными или постепенными изменениями' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Усиленный мониторинг и проверка, поиск закономерностей.' ; 
+		line_count=line_count+1;		
+	END IF ;
+
+	IF K_value >= 5.0 AND K_value < 10
+	THEN 
+		result_str[line_count] = 'Слабый тренд, возможная флуктуация' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Фоновое наблюдение, ежемесячная отчётность, внимание при совпадении с другими сигналами.' ; 
+		line_count=line_count+1;		
+	END IF ;
+
+	IF K_value < 5
+	THEN 
+		result_str[line_count] = 'Шум или статистически незначимые изменения' ; 
+		line_count=line_count+1;
+		result_str[line_count] = 'Игнорировать либо учитывать в долгосрочной статистике без оперативных действий.' ; 
+		line_count=line_count+1;		
+	END IF ;
+	
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION interpretation_r2_coefficient IS 'Интерпретация коэффициента детерминации';
+-- Интерпретация коэффициента тренда 
+-------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+-- ЗАПОЛНЕНИЕ ТАБЛИЦЫ activities
+CREATE OR REPLACE PROCEDURE fill_in_wce_activities() 
+AS $$
+DECLARE 
+	activities_list text[];
+	wce_rec record ;
+	score_rec record ; 
+	curr_min_score_wait_event_type numeric[5]; 
+	curr_max_score_wait_event_type numeric[5]; 
+	curr_wait_event_type text[7] ;
+	curr_list text[];
+	curr_list_length integer ;
+	
+	wait_event_type_counter integer ;
+	score_wait_event_type_counter integer ;
+	
+BEGIN	
+
+	curr_min_score_wait_event_type[1] = 0; curr_max_score_wait_event_type[1] = 0.01 ; 
+	curr_min_score_wait_event_type[2] = 0.01; curr_max_score_wait_event_type[2] = 0.04 ; 
+	curr_min_score_wait_event_type[3] = 0.04; curr_max_score_wait_event_type[3] = 0.1 ; 
+	curr_min_score_wait_event_type[4] = 0.1; curr_max_score_wait_event_type[4] = 0.2 ; 
+	curr_min_score_wait_event_type[5] = 0.2; curr_max_score_wait_event_type[5] = 1 ; 
+	
+	curr_wait_event_type[1] ='BufferPin';
+	curr_wait_event_type[2] ='Extension';
+	curr_wait_event_type[3] ='IO';
+	curr_wait_event_type[4] ='IPC';
+	curr_wait_event_type[5] ='Lock';
+	curr_wait_event_type[6] ='LWLock';
+	curr_wait_event_type[7] ='Timeout';
+	
+	FOR wait_event_type_counter IN 1..7 
+	LOOP 
+		SELECT * 
+		INTO wce_rec
+		FROM wce
+		WHERE wait_event_type = curr_wait_event_type[wait_event_type_counter];
+			
+		FOR score_rec IN
+		SELECT *
+		FROM score
+		WHERE wait_event_type_id = wce_rec.id  		
+		LOOP 
+			
+			SELECT array_length( curr_list , 1 )
+			INTO curr_list_length ;
+			
+			SELECT trim_array( curr_list , curr_list_length )
+			INTO curr_list ; 
+			
+			-------------------------------------------------------------------------
+			-- BufferPin
+			IF wce_rec.wait_event_type = 'BufferPin'
+			THEN 
+				IF score_rec.min_score_wait_event_type = 0
+				THEN
+					curr_list[1] = 'ВКО < 0.01 : Игнорировать в текущем анализе.';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.01
+				THEN
+					curr_list[1] = '    Обновление PostgreSQL до версии с улучшенными алгоритмами работы с буферами';		
+					curr_list[2] = '    Рассмотрение возможности использования расширений для управления памятью';
+					curr_list[3] = '    Документирование случаев возникновения проблем для будущего анализа';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+			
+				IF score_rec.min_score_wait_event_type = 0.04
+				THEN
+					curr_list[1] = '    Реорганизация графика обслуживания БД для выполнения ресурсоемких операций в периоды низкой нагрузки';		
+					curr_list[2] = '    Использование табличных пространств на разных дисках для распределения нагрузки';
+					curr_list[3] = '    Мониторинг и ограничение количества одновременных операций обслуживания';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.1
+				THEN
+					curr_list[1] = '    Проверка и оптимизация работы с временными таблицами и большими наборами данных';		
+					curr_list[2] = '    Настройка maintenance_work_mem для операций обслуживания (VACUUM, индексация)';
+					curr_list[3] = '    Анализ необходимости увеличения shared_buffers для уменьшения конкуренции';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.2
+				THEN
+					curr_list[1] = '    Анализ и оптимизация запросов, выполняющих длительные операции с буферами (VACUUM, CREATE INDEX CONCURRENTLY)';		
+					curr_list[2] = '    Мониторинг блокировок буферов через представление pg_stat_activity с фильтрацией по wait_event_type = BufferPin';
+					curr_list[3] = '    Настройка параметра vacuum_cost_delay для уменьшения конкуренции при фоновых операциях';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+			END IF ; 
+			-- BufferPin
+			-------------------------------------------------------------------------
+			
+			
+			
+			-------------------------------------------------------------------------
+			-- Extension
+			IF wce_rec.wait_event_type = 'Extension'
+			THEN 
+				IF score_rec.min_score_wait_event_type = 0
+				THEN
+					curr_list[1] = 'ВКО < 0.01 : Игнорировать в текущем анализе.';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.01
+				THEN
+					curr_list[1] = '    Рассмотрение альтернативных расширений с аналогичной функциональностью';		
+					curr_list[2] = '    Кастомизация кода расширений';
+					curr_list[3] = '    Разделение нагрузки между разными экземплярами PostgreSQL';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+			
+				IF score_rec.min_score_wait_event_type = 0.04
+				THEN
+					curr_list[1] = '    Консультации с сообществом или разработчиками проблемных расширений';		
+					curr_list[2] = '    Настройка параметров расширений под конкретную нагрузку';
+					curr_list[3] = '    Создание индексов для ускорения работы функций расширений';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.1
+				THEN
+					curr_list[1] = '    Анализ конфигурации расширений на соответствие рекомендациям раз';		
+					curr_list[2] = '    Мониторинг производительности расширений в пиковые периоды нагрузки';
+					curr_list[3] = '    Оптимизация запросов, использующих функции проблемных расширений';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.2
+				THEN
+					curr_list[1] = '    Идентификация проблемных расширений через анализ pg_stat_activity и логов';		
+					curr_list[2] = '    Обновление расширений до последних стабильных версий';
+					curr_list[3] = '    Временное отключение расширений для диагностики причин ожиданий';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+			END IF ; 
+			-- Extension
+			-------------------------------------------------------------------------
+			
+			-------------------------------------------------------------------------
+			-- IO
+			IF wce_rec.wait_event_type = 'IO'
+			THEN 
+				IF score_rec.min_score_wait_event_type = 0
+				THEN
+					curr_list[1] = 'ВКО < 0.01 : Игнорировать в текущем анализе.';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.01
+				THEN
+					curr_list[1] = '    Внедрение мониторинга задержек дискового ввода-вывода на уровне ОС';
+					curr_list[2] = '    Рассмотрение использования сжатия на уровне СУБД или файловой системы';
+					curr_list[3] = '    Оптимизация файловой системы и параметров монтирования';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+			
+				IF score_rec.min_score_wait_event_type = 0.04
+				THEN
+					curr_list[1] = '    Настройка параметров shared_buffers и work_mem для уменьшения физических чтений';
+					curr_list[2] = '    Применение расширения pg_prewarm для предзагрузки часто используемых данных';
+					curr_list[3] = '    Оптимизация размера WAL и параметров контрольных точек (checkpoint)';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.1
+				THEN
+					curr_list[1] = '    Оптимизация autovacuum для горячих таблиц (настройка агрессивности, порогов)';
+					curr_list[2] = '    Разделение таблиц и индексов по разным табличным пространствам на разных дисках';
+					curr_list[3] = '    Использование табличных пространств на быстрых накопителях для горячих данных';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.2
+				THEN
+					curr_list[1] = '    Анализ и оптимизация топ-запросов по времени ожидания IO';
+					curr_list[2] = '    Проверка и оптимизация индексов (добавление недостающих, удаление неиспользуемых)';
+					curr_list[3] = '    Настройка параметров effective_io_concurrency и random_page_cost для используемого оборудования';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+			END IF ; 
+			-- IO
+			-------------------------------------------------------------------------
+			
+			-------------------------------------------------------------------------
+			-- IPC
+			IF wce_rec.wait_event_type = 'IPC'
+			THEN 
+				IF score_rec.min_score_wait_event_type = 0
+				THEN
+					curr_list[1] = 'ВКО < 0.01 : Игнорировать в текущем анализе.';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.01
+				THEN
+					curr_list[1] = '    Обновление до актуальной версии PostgreSQL с улучшенными IPC-механизмами';
+					curr_list[2] = '    Внедрение пулеров соединений (pgbouncer, pgpool-II) для уменьшения количества процессов';
+					curr_list[3] = '    Разделение БД на логические части с выделением отдельных экземпляров';	
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+			
+				IF score_rec.min_score_wait_event_type = 0.04
+				THEN
+					curr_list[1] = '    Настройка параметров shared memory и semaphores на уровне ОС';
+					curr_list[2] = '    Оптимизация параметров wal_buffers и commit_delay/commit_siblings';
+					curr_list[3] = '    Анализ и устранение конфликтов между сессиями за общие ресурсы';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.1
+				THEN					
+					curr_list[1] = '    Оптимизация параметров репликации (max_wal_senders, wal_keep_size, max_replication_slots)';
+					curr_list[2] = '    Балансировка подключений между экземплярами или использование пулеров соединений';
+					curr_list[3] = '    Мониторинг и ограничение количества одновременных подключений';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.2
+				THEN
+					curr_list[1] = '    Анализ и настройка параллельных запросов (max_parallel_workers_per_gather, max_parallel_workers)';
+					curr_list[2] = '    Мониторинг и оптимизация фоновых процессов (autovacuum, background writer, checkpointer)';
+					curr_list[3] = '    Настройка параметра shared_buffers для уменьшения конкуренции между процессами';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+			END IF ; 
+			-- IPC
+			-------------------------------------------------------------------------
+			
+			-------------------------------------------------------------------------
+			-- Lock
+			IF wce_rec.wait_event_type = 'Lock'
+			THEN 
+				IF score_rec.min_score_wait_event_type = 0
+				THEN
+					curr_list[1] = 'ВКО < 0.01 : Игнорировать в текущем анализе.';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.01
+				THEN
+					curr_list[1] = '    Изменение архитектуры приложения: внедрение очередей для асинхронной обработки';
+					curr_list[2] = '    Пересмотр схемы БД для минимизации точек конкуренции (нормализация/денормализация)';
+					curr_list[3] = '    Использование таблиц-очередей на основе SKIP LOCKED';	
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+			
+				IF score_rec.min_score_wait_event_type = 0.04
+				THEN
+					curr_list[1] = '    Анализ и оптимизация уровней изоляции транзакций';
+					curr_list[2] = '    Внедрение retry-логики в приложении для обработки deadlocks и таймаутов';
+					curr_list[3] = '    Использование advisory locks для нестандартных сценариев синхронизации';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.1
+				THEN
+					curr_list[1] = '    Изменение логики приложения для уменьшения времени удерживания блокировок';
+					curr_list[2] = '    Применение стратегий оптимистичной блокировки (version/timestamp поля)';
+					curr_list[3] = '    Реструктуризация запросов для минимизации конкуренции за объекты';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.2
+				THEN
+					curr_list[1] = '    Выявление и устранение блокирующих транзакций';
+					curr_list[2] = '    Оптимизация времени выполнения транзакций (разделение больших транзакций на меньшие)';
+					curr_list[3] = '    Установка разумных значений lock_timeout и idle_in_transaction_session_timeout';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+			END IF ; 
+			-- Lock
+			-------------------------------------------------------------------------
+			
+			
+			-------------------------------------------------------------------------
+			-- LWLock
+			IF wce_rec.wait_event_type = 'LWLock'
+			THEN 
+				IF score_rec.min_score_wait_event_type = 0
+				THEN
+					curr_list[1] = 'ВКО < 0.01 : Игнорировать в текущем анализе.';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.01
+				THEN
+					curr_list[1] = '    Обновление PostgreSQL до версии с улучшенными алгоритмами LWLock';
+					curr_list[2] = '    Архитектурные изменения: выделение специализированных инстансов для разных типов нагрузки';
+					curr_list[3] = '    Консультации с экспертами PostgreSQL по тонкой настройке';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+			
+				IF score_rec.min_score_wait_event_type = 0.04
+				THEN
+					curr_list[1] = '    Анализ и оптимизация использования prepared transactions.';
+					curr_list[2] = '    Мониторинг и ограничение количества одновременных подключений.';
+					curr_list[3] = '    Настройка параметров max_connections и superuser_reserved_connections.';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.1
+				THEN
+					curr_list[1] = '    Оптимизация параллельных операций обслуживания (max_parallel_maintenance_workers)';
+					curr_list[2] = '    Балансировка нагрузки во времени для ресурсоемких операций';
+					curr_list[3] = '    Тонкая настройка autovacuum для уменьшения конфликтов';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.2
+				THEN
+					curr_list[1] = '    Мониторинг точек конкуренции';
+					curr_list[2] = '    Оптимизация конкурентных DDL-операций (перенос в периоды низкой нагрузки)';
+					curr_list[3] = '    Настройка параметров памяти: work_mem, maintenance_work_mem, shared_buffers';	
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+			END IF ; 
+			-- LWLock
+			-------------------------------------------------------------------------
+			
+			
+			-------------------------------------------------------------------------
+			-- Timeout
+			IF wce_rec.wait_event_type = 'Timeout'
+			THEN 
+				IF score_rec.min_score_wait_event_type = 0
+				THEN
+					curr_list[1] = 'ВКО < 0.01 : Игнорировать в текущем анализе.';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.01
+				THEN
+					curr_list[1] = '    Архитектурные изменения для уменьшения необходимости в длинных транзакциях';
+					curr_list[2] = '    Внедрение механизмов ретраев с экспоненциальным откатом в приложении';
+					curr_list[3] = '    Обучение разработчиков работе с асинхронными операциями';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+			
+				IF score_rec.min_score_wait_event_type = 0.04
+				THEN
+					curr_list[1] = '    Настройка мониторинга для алертов по таймаутам';
+					curr_list[2] = '    Создание дашбордов для отслеживания динамики таймаутов';
+					curr_list[3] = '    Разработка скриптов для автоматического анализа причин таймаутов';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.1
+				THEN
+					curr_list[1] = '    Оптимизация запросов, регулярно превышающих statement_timeout';
+					curr_list[2] = '    Ревизия логики приложения на предмет длительных транзакций и блокировок';
+					curr_list[3] = '    Внедрение механизмов отслеживания прогресса длительных операций';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+				
+				IF score_rec.min_score_wait_event_type = 0.2
+				THEN
+					curr_list[1] = '    Анализ логов PostgreSQL на предмет сообщений о таймаутах';
+					curr_list[2] = '    Определение типов таймаутов (statement_timeout, lock_timeout, idle_timeout) и их источников';
+					curr_list[3] = '    Настройка параметров таймаутов в соответствии с требованиями приложения';
+					INSERT INTO activities ( score_wait_event_type_id , list )
+					VALUES ( score_rec.id , curr_list  );					
+				END IF ;
+			END IF ; 
+			-- Timeout
+			-------------------------------------------------------------------------
+		END LOOP ;
+	END LOOP ;
+END
+$$ LANGUAGE plpgsql; 
+COMMENT ON PROCEDURE fill_in_wce_activities IS 'ЗАПОЛНЕНИЕ ТАБЛИЦЫ activities';
+-- ЗАПОЛНЕНИЕ ТАБЛИЦЫ activities
+--------------------------------------------------------------------------------
+
+-- Получить активности по заданному wait_event_type и значению ВКО 
+CREATE OR REPLACE FUNCTION get_wce_activities( curr_wait_event_type text , curr_score_wait_event_type numeric ) RETURNS text[] AS $$
+DECLARE
+ result_str text[] ;
+ line_count integer ; 
+ wce_rec record ;
+ score_rec record ; 
+ activities_rec record ; 
+ list_length integer ; 
+BEGIN
+	SELECT * 
+	INTO wce_rec
+	FROM wce
+	WHERE wait_event_type = curr_wait_event_type ; 
+	
+	SELECT * 
+	INTO score_rec
+	FROM score
+	WHERE 
+		wait_event_type_id = wce_rec.id 
+		AND 
+		( min_score_wait_event_type <= curr_score_wait_event_type AND max_score_wait_event_type > curr_score_wait_event_type );
+	
+	SELECT 	* 
+	INTO activities_rec
+	FROM activities
+	WHERE score_wait_event_type_id = score_rec.id ;
+	
+	SELECT array_length( activities_rec.list , 1 )
+	INTO list_length ; 
+	
+	FOR line_count IN 1..list_length
+	LOOP
+		result_str[line_count] = activities_rec.list[line_count];
+	END LOOP;
+	
+  return result_str ; 
+END
+$$ LANGUAGE plpgsql  ;
+COMMENT ON FUNCTION get_wce_activities IS 'Заполнить данные по комплексному анализу ожижданий';
+-- Получить активности по заданному wait_event_type и значению ВКО 
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
+-- Заполнить данные по комплексному анализу ожиданий
+CREATE OR REPLACE FUNCTION fill_in_comprehensive_analysis_wait_event_type( title text , current_wait_type text , score_wait_event_type numeric   ) RETURNS text[] AS $$
+DECLARE
+ result_str text[] ;
+ line_count integer ;
+ correlation_rec record ; 
+ corr_values text[];
+ least_squares_rec record ; 
+ score_txt text[];
+ report_str_length integer ;
+ activity_list text[];
 
 BEGIN
 	line_count = 1 ;
 	
+	INSERT INTO wait_event_type_criteria_matrix ( wait_event_type ) VALUES ( current_wait_type );
 	
+	SELECT * INTO correlation_rec FROM quick_significance_check();
 	
-	
-	IF finish_timestamp = 'CURRENT_TIMESTAMP'
-	THEN 
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-
-		min_timestamp = max_timestamp - interval '1 hour'; 	
-	ELSE
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	min_timestamp ; 
-		
-		SELECT 	date_trunc('minute' ,  to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
+	-- Матрица критериев
+	-- Заполнить Коэффициент корреляции
+	UPDATE wait_event_type_criteria_matrix SET r_value = correlation_rec.correvation_value::DOUBLE PRECISION WHERE wait_event_type = current_wait_type ; 
+	IF correlation_rec.correvation_value > 0 
+	THEN 		
+		UPDATE wait_event_type_criteria_matrix SET p_value = correlation_rec.p_value::DOUBLE PRECISION WHERE wait_event_type = current_wait_type ;
 	END IF ;
-
-
+	-- Заполнить Коэффициент корреляции
+	-- Матрица критериев
 	
-	result_str[line_count] = 'СТАТИСТИКА shared_buffers' ; 
+	line_count=line_count+1;			 
+	result_str[line_count] = title;
 	line_count=line_count+1;
-		
 	
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+2; 
+	result_str[line_count] = 'Шаг 1. Интерпретация корреляций.';
 	
-	result_str[line_count] = 	'timestamp'||'|'||  --1
-								'№'||'|'	--2
-								'shared_blk_rw_time(s)'||'|' --3
-								'shared_blks_hit'||'|' --4
-								'shared_blks_read'||'|' --5
-								'shared_blks_dirtied'||'|' --6
-								'shared_blks_written'||'|' --7												
-								;
-	line_count = line_count + 1;
-	counter = 0 ; 
-	FOR shared_buffers_rec IN
-	SELECT 
-		cls.curr_timestamp , --1
-		(cls.curr_shared_blk_read_time+cls.curr_shared_blk_write_time)/1000.0 AS shared_blks_read_write_time , --3
-		cls.curr_shared_blks_hit AS shared_blks_hit ,--4
-		cls.curr_shared_blks_read AS shared_blks_read ,--5
-		cls.curr_shared_blks_dirtied AS shared_blks_dirtied ,--6
-		cls.curr_shared_blks_written AS shared_blks_written --7		
-	FROM cluster_stat_median cls 
-	WHERE 	
-		cls.curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
-    ORDER BY cls.curr_timestamp 
-	LOOP
-		counter = counter + 1 ;
-		result_str[line_count] =
-								to_char( shared_buffers_rec.curr_timestamp , 'YYYY-MM-DD HH24:MI') ||'|'|| --1
-								counter ||'|'||  --2
-								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_read_write_time::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --3
-								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_hit::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --4
-								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_read::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --5
-								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_dirtied::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --6
-								REPLACE ( TO_CHAR( ROUND( shared_buffers_rec.shared_blks_written::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|' --7
-								;
+    SELECT fill_corr_values_for_positive_corr( correlation_rec ) 
+	INTO corr_values ; 
+	SELECT result_str || corr_values
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+    SELECT array_length( result_str , 1 )
+	INTO line_count;
+    line_count=line_count+1;	
+	
+
+	
+    -- Если положительная корреляция между ожиданиями и типом ожидания
+	IF correlation_rec.correvation_value > 0 
+	THEN 	
+	    -- ЕСЛИ ОЦЕНКА ЗНАЧИМОСТИ КОЭФФИЦИЕНТА КОРРЕЛЯЦИИ - ЗНАЧИМА
+		IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+		THEN 			
+			result_str[line_count] = 'Шаг 2. Интерпретация ВКО.';
+			line_count=line_count+1;
+			result_str[line_count] = '  ВЗВЕШЕННАЯ КОРРЕЛЯЦИЯ ОЖИДАНИЙ(ВКО):' ||'|'|| REPLACE ( TO_CHAR( ROUND( score_wait_event_type, 2 ) , '000000000000D0000') , '.' , ',' )||'|' ; 		
+			line_count=line_count+1;
+			
+			-- Матрица критериев
+			-- Заполнить ВКО (w)
+				UPDATE wait_event_type_criteria_matrix SET w_value = score_wait_event_type::DOUBLE PRECISION WHERE wait_event_type = current_wait_type ;			
+			-- Заполнить ВКО (w)
+			-- Матрица критериев
+
+			
+			-- ЕСЛИ ВКО > 0.01
+			IF score_wait_event_type >= 0.01 
+			THEN 
+				
+				IF score_wait_event_type >= 0.2
+				THEN 
+					score_txt[1] = '    КРИТИЧЕСКОЕ ЗНАЧЕНИЕ : Немедленный анализ и действие. Основной фокус расследования.';
+				ELSIF score_wait_event_type >= 0.1 AND score_wait_event_type < 0.2 
+				THEN 
+					score_txt[1] = '    ВЫСОКОЕ ЗНАЧЕНИЕ : Глубокий анализ и планирование оптимизации.';
+				ELSIF score_wait_event_type >= 0.04 AND score_wait_event_type < 0.1 
+				THEN 
+					score_txt[1] = '    СРЕДНЕЕ ЗНАЧЕНИЕ : Контекстный анализ и наблюдение. Решение по остаточному принципу.';
+				ELSIF score_wait_event_type >= 0.01 AND score_wait_event_type < 0.04
+				THEN 
+					score_txt[1] = '    НИЗКОЕ ЗНАЧЕНИЕ : Наблюдение и документирование. Действия только при ухудшении.';
+				END IF;
+				result_str[line_count] = score_txt[1] ; 
+				line_count=line_count+1; 
+				IF length(score_txt[2]) > 0 
+				THEN 
+					result_str[line_count] = score_txt[2] ; 
+					line_count=line_count+1; 
+					result_str[line_count] = score_txt[3] ; 
+					line_count=line_count+1; 
+					result_str[line_count] = score_txt[4] ; 		
+				END IF;
+						
+				SELECT * INTO least_squares_rec FROM Y_X_regression_line();
+				
+				result_str[line_count] = 'Шаг 3. Интерпретация коэффициента детерминации R2.';
+				line_count=line_count+1;
+				
+				-- Матрица критериев
+				-- Заполнить R2
+					UPDATE wait_event_type_criteria_matrix SET r2_value = least_squares_rec.current_r_squared::DOUBLE PRECISION WHERE wait_event_type = current_wait_type ;				
+				-- Заполнить R2
+				-- Матрица критериев
+			
+				--R2 >= 0.2
+				IF least_squares_rec.current_r_squared >= 0.2  
+				THEN 
+					result_str[line_count] = ' РЕГРЕССИЯ ОЖИДАНИЯ СУБД(Y) ПО ОЖИДАНИЯМ ТИПА '||current_wait_type||'(X)' ; 
+					line_count=line_count+1; 
+					result_str[line_count] = ' Коэффициент детерминации R^2 ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.current_r_squared::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+					line_count=line_count+1;
+					result_str[line_count] = ' угол наклона  ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.slope_angle_degrees::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+					line_count=line_count+1; 		
+					SELECT interpretation_r2_coefficient( least_squares_rec.current_r_squared::numeric ) 
+					INTO corr_values ; 
+					result_str[line_count] = corr_values[1] ; 
+					line_count=line_count+1;
+					result_str[line_count] = corr_values[2] ; 
+					line_count=line_count+1;
+					result_str[line_count] = corr_values[3] ; 
+					line_count=line_count+1;
+					
+					-----------------------------------------------------
+					-- РЕКОМЕНДУЕМЫЕ ДЕЙСТВИЯ
+						--Получить активности по заданному wait_event_type и значению ВКО 
+						activity_list = '{}'::text[]; 
+						SELECT get_wce_activities( current_wait_type , score_wait_event_type )
+						INTO activity_list;
+						
+						result_str[line_count] = 'РЕКОМЕНДУЕМЫЕ ДЕЙСТВИЯ:';
+						SELECT result_str || activity_list
+						INTO result_str ; 
+					-- РЕКОМЕНДУЕМЫЕ ДЕЙСТВИЯ
+					-----------------------------------------------------
+				END IF;
+			ELSE
+				result_str[line_count] = 'ВКО < 0.01 : Игнорировать в текущем анализе.';
+				line_count=line_count+1;			
+			END IF;	--IF score_wait_event_type >= 0.01 
+			
 		
-		line_count=line_count+1; 
-	END LOOP;
-
-
+		ELSE 
+			result_str[line_count] = 'ОЦЕНКА ЗНАЧИМОСТИ КОЭФФИЦИЕНТА КОРРЕЛЯЦИИ - Незначима';
+			line_count=line_count+1;			
+		END IF; --IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	END IF; --IF correlation_rec.correvation_value > 0
+	--2.1 BufferPin'
+	----------------------------------------------------------------------------------------------------	
+	
+ 
   return result_str ; 
 END
 $$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_shared_buffers IS 'Статистика shared_buffers';
--- Чек-лист IO
----------------------------------------------------------------------------------------------------------------------------------------------------------------
--- reports_vm_dirty.sql
--- version 6.0
---------------------------------------------------------------------------------
---
--- reports_vm_dirty Статистика dirty_ratio/dirty_background_ratio
---
+COMMENT ON FUNCTION fill_in_comprehensive_analysis_wait_event_type IS 'Заполнить данные по комплексному анализу ожиданий';
+-- Заполнить данные по комплексному анализу ожиданий
 -------------------------------------------------------------------------------
 
+
+
 -------------------------------------------------------------------------------
--- Чек-лист IO
-CREATE OR REPLACE FUNCTION reports_vm_dirty( ram_all integer , start_timestamp text , finish_timestamp text   ) RETURNS text[] AS $$
+-- Заполнить данные по комплексному анализу корреляции
+CREATE OR REPLACE FUNCTION fill_in_comprehensive_analysis_correlation( title text , current_wait_type text , vmstat_metric text , correlation_sign integer , reason_casulas_list text[] ) RETURNS text[] AS $$
 DECLARE
  result_str text[] ;
  line_count integer ;
- min_timestamp timestamptz ; 
- max_timestamp timestamptz ; 
+ correlation_rec record ; 
+ corr_values text[];
+ least_squares_rec record ; 
+ score_txt text[];
+ report_str_length integer ;
+ correlation_regression_flags_rec record;
+ check_time_series_stationarity_rec record ;
+ is_series_stationary_flag BOOLEAN;
+ test_stationary_flag BOOLEAN ;
+ series_counter integer;
  
- counter integer ; 
- line_counter integer ; 
-
- vm_dirty_rec record;
-
+ r_norm DOUBLE PRECISION ; -- Нормализованное значение коэффициента корреляции
+ r2_norm DOUBLE PRECISION ; -- Нормализованное значение коэффициента детерминации
+ slope_norm DOUBLE PRECISION ; -- Нормализованное значение угла наклона 
+ 
 BEGIN
 	line_count = 1 ;
 	
+	TRUNCATE TABLE correlation_regression_flags ; 
+	INSERT INTO correlation_regression_flags ( correlation_flag, regression_flag ) VALUES ( FALSE , FALSE );
 	
+	SELECT * INTO correlation_rec FROM quick_significance_check();
 	
-	
-	IF finish_timestamp = 'CURRENT_TIMESTAMP'
-	THEN 
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-
-		min_timestamp = max_timestamp - interval '1 hour'; 	
-	ELSE
-		SELECT 	date_trunc('minute' ,  to_timestamp( start_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	min_timestamp ; 
-		
-		SELECT 	date_trunc('minute' ,  to_timestamp( finish_timestamp , 'YYYY-MM-DD HH24:MI' ) ) 
-		INTO 	max_timestamp ; 
-	END IF ;
-
-
-	
-	result_str[line_count] = 'Статистика dirty_ratio/dirty_background_ratio' ; 
+	line_count=line_count+1;			 
+	result_str[line_count] = title;
 	line_count=line_count+1;
 	
-	result_str[line_count] = 'RAM (MB)| '||ram_all||'|';
-	line_count=line_count+1;		
+	result_str[line_count] = 'Шаг 1. Интерпретация корреляций.';
 	
-	result_str[line_count] = to_char(min_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+1; 
-	result_str[line_count] = to_char(max_timestamp , 'YYYY-MM-DD HH24:MI') ;
-	line_count=line_count+2; 
+	--Прямая корреляция
+	IF correlation_sign = 1 
+	THEN 	
+		SELECT fill_corr_values_for_positive_corr( correlation_rec ) 
+		INTO corr_values ; 
+	--Обратная корреляция
+	ELSE
+		SELECT fill_corr_values_for_negative_corr( correlation_rec ) 
+		INTO corr_values ; 	
+	END IF;
 	
-	result_str[line_count] = 	'timestamp'||'|'||  --1
-								'№'||'|'	--2
-								'dirty (KB)'||'|' --3
-								'% от dirty_ratio'||'|' --4
-								'% от dirty_background_ratio'||'|' --5
-								'free + cached memory'||'|' --6
-								;
-	line_count = line_count + 1;
-	counter = 0 ; 
-	FOR vm_dirty_rec IN
-	SELECT 
-		curr_timestamp , --1
-		dirty_kb_long ,  --3
-		dirty_percent_long , --4
-		dirty_bg_percent_long , --5
-		available_mem_mb_long  --6		
-	FROM os_stat_vmstat_median cls 
-	WHERE 	
-		curr_timestamp BETWEEN min_timestamp AND max_timestamp 	
-    ORDER BY cls.curr_timestamp 
-	LOOP
-		counter = counter + 1 ;
-		result_str[line_count] =
-								to_char( vm_dirty_rec.curr_timestamp , 'YYYY-MM-DD HH24:MI') ||'|'|| --1
-								counter ||'|'||  --2
-								REPLACE ( TO_CHAR( ROUND( vm_dirty_rec.dirty_kb_long::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --3
-								REPLACE ( TO_CHAR( ROUND( vm_dirty_rec.dirty_percent_long::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --4
-								REPLACE ( TO_CHAR( ROUND( vm_dirty_rec.dirty_bg_percent_long::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'||  --5
-								REPLACE ( TO_CHAR( ROUND( vm_dirty_rec.available_mem_mb_long::numeric , 0 ) , '000000000000D0000' ) , '.' , ',' )  ||'|'  --6								
-								;
+	SELECT result_str || corr_values
+	INTO result_str ; 
+	SELECT array_append( result_str , ' ')
+	INTO result_str ;
+    SELECT array_length( result_str , 1 )
+	INTO line_count;
+    line_count=line_count+1;
+
+	-- Если направление корреляции совпадает с требуемым	
+	IF SIGN( correlation_rec.correvation_value) = correlation_sign
+	THEN 
+		IF ABS(correlation_rec.correvation_value) >= 0.7 
+		THEN
+			result_str[line_count] = ' ОЧЕНЬ ВЫСОКАЯ КОРРЕЛЯЦИЯ' ; 
+			line_count=line_count+1;
+		ELSIF ABS(correlation_rec.correvation_value) >= 0.5 AND ABS(correlation_rec.correvation_value) < 0.7
+		THEN 
+			result_str[line_count] = ' ВЫСОКАЯ КОРРЕЛЯЦИЯ' ; 
+			line_count=line_count+1;	
+		ELSE
+			result_str[line_count] = ' СЛАБАЯ ИЛИ СРЕДНЯЯ КОРРЕЛЯЦИЯ' ; 
+			line_count=line_count+1;		
+		END IF;
+	ELSE 
+		UPDATE correlation_regression_flags SET regression_flag = FALSE  ;
+	END IF;
+	
+
+	
+    -- Если направление корреляции совпадает с требуемым	
+	IF ABS(correlation_rec.correvation_value) > 0 AND SIGN( correlation_rec.correvation_value) = correlation_sign
+	THEN 	
+	    -- ЕСЛИ ОЦЕНКА ЗНАЧИМОСТИ КОЭФФИЦИЕНТА КОРРЕЛЯЦИИ - ЗНАЧИМА
+		IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+		THEN 	
+			UPDATE correlation_regression_flags SET correlation_flag = TRUE ;
+			
+			SELECT * INTO least_squares_rec FROM Y_X_regression_line();
+			
+			result_str[line_count] = 'Шаг 2. Интерпретация коэффициента детерминации R2.';
+			line_count=line_count+1;
+			
+			--R2 >= 0.2
+			IF least_squares_rec.current_r_squared >= 0.2  
+			THEN 
+				UPDATE correlation_regression_flags SET regression_flag = TRUE ;	
+				result_str[line_count] = ' РЕГРЕССИЯ '||current_wait_type||'(Y) ПО '||vmstat_metric||'(X)' ; 
+				line_count=line_count+1; 
+				result_str[line_count] = ' Коэффициент детерминации R^2 ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.current_r_squared::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+				line_count=line_count+1;
+				result_str[line_count] = ' угол наклона  ' ||'|'|| REPLACE ( TO_CHAR( ROUND( least_squares_rec.slope_angle_degrees::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ;
+				line_count=line_count+1; 		
+				SELECT interpretation_r2_coefficient( least_squares_rec.current_r_squared::numeric ) 
+				INTO corr_values ; 
+				result_str[line_count] = corr_values[1] ; 
+				line_count=line_count+1;
+				result_str[line_count] = corr_values[2] ; 
+				line_count=line_count+1;
+				result_str[line_count] = corr_values[3] ; 
+				line_count=line_count+1;
+			END IF;
+		ELSE 
+			UPDATE correlation_regression_flags SET regression_flag = FALSE  ;	
+		END IF; --IF correlation_rec.significance_empirical != 'Незначима' AND correlation_rec.significance_t_test != 'Незначима'
+	END IF; --IF correlation_rec.correvation_value > 0
+	----------------------------------------------------------------------------------------------------	
+	
+	SELECT * 
+	INTO correlation_regression_flags_rec
+	FROM correlation_regression_flags;
+	
+	IF NOT correlation_regression_flags_rec.correlation_flag
+	THEN 
+		result_str[line_count] = 'ИНТЕРПРЕТАЦИЯ КОРРЕЛЯЦИЙ: КОРРЕЛЯЦИЯ НЕСУЩЕСТВЕННА'; 
+		line_count=line_count+1;
+	END IF ; 
+	
+	IF NOT correlation_regression_flags_rec.regression_flag
+	THEN 
+		result_str[line_count] = 'ИНТЕРПРЕТАЦИЯ КОЭФФИЦИЕНТА ДЕТЕРМИНАЦИИ R2: НЕПРИГОДНАЯ МОДЕЛЬ'; 
+		line_count=line_count+1;
+	END IF ; 
+	
+	IF correlation_regression_flags_rec.correlation_flag AND correlation_regression_flags_rec.regression_flag
+	THEN 			
+		SELECT result_str || reason_casulas_list
+		INTO result_str ; 
 		
-		line_count=line_count+1; 
-	END LOOP;
+		----------------------------------------
+		-- Добавить значение в таблицу cpi_matrix
+		INSERT INTO cpi_matrix 	
+		( 
+			current_pair , 
+			r_norm , 
+			r2_norm , 
+			slope_source )
+		VALUES
+		( 
+			title ,
+			ABS(correlation_rec.correvation_value) ,
+			least_squares_rec.current_r_squared , 
+			least_squares_rec.slope_angle_degrees
+		);		
+		-- Добавить значение в таблицу cpi_matrix
+		----------------------------------------
+		
+	ELSE
+		return result_str ; 
+	END IF;
 
-
-  return result_str ; 
+    return result_str ; 
 END
 $$ LANGUAGE plpgsql  ;
-COMMENT ON FUNCTION reports_vm_dirty IS 'Статистика dirty_ratio/dirty_background_ratio';
--- Чек-лист IO
+COMMENT ON FUNCTION fill_in_comprehensive_analysis_correlation IS '-- Заполнить данные по комплексному анализу корреляции';
+-- Заполнить данные по комплексному анализу ожиданий
 -------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Вычислить значение Индекса Приоритета Корреляции (Correlation Priority Index, CPI)
+CREATE OR REPLACE PROCEDURE calculate_cpi_matrix()
+AS $$
+DECLARE
+    min_abs_slope DOUBLE PRECISION;
+    max_abs_slope DOUBLE PRECISION;
+    range_abs_slope DOUBLE PRECISION;
+BEGIN
+    -- 1. Получаем глобальные минимум и максимум модуля наклона
+    SELECT MIN(ABS(slope_source)), MAX(ABS(slope_source))
+    INTO min_abs_slope, max_abs_slope
+    FROM cpi_matrix
+    WHERE slope_source IS NOT NULL;
+
+    -- 2. Защита от деления на ноль (если все значения одинаковы или NULL)
+    IF max_abs_slope IS NULL OR max_abs_slope = min_abs_slope THEN
+        range_abs_slope := 1;   -- тогда все slope_norm будут (|slope| - min)/1 = 0
+    ELSE
+        range_abs_slope := max_abs_slope - min_abs_slope;
+    END IF;
+
+    -- 3. Нормализуем модуль наклона для всех записей
+    UPDATE cpi_matrix
+    SET slope_norm = (ABS(slope_source) - min_abs_slope) / range_abs_slope
+    WHERE slope_source IS NOT NULL;
+
+    -- 4. Для строк с NULL slope_source устанавливаем 0 (или можно оставить NULL)
+    UPDATE cpi_matrix
+    SET slope_norm = 0
+    WHERE slope_source IS NULL;
+
+    -- 5. Вычисляем CPI как кубический корень из произведения трёх нормированных компонент
+    UPDATE cpi_matrix
+    SET curr_value = 
+        CASE 
+            WHEN r_norm IS NOT NULL AND r2_norm IS NOT NULL AND slope_norm IS NOT NULL 
+                 AND r_norm >= 0 AND r2_norm >= 0 AND slope_norm >= 0
+            THEN power(r_norm * r2_norm * slope_norm, 1.0/3.0)
+            ELSE NULL
+        END;
+END;
+$$ LANGUAGE plpgsql;
+COMMENT ON PROCEDURE calculate_cpi_matrix IS 'Вычислить значение Индекса Приоритета Корреляции (Correlation Priority Index, CPI)';
+-- Вычислить значение Индекса Приоритета Корреляции (Correlation Priority Index, CPI)
+
+
+--------------------------------------------------------------------------------
+-- Добавить значение 
+CREATE OR REPLACE PROCEDURE truncate_time_series() 
+AS $$
+BEGIN	
+	TRUNCATE TABLE first_time_series ; 
+	TRUNCATE TABLE second_time_series ; 
+END
+$$ LANGUAGE plpgsql; 
+COMMENT ON PROCEDURE truncate_time_series IS 'БЫСТРАЯ ОЧИСТКА ТАБЛИЦ ВРЕМЕННЫХ РЯДОВ';
+-- БЫСТРАЯ ОЧИСТКА ТАБЛИЦ ВРЕМЕННЫХ РЯДОВ
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+-- Расчет весов критериев для wait_event_type
+CREATE OR REPLACE PROCEDURE calc_wait_event_type_criteria_weight()
+AS $$
+DECLARE
+    current_criteria_value numeric[][];  -- допускается любая размерность
+	lines numeric[4];
+	square_root numeric[4];	
+	square_root_sum numeric;
+	weigth numeric[4];
+	i integer ; 
+BEGIN
+	TRUNCATE TABLE wait_event_type_criteria_weight ; 
+    -- Инициализация массива 4x4 (заполнение нулями)
+    current_criteria_value := array_fill(0::numeric, ARRAY[4,4]);
+	
+	-- Инициализация массивов 
+    lines := array_fill(0::numeric, ARRAY[4]);
+	square_root := array_fill(0::numeric, ARRAY[4]);
+	weigth := array_fill(0::numeric, ARRAY[4]);
+	
+/*
+Пример экспертных оценок (могут корректироваться под конкретную задачу):
+•	Корреляция Пирсона (rr) и p-value (pp) одинаково важны, так как сила связи без значимости ненадёжна → a12=1a12=1.
+•	Взвешенная корреляция (ww) учитывает объёмы, поэтому она несколько важнее, чем просто корреляция → a13=3a13=3 (умеренное превосходство).
+•	Коэффициент детерминации (R2R2) даёт представление о вкладе в общую вариабельность, поэтому он важнее корреляции, но чуть менее важен, чем ВКО → a14=2a14=2.
+•	P-value (pp) важнее ВКО? Возможно, нет: значимость критична, но ВКО добавляет информацию о весе. Положим a23=1/2a23=1/2 (т.е. ВКО в 2 раза важнее p-value).
+•	P-value и R2R2: R2R2 важнее, так как показывает объяснённую дисперсию → a24=1/3a24=1/3 (т.е. R2R2 в 3 раза важнее).
+•	ВКО и R2R2: оба показателя важны, но ВКО более специфичен для ожиданий → a34=2a34=2 (ВКО в 2 раза важнее R2R2).
+*/
+    -- r Корреляция
+    current_criteria_value[1][1] := 1;
+    current_criteria_value[1][2] := 1;
+    current_criteria_value[1][3] := 3;
+    current_criteria_value[1][4] := 2;
+
+    -- p-value
+    current_criteria_value[2][1] := 1;
+    current_criteria_value[2][2] := 1;
+    current_criteria_value[2][3] := 1.0 / 2.0;   -- 0.5
+    current_criteria_value[2][4] := 1.0 / 3.0;   -- 0.333...
+
+    -- ВКО (w)
+    current_criteria_value[3][1] := 1.0 / 3.0;
+    current_criteria_value[3][2] := 2;
+    current_criteria_value[3][3] := 1;
+    current_criteria_value[3][4] := 2;
+
+    -- R2
+    current_criteria_value[4][1] := 1.0 / 2.0;
+    current_criteria_value[4][2] := 3;
+    current_criteria_value[4][3] := 1.0 / 2.0;
+    current_criteria_value[4][4] := 1;
+
+	--Произведение элементов каждой строки
+	-- Корень 4-й степени из произведений
+	FOR i IN 1..4 
+	LOOP 
+		lines[i] = current_criteria_value[i][1] * current_criteria_value[i][2] * current_criteria_value[i][3] * current_criteria_value[i][4] ;
+		square_root[i] = power( lines[i], 1.0 / 4.0);
+----RAISE NOTICE 'lines[i] = %', lines[i];		
+----RAISE NOTICE 'square_root[i] = %', square_root[i];		
+	END LOOP ;
+	
+	--Сумма корней
+	square_root_sum = square_root[1] + square_root[2] + square_root[3] + square_root[4] ;
+----RAISE NOTICE 'square_root_sum = %', square_root_sum;			
+	
+	--Нормировка – веса
+	--r корреляция
+	weigth[1] = square_root[1] / square_root_sum ; 
+----RAISE NOTICE 'weigth[1] = %', weigth[1];				
+	-- p-value
+	weigth[2] = square_root[2] / square_root_sum ; 
+----RAISE NOTICE 'weigth[2] = %', weigth[2];					
+	 -- ВКО (w)
+	weigth[3] = square_root[3] / square_root_sum ; 
+----RAISE NOTICE 'weigth[3] = %', weigth[3];					
+	-- R2
+	weigth[4] = square_root[4] / square_root_sum ; 
+----RAISE NOTICE 'weigth[4] = %', weigth[4];	
+
+----RAISE NOTICE 'sum = %', weigth[1]+weigth[2]+weigth[3]+weigth[4];	
+	
+	INSERT INTO wait_event_type_criteria_weight(curr_value) VALUES ( weigth );
+	
+END
+$$ LANGUAGE plpgsql;
+COMMENT ON PROCEDURE calc_wait_event_type_criteria_weight IS 'Расчет весов критериев для wait_event_type';
+
+-- Нормализовать значения в матрице критериев 
+CREATE OR REPLACE PROCEDURE norm_wait_event_type_criteria_matrix()
+AS $$
+DECLARE
+    rec record;
+    r_min numeric;
+    r_max numeric;
+    p_min numeric;
+    p_max numeric;
+    w_min numeric;
+    w_max numeric;
+    r2_min numeric;
+    r2_max numeric;
+    r_norm numeric;
+    p_norm numeric;
+    w_norm numeric;
+    r2_norm numeric;
+BEGIN
+    -- Однократное вычисление глобальных минимумов и максимумов для каждого критерия
+    SELECT
+        MIN(ABS(r_value)) FILTER (WHERE r_value IS NOT NULL),
+        MAX(ABS(r_value)) FILTER (WHERE r_value IS NOT NULL),
+        MIN(-log10(p_value + 1e-10)) FILTER (WHERE p_value IS NOT NULL),
+        MAX(-log10(p_value + 1e-10)) FILTER (WHERE p_value IS NOT NULL),
+        MIN(w_value) FILTER (WHERE w_value IS NOT NULL),
+        MAX(w_value) FILTER (WHERE w_value IS NOT NULL),
+        MIN(r2_value) FILTER (WHERE r2_value IS NOT NULL),
+        MAX(r2_value) FILTER (WHERE r2_value IS NOT NULL)
+    INTO
+        r_min, r_max,
+        p_min, p_max,
+        w_min, w_max,
+        r2_min, r2_max
+    FROM wait_event_type_criteria_matrix;
+
+    -- Цикл по всем строкам таблицы
+    FOR rec IN
+        SELECT *
+        FROM wait_event_type_criteria_matrix
+        ORDER BY wait_event_type
+    LOOP
+        --RAISE NOTICE '%', rec;
+
+        IF rec.r_value > 0 THEN
+            -- Нормализация абсолютного значения корреляции
+            IF r_max IS NOT NULL AND r_min IS NOT NULL AND r_max != r_min THEN
+                r_norm := (ABS(rec.r_value) - r_min) / (r_max - r_min);
+            ELSE
+                r_norm := 0;
+            END IF;
+
+            -- Нормализация преобразованного p-value
+            IF rec.p_value IS NOT NULL THEN
+                IF p_max IS NOT NULL AND p_min IS NOT NULL AND p_max != p_min THEN
+                    p_norm := (-log10(rec.p_value + 1e-10) - p_min) / (p_max - p_min);
+                ELSE
+                    p_norm := 0;
+                END IF;
+            ELSE
+                p_norm := NULL;
+            END IF;
+
+            -- Нормализация взвешенной корреляции ожиданий
+            IF rec.w_value IS NOT NULL THEN
+                IF w_max IS NOT NULL AND w_min IS NOT NULL AND w_max != w_min THEN
+                    w_norm := (rec.w_value - w_min) / (w_max - w_min);
+                ELSE
+                    w_norm := 0;
+                END IF;
+            ELSE
+                w_norm := NULL;
+            END IF;
+
+            -- Нормализация коэффициента детерминации
+            IF rec.r2_value IS NOT NULL THEN
+                IF r2_max IS NOT NULL AND r2_min IS NOT NULL AND r2_max != r2_min THEN
+                    r2_norm := (rec.r2_value - r2_min) / (r2_max - r2_min);
+                ELSE
+                    r2_norm := 0;
+                END IF;
+            ELSE
+                r2_norm := NULL;
+            END IF;
+        ELSE
+            -- Для строк с неположительной корреляцией все нормы обнуляются
+            r_norm := 0;
+            p_norm := 0;
+            w_norm := 0;
+            r2_norm := 0;
+        END IF;
+
+        --RAISE NOTICE 'wait_event_type_criteria_matrix_rec.wait_event_type = %', rec.wait_event_type;
+        --RAISE NOTICE 'r_norm = %', r_norm;
+        --RAISE NOTICE 'p_norm = %', p_norm;
+        --RAISE NOTICE 'w_norm = %', w_norm;
+        --RAISE NOTICE 'r2_norm = %', r2_norm;
+
+        -- Сохраняем вычисленные значения в таблице
+        UPDATE wait_event_type_criteria_matrix
+        SET calculated_r_norm = r_norm,
+            calculated_p_norm = p_norm,
+            calculated_w_norm = w_norm,
+            calculated_r2_norm = r2_norm
+        WHERE wait_event_type = rec.wait_event_type;
+    END LOOP;
+END
+$$ LANGUAGE plpgsql;
+COMMENT ON PROCEDURE norm_wait_event_type_criteria_matrix IS 'Нормализовать значения в матрице критериев';--------------------------------------------------------------------------------
+-- stats_proсessing_tables.sql
+-- version 7.0
+--------------------------------------------------------------------------------
+-- Таблицы для статистической обработки  данных
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Первый временной ряд
+DROP TABLE IF EXISTS first_time_series;
+CREATE UNLOGGED TABLE first_time_series 
+(
+ 	curr_timestamp timestamp with time zone , 
+	curr_value DOUBLE PRECISION 
+);
+
+COMMENT ON TABLE first_time_series IS 'Первый временной ряд';
+COMMENT ON COLUMN first_time_series.curr_timestamp IS 'Точка времени сбора данных ';
+COMMENT ON COLUMN first_time_series.curr_timestamp IS 'Значение';
+-- Первый временной ряд
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Второй временной ряд
+DROP TABLE IF EXISTS second_time_series;
+CREATE UNLOGGED TABLE second_time_series 
+(
+ 	curr_timestamp timestamp with time zone , 
+	curr_value DOUBLE PRECISION 
+);
+
+COMMENT ON TABLE second_time_series IS 'Второй временной ряд';
+COMMENT ON COLUMN second_time_series.curr_timestamp IS 'Точка времени сбора данных ';
+COMMENT ON COLUMN second_time_series.curr_timestamp IS 'Значение';
+-- Второй временной ряд
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- временной ряд для проверки на стационарность для причинности Гренджера
+DROP TABLE IF EXISTS test_stationary_series;
+CREATE UNLOGGED TABLE test_stationary_series
+(
+ 	curr_timestamp timestamp with time zone , 
+	curr_value DOUBLE PRECISION 
+);
+
+COMMENT ON TABLE test_stationary_series IS 'временной ряд для проверки на стационарность для причинности Гренджера';
+COMMENT ON COLUMN test_stationary_series.curr_timestamp IS 'Точка времени сбора данных ';
+COMMENT ON COLUMN test_stationary_series.curr_timestamp IS 'Значение';
+-- временной ряд для проверки на стационарность для причинности Гренджера
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- преобразование нестационарного временного ряда в стационарный
+DROP TABLE IF EXISTS series_for_make_series_stationary;
+CREATE UNLOGGED TABLE series_for_make_series_stationary
+(
+ 	curr_timestamp timestamp with time zone , 
+	differenced_value DOUBLE PRECISION ,
+	log_value DOUBLE PRECISION ,
+	standardized_value DOUBLE PRECISION
+);
+
+COMMENT ON TABLE series_for_make_series_stationary IS 'преобразование нестационарного временного ряда в стационарный';
+COMMENT ON COLUMN series_for_make_series_stationary.curr_timestamp IS 'Точка времени сбора данных ';
+COMMENT ON COLUMN series_for_make_series_stationary.differenced_value IS 'Дифференцирование';
+COMMENT ON COLUMN series_for_make_series_stationary.log_value IS 'Логарифмирование';
+COMMENT ON COLUMN series_for_make_series_stationary.standardized_value IS 'Стандартизация';
+-- преобразованиt нестационарного временного ряда в стационарный
+--------------------------------------------------------------------------------
+
+
+
+--------------------------------------------------------------------------------
+-- временной ряд для проверки на стационарность для причинности Гренджера
+DROP TABLE IF EXISTS test_stationary_series;
+CREATE UNLOGGED TABLE test_stationary_series
+(
+ 	curr_timestamp timestamp with time zone , 
+	curr_value DOUBLE PRECISION 
+);
+
+COMMENT ON TABLE test_stationary_series IS 'временной ряд для проверки на стационарность для причинности Гренджера';
+COMMENT ON COLUMN test_stationary_series.curr_timestamp IS 'Точка времени сбора данных ';
+COMMENT ON COLUMN test_stationary_series.curr_timestamp IS 'Значение';
+-- временной ряд для проверки на стационарность для причинности Гренджера
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- мероприятия ВКО по типам ожиданий
+-- Weighted Correlation of Expectations
+DROP TABLE IF EXISTS wce;
+CREATE UNLOGGED TABLE wce 
+(
+	id SERIAL  , 
+	wait_event_type text
+);
+
+COMMENT ON TABLE wce IS 'мероприятия ВКО по типам ожиданий';
+COMMENT ON COLUMN wce.wait_event_type IS 'Тип ожидания';
+
+DROP TABLE IF EXISTS score;
+CREATE UNLOGGED TABLE score 
+(	
+	id SERIAL ,
+	wait_event_type_id integer  ,
+	min_score_wait_event_type numeric , 
+	max_score_wait_event_type numeric 
+);
+
+COMMENT ON TABLE score IS 'мероприятия ВКО по типам ожиданий';
+COMMENT ON COLUMN score.wait_event_type_id IS 'ID - wce';
+COMMENT ON COLUMN score.min_score_wait_event_type IS 'Левая граница - значение ВКО для данного типа ожидания';
+COMMENT ON COLUMN score.max_score_wait_event_type IS 'Правая граница - значение ВКО для данного типа ожидания';
+
+DROP TABLE IF EXISTS activities;
+CREATE UNLOGGED TABLE activities 
+(	
+	score_wait_event_type_id integer ,
+	list text[] 
+);
+
+COMMENT ON TABLE activities IS 'Мероприятия ВКО по типам ожиданий';
+COMMENT ON COLUMN activities.score_wait_event_type_id IS 'ID - score ';
+COMMENT ON COLUMN activities.list IS 'Мероприятия ВКО по типам ожиданий по данному типу ожидания для данного значения ВКО';
+
+-------------------------------------------------------------------
+-- Заполнение таблиц ВКО
+INSERT INTO wce ( wait_event_type ) VALUES ('BufferPin');
+INSERT INTO wce ( wait_event_type ) VALUES ('Extension');
+INSERT INTO wce ( wait_event_type ) VALUES ('IO');
+INSERT INTO wce ( wait_event_type ) VALUES ('IPC');
+INSERT INTO wce ( wait_event_type ) VALUES ('Lock');
+INSERT INTO wce ( wait_event_type ) VALUES ('LWLock');
+INSERT INTO wce ( wait_event_type ) VALUES ('Timeout');
+
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'BufferPin') , 0 , 0.01 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'BufferPin') , 0.01 , 0.04 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'BufferPin') , 0.04 , 0.1 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'BufferPin') , 0.1 , 0.2 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'BufferPin') , 0.2 , 1.0 );
+
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Extension') , 0 , 0.01 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Extension') , 0.01 , 0.04 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Extension') , 0.04 , 0.1 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Extension') , 0.1 , 0.2 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Extension') , 0.2 , 1.0 );
+
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'IO') , 0 , 0.01 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'IO') , 0.01 , 0.04 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'IO') , 0.04 , 0.1 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'IO') , 0.1 , 0.2 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'IO') , 0.2 , 1.0 );
+
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'IPC') , 0 , 0.01 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'IPC') , 0.01 , 0.04 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'IPC') , 0.04 , 0.1 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'IPC') , 0.1 , 0.2 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'IPC') , 0.2 , 1.0 );
+
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Lock') , 0 , 0.01 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Lock') , 0.01 , 0.04 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Lock') , 0.04 , 0.1 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Lock') , 0.1 , 0.2 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Lock') , 0.2 , 1.0 );
+
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'LWLock') , 0 , 0.01 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'LWLock') , 0.01 , 0.04 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'LWLock') , 0.04 , 0.1 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'LWLock') , 0.1 , 0.2 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'LWLock') , 0.2 , 1.0 );
+
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Timeout') , 0 , 0.01 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Timeout') , 0.01 , 0.04 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Timeout') , 0.04 , 0.1 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Timeout') , 0.1 , 0.2 );
+INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Timeout') , 0.2 , 1.0 );
+-- Заполнение таблиц ВКО
+-------------------------------------------------------------------
+
+-- мероприятия ВКО по типам ожиданий
+-- Weighted Correlation of Expectations
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+--Сервисная таблица для комплексного корреляционного анализа 
+DROP TABLE IF EXISTS correlation_regression_flags ;
+CREATE UNLOGGED TABLE correlation_regression_flags 
+(	
+	correlation_flag BOOLEAN , 	
+	regression_flag BOOLEAN ,
+	is_series_stationary_flag BOOLEAN 
+);
+
+COMMENT ON TABLE correlation_regression_flags IS 'Сервисная таблица для комплексного корреляционного анализа';
+COMMENT ON COLUMN correlation_regression_flags.correlation_flag IS 'Шаг 1. Интерпретация корреляций.';
+COMMENT ON COLUMN correlation_regression_flags.regression_flag IS 'Шаг 2. Интерпретация коэффициента детерминации R2.';
+COMMENT ON COLUMN correlation_regression_flags.is_series_stationary_flag IS 'Шаг 3. Проверка стационарности ряда';
+--Сервисная таблица для комплексного корреляционного анализа 
+
+
+--------------------------------------------------------------------------------
+-- Веса критериев
+DROP TABLE IF EXISTS wait_event_type_criteria_weight  ;
+CREATE UNLOGGED TABLE wait_event_type_criteria_weight 
+(	
+	curr_value numeric[4]	
+);
+
+COMMENT ON TABLE wait_event_type_criteria_weight IS 'Веса критериев';
+COMMENT ON COLUMN wait_event_type_criteria_weight.curr_value IS 'Вес i-критерия';
+-- Веса критериев
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Матрица критериев
+DROP TABLE IF EXISTS wait_event_type_criteria_matrix  ;
+CREATE UNLOGGED TABLE wait_event_type_criteria_matrix 
+(	
+	wait_event_type text ,
+	r_value DOUBLE PRECISION , 
+	calculated_r_norm DOUBLE PRECISION , 
+	p_value DOUBLE PRECISION , 
+	calculated_p_norm DOUBLE PRECISION , 
+	w_value DOUBLE PRECISION , 
+	calculated_w_norm DOUBLE PRECISION , 
+	r2_value DOUBLE PRECISION ,
+	calculated_r2_norm DOUBLE PRECISION 	 	
+);
+
+COMMENT ON TABLE wait_event_type_criteria_matrix IS 'Матрица критериев';
+COMMENT ON COLUMN wait_event_type_criteria_matrix.wait_event_type IS 'тип ожидания';
+COMMENT ON COLUMN wait_event_type_criteria_matrix.r_value IS 'r Корреляция';
+COMMENT ON COLUMN wait_event_type_criteria_matrix.p_value IS 'p-value';
+COMMENT ON COLUMN wait_event_type_criteria_matrix.w_value IS 'ВКО (w)';
+COMMENT ON COLUMN wait_event_type_criteria_matrix.r2_value IS 'R2';
+COMMENT ON COLUMN wait_event_type_criteria_matrix.calculated_r_norm IS 'Нормализованное значение - r Корреляция';
+COMMENT ON COLUMN wait_event_type_criteria_matrix.calculated_p_norm IS 'Нормализованное значение - p-value';
+COMMENT ON COLUMN wait_event_type_criteria_matrix.calculated_w_norm IS 'Нормализованное значение - ВКО (w)';
+COMMENT ON COLUMN wait_event_type_criteria_matrix.calculated_r2_norm IS 'Нормализованное значение - R2';
+-- Матрица критериев
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Матрица для расчета Индекса Приоритета Корреляции (Correlation Priority Index, CPI) .
+DROP TABLE IF EXISTS cpi_matrix  ;
+CREATE UNLOGGED TABLE cpi_matrix 
+(
+		current_pair text ,
+		r_norm DOUBLE PRECISION , 
+        r2_norm DOUBLE PRECISION , 
+		slope_source DOUBLE PRECISION , 
+		slope_norm DOUBLE PRECISION , 
+		curr_value DOUBLE PRECISION 
+);
+COMMENT ON TABLE cpi_matrix IS 'Матрица для расчета Индекса Приоритета Корреляции (Correlation Priority Index, CPI)';
+COMMENT ON COLUMN cpi_matrix.current_pair IS 'Наименования значений для вычисления cpi';
+COMMENT ON COLUMN cpi_matrix.r_norm IS 'Нормализованное значение коэфициента корреляции';
+COMMENT ON COLUMN cpi_matrix.r2_norm IS 'Нормализованное значение коэфициента детерминации';
+COMMENT ON COLUMN cpi_matrix.slope_source IS 'Исходное значение угла наклона линии регрессии';
+COMMENT ON COLUMN cpi_matrix.slope_norm IS 'Нормальзованное значение угла наклона линии регрессии';
+COMMENT ON COLUMN cpi_matrix.curr_value IS 'Значение Индекса Приоритета Корреляции (Correlation Priority Index, CPI)';
+
+-- Матрица для расчета Индекса Приоритета Корреляции (Correlation Priority Index, CPI) .
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+--интегральный приоритет Pi для wait_event_type
+DROP TABLE IF EXISTS wait_event_type_Pi  ;
+CREATE UNLOGGED TABLE wait_event_type_Pi 
+(
+	wait_event_type_Pi text ,
+	integral_priority DOUBLE PRECISION		
+);
+COMMENT ON TABLE wait_event_type_Pi IS 'интегральный приоритет Pi для wait_event_type';
+COMMENT ON COLUMN wait_event_type_Pi.wait_event_type_Pi IS 'тип ожидания';
+COMMENT ON COLUMN wait_event_type_Pi.integral_priority IS 'интегральный приоритет';
+--интегральный приоритет Pi для wait_event_type
+--------------------------------------------------------------------------------
+
+
+
+

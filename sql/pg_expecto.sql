@@ -4859,7 +4859,7 @@ DECLARE
    wait_event_type_criteria_weight_rec record ;
 
    wait_event_type_Pi_rec record ; 
-   
+   ipw_result text ;
 BEGIN
 	line_count = 1 ;
 	
@@ -5397,12 +5397,16 @@ BEGIN
 	FOR wait_event_type_Pi_rec IN 
 	SELECT * 
 	FROM wait_event_type_Pi
+	WHERE integral_priority > 0 
 	ORDER BY integral_priority DESC 
 	LOOP
-		
-		result_str[line_count] = counter ||'|'||wait_event_type_Pi_rec.wait_event_type ||'|'|| REPLACE ( TO_CHAR( ROUND( wait_event_type_Pi_rec.integral_priority::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' );
-		line_count=line_count+1;			
-		counter = counter + 1 ;
+		ipw_result = counter ||'|'||wait_event_type_Pi_rec.wait_event_type ||'|'|| REPLACE ( TO_CHAR( ROUND( wait_event_type_Pi_rec.integral_priority::numeric , 4 ) , '000000000000D0000' ) , '.' , ',' );
+		IF ipw_result IS NOT NULL 
+		THEN 
+			result_str[line_count] = ipw_result ; 
+			line_count=line_count+1;			
+			counter = counter + 1 ;
+		END IF ;
 	END LOOP ;
 	
 	--Интегральный приоритет типа ожидания	
@@ -10693,70 +10697,61 @@ COMMENT ON FUNCTION fill_corr_values_for_negative_corr IS 'Заполнить з
 
 -------------------------------------------------------------------------------
 -- ЛИНИЯ НАИМЕНЬШИХ КВАДРАТОВ для линии регрессии вида Y = a + bt
-CREATE OR REPLACE FUNCTION the_line_of_least_squares() RETURNS 
-TABLE 
-(
-	current_slope  DOUBLE PRECISION , 
-	slope_angle_degrees DOUBLE PRECISION , 
-	current_r_squared DOUBLE PRECISION 	
+CREATE OR REPLACE FUNCTION the_line_of_least_squares()
+RETURNS TABLE (
+    current_slope DOUBLE PRECISION,
+    slope_angle_degrees DOUBLE PRECISION,
+    current_r_squared DOUBLE PRECISION
 )
-AS $$ 
-BEGIN	
-	DROP TABLE IF EXISTS tmp_timepoints;
-	CREATE TEMPORARY TABLE tmp_timepoints
-	(
-		curr_timestamp timestamptz  ,   
-		curr_timepoint integer 
-	);
+AS $$
+BEGIN  
+    DROP TABLE IF EXISTS tmp_timepoints;
+    CREATE TEMPORARY TABLE tmp_timepoints (
+        curr_timestamp timestamptz,
+        curr_timepoint integer
+    );
 
-	INSERT INTO tmp_timepoints
-	(
-		curr_timestamp ,	
-		curr_timepoint 
-	)
-	SELECT 
-		cl.curr_timestamp , 
-		row_number() over (order by cl.curr_timestamp) AS x
-	FROM
-		first_time_series cl 
-	ORDER BY cl.curr_timestamp	;	
+    INSERT INTO tmp_timepoints (curr_timestamp, curr_timepoint)
+    SELECT
+        cl.curr_timestamp,
+        row_number() OVER (ORDER BY cl.curr_timestamp) AS x
+    FROM first_time_series cl
+    ORDER BY cl.curr_timestamp;
 
-	BEGIN
-		RETURN QUERY 
-		WITH stats AS 
-		(
-		  SELECT 
-			AVG(t.curr_timepoint::DOUBLE PRECISION) as avg1, 
-			STDDEV(t.curr_timepoint::DOUBLE PRECISION) as std1,
-			AVG(s.curr_value::DOUBLE PRECISION) as avg2, 
-			STDDEV(s.curr_value::DOUBLE PRECISION) as std2
-		  FROM
-			first_time_series s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp )
-		),
-		standardized_data AS 
-		(
-			SELECT 
-				(t.curr_timepoint::DOUBLE PRECISION - avg1) / std1 as x_z,
-				(s.curr_value::DOUBLE PRECISION - avg2) / std2 as y_z
-			FROM
-				first_time_series s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp ) , stats
-		)	
-		SELECT
-			REGR_SLOPE(y_z, x_z) as slope, --b
-			ATAN(REGR_SLOPE(y_z, x_z)) * 180 / PI() as slope_angle_degrees, --угол наклона
-			REGR_R2(y_z, x_z) as r_squared -- Коэффициент детерминации
-		FROM standardized_data;
-	EXCEPTION
-	  --STDDEV(s.op_speed_long::DOUBLE PRECISION) = 0  
-	  WHEN division_by_zero THEN  -- Конкретное исключение для деления на ноль
-		RETURN QUERY 
-		SELECT 
-			1.0 as slope, --b
-			0.0  as slope_angle_degrees, --угол наклона
-			0.0  as r_squared ; -- Коэффициент детерминации
-	END;
+    BEGIN
+        RETURN QUERY
+        WITH stats AS (
+            SELECT
+                AVG(t.curr_timepoint::DOUBLE PRECISION) AS avg1,
+                STDDEV(t.curr_timepoint::DOUBLE PRECISION) AS std1,
+                AVG(s.curr_value::DOUBLE PRECISION) AS avg2,
+                STDDEV(s.curr_value::DOUBLE PRECISION) AS std2
+            FROM first_time_series s
+            JOIN tmp_timepoints t ON s.curr_timestamp = t.curr_timestamp
+        ),
+        standardized_data AS (
+            SELECT
+                (t.curr_timepoint::DOUBLE PRECISION - avg1) / std1 AS x_z,
+                (s.curr_value::DOUBLE PRECISION - avg2) / std2 AS y_z
+            FROM first_time_series s
+            JOIN tmp_timepoints t ON s.curr_timestamp = t.curr_timestamp
+            CROSS JOIN stats
+        )
+        SELECT
+            REGR_SLOPE(y_z, x_z) AS slope,
+            ATAN(REGR_SLOPE(y_z, x_z)) * 180 / PI() AS slope_angle_degrees,
+            REGR_R2(y_z, x_z) AS r_squared
+        FROM standardized_data;
+    EXCEPTION
+        WHEN division_by_zero THEN
+            RETURN QUERY
+            SELECT
+                1.0::DOUBLE PRECISION AS slope,
+                0.0::DOUBLE PRECISION AS slope_angle_degrees,
+                0.0::DOUBLE PRECISION AS r_squared;
+    END;
 END
-$$ LANGUAGE plpgsql; 
+$$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION the_line_of_least_squares IS 'ЛИНИЯ НАИМЕНЬШИХ КВАДРАТОВ для линии регрессии вида Y = a + bt';
 ----------------------------------------------------------------------------------
 -- 	ЛИНИЯ НАИМЕНЬШИХ КВАДРАТОВ для линии регрессии вида Y = a + bX

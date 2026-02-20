@@ -12260,11 +12260,11 @@ COMMENT ON COLUMN cpi_matrix.curr_value IS 'Значение Индекса Пр
 DROP TABLE IF EXISTS wait_event_type_Pi  ;
 CREATE UNLOGGED TABLE wait_event_type_Pi 
 (
-	wait_event_type_Pi text ,
+	wait_event_type text ,
 	integral_priority DOUBLE PRECISION		
 );
 COMMENT ON TABLE wait_event_type_Pi IS 'интегральный приоритет Pi для wait_event_type';
-COMMENT ON COLUMN wait_event_type_Pi.wait_event_type_Pi IS 'тип ожидания';
+COMMENT ON COLUMN wait_event_type_Pi.wait_event_type IS 'тип ожидания';
 COMMENT ON COLUMN wait_event_type_Pi.integral_priority IS 'интегральный приоритет';
 --интегральный приоритет Pi для wait_event_type
 --------------------------------------------------------------------------------

@@ -47,13 +47,5 @@ shared_preload_libraries=‘pg_stat_statements , pg_wait_sampling’
 
 # Использование pg_expecto
 
-- [PG_EXPECTO: Нагрузочное тестирование СУБД PostgreSQL](https://dzen.ru/a/aO90kwEztw-GQVba)
-- [PG_EXPECTO: Аудит производительности инфраструктуры при нагрузочном тестировании СУБД PostgreSQL](https://dzen.ru/a/aPmymHYePCkukP3p)
-- [Типовой шаблон расследования инцидентов PostgreSQL с помощью pg_expecto. Часть 1: Анализ на уровне СУБД](https://dzen.ru/a/aPyyCU9YvyBsSWJh)
-- [Типовой шаблон расследования инцидентов PostgreSQL с помощью pg_expecto. Часть 2: Детальный разбор инфраструктуры сервера](https://dzen.ru/a/aPzDp3M5O3zp2aZ1)
-- [Использование PG_EXPECTO для выявления проблемных SQL запросов при анализе инцидента производительности СУБД PostgreSQL](https://dzen.ru/a/aQX74beixXl2XCfR?share_to=link)
-- [PG_EXPECTO : Настройка сценариев нагрузочного тестирования СУБД PostgreSQL](https://dzen.ru/a/aQsuqvClBDUYiIA6?share_to=link)
-- [PG_EXPECTO 4 + Демобаза 2.0 : использование тестовой базы данных для нагрузочного тестирования СУБД](https://dzen.ru/a/aRMGMa7auy4kKuPk?share_to=link)
-- [PG_EXPECTO: Анализ влияния размера shared_buffers на производительность СУБД PostgreSQL](https://habr.com/p/976344/)
-- [PG_EXPECTO: work_mem: мифы и реальность производительности PostgreSQL](https://dzen.ru/a/aULBju4l2iRx7gNd)
+- [PG_EXPECTO : HOW TO](https://dzen.ru/suite/d271591a-d763-4191-9551-598bc5be9450?share_to=link)
 - [PG_EXPECTO v.7: Нейросеть DeepSeek в роли эксперта по PostgreSQL](https://dzen.ru/a/aZclG3DdMxbLg_ra?share_to=link)

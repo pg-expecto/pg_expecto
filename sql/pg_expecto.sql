@@ -5473,7 +5473,7 @@ COMMENT ON FUNCTION report_postgresql_wait_event_type IS 'КОРРЕЛЯЦИЯ �
 
 --------------------------------------------------------------------------------
 -- report_queryid_for_pareto.sql
--- version 7.0
+-- version 7.1
 --------------------------------------------------------------------------------
 --
 -- report_queryid_for_pareto Диаграмма Парето по queryid
@@ -5482,7 +5482,7 @@ COMMENT ON FUNCTION report_postgresql_wait_event_type IS 'КОРРЕЛЯЦИЯ �
 
 -------------------------------------------------------------------------------
 -- Сформировать диаграмму Парето по queryid
-CREATE OR REPLACE FUNCTION report_queryid_for_pareto(  start_timestamp text , finish_timestamp text ) RETURNS text[] AS $$
+CREATE OR REPLACE FUNCTION report_queryid_for_pareto(  start_timestamp text , finish_timestamp text , with_db BOOLEAN DEFAULT FALSE  ) RETURNS text[] AS $$
 DECLARE
  result_str text[] ;
  line_count integer ;
@@ -5561,14 +5561,25 @@ BEGIN
 		line_count=line_count+1;			
 		wait_event_type_counter = wait_event_type_counter + 1 ;
 		
-		result_str[line_count] =' QUERYID  '||'|'||	
-								' CALLS '||'|' ||
-								' WAITINGS '||'|' ||  --Всего ожидания wait_event_type по данному queryid
-								' PCT '||'|' ||       --отношение ожиданий wait_event_type по данному queryid к общему количество ожиданий wait_event_type
-								' DBNAME ROLENAME '||'|'||
-								' WAIT_EVENT LIST '||'|'
-								;	
-		line_count=line_count+1;
+		IF with_db 
+		THEN 		
+			result_str[line_count] =' QUERYID  '||'|'||	
+									' CALLS '||'|' ||
+									' WAITINGS '||'|' ||  --Всего ожидания wait_event_type по данному queryid
+									' PCT '||'|' ||       --отношение ожиданий wait_event_type по данному queryid к общему количество ожиданий wait_event_type
+									' DBNAME ROLENAME '||'|'||
+									' WAIT_EVENT LIST '||'|'
+									;	
+			line_count=line_count+1;
+		ELSE
+			result_str[line_count] =' QUERYID  '||'|'||	
+									' CALLS '||'|' ||
+									' WAITINGS '||'|' ||  --Всего ожидания wait_event_type по данному queryid
+									' PCT '||'|' ||       --отношение ожиданий wait_event_type по данному queryid к общему количество ожиданий wait_event_type
+									' WAIT_EVENT LIST '||'|'
+									;	
+			line_count=line_count+1;		
+		END IF ;
 		
 		pct_for_80 = 0;
 		
@@ -5619,13 +5630,23 @@ BEGIN
 				curr_timestamp  BETWEEN min_timestamp AND max_timestamp
 				AND queryid = wait_event_rec.queryid  
 				AND dbname = wait_event_rec.dbname ; 
-			
-			result_str[line_count] =  wait_event_rec.queryid  ||'|'||
-									  REPLACE ( TO_CHAR( ROUND( curr_calls::numeric , 0 ) , '000000000000D0000') , '.' , ',' ) ||'|'||
-									  wait_event_rec.count  ||'|'||
-									  REPLACE ( TO_CHAR( ROUND( (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ||'|'||
-									  wait_event_rec.dbname||' '||wait_event_rec.username||'|'
-									  ;
+				
+			IF with_db 
+			THEN 		
+				result_str[line_count] =  wait_event_rec.queryid  ||'|'||
+										  REPLACE ( TO_CHAR( ROUND( curr_calls::numeric , 0 ) , '000000000000D0000') , '.' , ',' ) ||'|'||
+										  wait_event_rec.count  ||'|'||
+										  REPLACE ( TO_CHAR( ROUND( (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ||'|'||
+										  wait_event_rec.dbname||' '||wait_event_rec.username||'|'
+										  ;
+			ELSE
+				result_str[line_count] =  wait_event_rec.queryid  ||'|'||
+										  REPLACE ( TO_CHAR( ROUND( curr_calls::numeric , 0 ) , '000000000000D0000') , '.' , ',' ) ||'|'||
+										  wait_event_rec.count  ||'|'||
+										  REPLACE ( TO_CHAR( ROUND( (wait_event_rec.count::numeric / total_wait_event_count::numeric *100.0)::numeric , 2 ) , '000000000000D0000') , '.' , ',' ) ||'|'
+										  ;
+				
+			END IF ;
 									  
 			FOR wait_event_list_rec IN 
 			SELECT 

@@ -83,6 +83,51 @@ exit_code $? $LOG_FILE $ERR_FILE
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  СВОДНЫЙ ОТЧЕТ ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ СУБД И МЕТРИК ОС - ЗАКОНЧЕН'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  СВОДНЫЙ ОТЧЕТ ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ СУБД И МЕТРИК ОС - ЗАКОНЧЕН' >> $LOG_FILE
 
+##################################################################################################################################
+# SCENARIO REPORT
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ОТЧЕТ ПО SQL СЦЕНАРИЯМ - НАЧАТ '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ОТЧЕТ ПО SQL СЦЕНАРИЯМ - НАЧАТ ' >> $LOG_FILE
+
+current_test_id=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT load_test_get_current_test_id()"` 2>$ERR_FILE
+max_sc_count=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT count(id) FROM testing_scenarios WHERE test_id = $current_test_id"` 2>$ERR_FILE
+
+for ((sc_count=1; sc_count <= $max_sc_count; sc_count++ )) 
+do 
+	queryid=`psql -d $expecto_db -U $expecto_user -Aqtc "SELECT queryid FROM testing_scenarios WHERE id = $sc_count AND  test_id = $current_test_id"` 2>$ERR_FILE
+		
+	#####################################################################################################
+	## ОЖИДАНИЯ ПО queryid
+	for wait_event_type in 'BufferPin' 'Extension' 'IO' 'IPC' 'Lock' 'LWLock' 'Timeout'
+	do 
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СЦЕНАРИЙ-'$sc_count' WAIT_EVENT_TYPE='$wait_event_type
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СЦЕНАРИЙ-'$sc_count' WAIT_EVENT_TYPE='$wait_event_type >> $LOG_FILE
+	  
+	  REPORT_FILE=$current_path'/scenario.'$sc_count'.'$queryid'.'$wait_event_type'.txt'
+	  
+	  psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_queryid_stat("$queryid" , '$wait_event_type' , '$start_timestamp' , '$finish_timestamp'))" > $REPORT_FILE 2>$ERR_FILE
+	  if [ $? -ne 0 ]
+	  then
+		echo 'ERROR : queryid_stat TERMINATED WITH ERROR. SEE DETAILS IN '$ERR_FILE
+		echo 'ERROR : queryid_stat TERMINATED WITH ERROR. SEE DETAILS IN '$ERR_FILE >> $LOG_FILE
+		exit 100
+	  fi
+
+		chmod 777 $REPORT_FILE
+		mv $REPORT_FILE $REPORT_DIR
+
+		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
+		echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
+	done  
+	## ОЖИДАНИЯ ПО queryid
+	#####################################################################################################
+	
+done
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ОТЧЕТ ПО SQL СЦЕНАРИЯМ - ЗАКОНЧЕН '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ОТЧЕТ ПО SQL СЦЕНАРИЯМ - ЗАКОНЧЕН ' >> $LOG_FILE
+# SCENARIO REPORT
+##################################################################################################################################
+
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK '
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK ' >> $LOG_FILE
 
@@ -226,10 +271,10 @@ cat 'x.sql_list.txt' >> $REPORT_FILE
 ######################################################################################################
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : PROMPT'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : PROMPT' >> $LOG_FILE
+
 REPORT_DIR='/tmp/pg_expecto_reports'
 cd $REPORT_DIR
-
-REPORT_FILE='_3.prompt.txt'  
+REPORT_FILE='_3.1.prompt.txt'  
 echo 'Сформируй сводный отчет по производительности СУБД и инфраструктуры.' > $REPORT_FILE
 echo 'Для формирования отчета используй списки, вместо таблиц.' >> $REPORT_FILE 
 echo 'Состав отчета: ' >> $REPORT_FILE 
@@ -262,8 +307,19 @@ echo '# Заключение ' >> $REPORT_FILE
 
 REPORT_DIR='/tmp/pg_expecto_reports'
 cd $REPORT_DIR
+REPORT_FILE='_3.2.prompt.short.diff.txt'  
+echo 'Сформируй краткий сравнительный отчет по производительности СУБД и инфраструктуры:' > $REPORT_FILE
+echo 'ЭКСПЕРИМЕНТ-1 (XXX = YYY)' >> $REPORT_FILE
+echo 'ЭКСПЕРИМЕНТ-2 (XXX = YYY)' >> $REPORT_FILE
+echo 'Для формирования отчета используй списки, вместо таблиц.' >> $REPORT_FILE 
+echo 'Состав отчета:' >> $REPORT_FILE 
+echo '# Существенные различия метрик производительностим СУБД и инфраструктуры' >> $REPORT_FILE
+echo '# Главный итог влияния XXX на производительность СУБД и инфраструктуры' >> $REPORT_FILE
 
-REPORT_FILE='_3.1.prompt.diff.txt'  
+
+REPORT_DIR='/tmp/pg_expecto_reports'
+cd $REPORT_DIR
+REPORT_FILE='_3.3.prompt.diff.txt'  
 echo 'Сформируй сводный сравнительный отчет по производительности СУБД и инфраструктуры:' > $REPORT_FILE
 echo 'ЭКСПЕРИМЕНТ-1 (XXX = YYY)' >> $REPORT_FILE
 echo 'ЭКСПЕРИМЕНТ-2 (XXX = ZZZ)' >> $REPORT_FILE

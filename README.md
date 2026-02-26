@@ -45,4 +45,4 @@ shared_preload_libraries=‘pg_stat_statements , pg_wait_sampling’
 
 # Использование pg_expecto
 
-- [PG_EXPECTO v.7 + DeepSeek : Настройка, запуск и анализ результатов нагрузочного тестирования имитирующего сценарии нагрузки OLTP и OLAP](https://dzen.ru/a/aZlV_MXyW1yI9r-j?share_to=link)
+- [PG_EXPECTO v.7 + DeepSeek: полный цикл диагностики производительности PostgreSQL — от нагрузочного тестирования до разбора инцидентов](https://dzen.ru/a/aaATukWy4T8iHW1t?share_to=link)

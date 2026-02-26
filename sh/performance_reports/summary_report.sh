@@ -443,6 +443,32 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТ
 # QUERYID FOR PARETO
 ####################################################################################################################################
 
+##################################################################################################################################
+# QUERYID FOR PARETO WITH DATABASE AND ROLES
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО SQL(ДИАГРАММА ПАРЕТО) - НАЧАТ'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО SQL(ДИАГРАММА ПАРЕТО) - НАЧАТ' >> $LOG_FILE
+
+
+if [ "$test_mode" == "DEFAULT" ]
+then
+  REPORT_FILE=$current_path'/x.queryid_pareto.txt'
+else
+  REPORT_FILE=$current_path'/x.1.test.queryid_pareto.txt'
+fi  
+
+
+psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_queryid_for_pareto( '$start_timestamp' , '$finish_timestamp' , TRUE )) " >>$REPORT_FILE 2>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+
+chmod 777 $REPORT_FILE
+mv $REPORT_FILE $REPORT_DIR
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR >> $LOG_FILE
+
+# QUERYID FOR PARETO
+####################################################################################################################################
+
 
 
 ##################################################################################################################################

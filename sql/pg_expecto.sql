@@ -4874,7 +4874,7 @@ DECLARE
   column_count integer ;
   stress_flag BOOLEAN; --TRUE - если отчет составляется по результатам НТ
   min_max_load_rec record ;
-  current_test_id integer ;
+  
   current_load_rec record ; 
   
   --Взвешенная корреляция ожиданий (ВКО) 
@@ -4901,8 +4901,6 @@ DECLARE
 BEGIN
 	line_count = 1 ;
 	
-	SELECT load_test_get_current_test_id()
-	INTO current_test_id; 
 	
 	
 	IF cluster_performance_finish_timestamp = 'CURRENT_TIMESTAMP'

@@ -1,7 +1,7 @@
 #!/bin/sh
 #####################################################################################
 # load_test_start.sh
-# version 6.0
+# version 7.1
 #####################################################################################
 # Старт нагрузочного тестирования
 #####################################################################################
@@ -39,7 +39,16 @@ exit_code $? $LOG_FILE $ERR_FILE
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : НОВЫЙ НАГРУЗОЧНЫЙ ТЕСТ'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : НОВЫЙ НАГРУЗОЧНЫЙ ТЕСТ' > $LOG_FILE
 
+start_load=`$current_path'/'get_conf_param.sh $current_path start_load 2>$ERR_FILE`
+exit_code $? $LOG_FILE $ERR_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : НАЧАЛЬНАЯ НАГРУЗКА  = '$start_load' СЕССИЙ'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : НАЧАЛЬНАЯ НАГРУЗКА  = '$start_load' СЕССИЙ' >> $LOG_FILE	
+psql -d $expecto_db -U $expecto_user -c 'select load_test_set_start_load('$start_load')' >> $LOG_FILE 2>>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+
+
 finish_load=`$current_path'/'get_conf_param.sh $current_path finish_load 2>$ERR_FILE`
+exit_code $? $LOG_FILE $ERR_FILE
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : МАКСИМАЛЬНАЯ НАГРУЗКА  = '$finish_load' СЕССИЙ'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : МАКСИМАЛЬНАЯ НАГРУЗКА  = '$finish_load' СЕССИЙ' >> $LOG_FILE	
 psql -d $expecto_db -U $expecto_user -c 'select load_test_set_max_load('$finish_load')' >> $LOG_FILE 2>>$ERR_FILE

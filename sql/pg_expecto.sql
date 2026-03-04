@@ -632,7 +632,7 @@ COMMENT ON PROCEDURE  start_incident IS 'Начать инцидент прои�
 
 --------------------------------------------------------------------------------
 -- core_cluster_tables.sql
--- version 5.0
+-- version 7.2
 --------------------------------------------------------------------------------
 --Статистика уровня кластера 
 --------------------------------------------------------------------------------
@@ -691,7 +691,7 @@ COMMENT ON COLUMN cluster_stat.curr_shared_blk_write_time IS 'Общее вре�
 --------------------------------------------------------------------------------
 --Скользящие медианы
 DROP TABLE IF EXISTS cluster_stat_median;
-CREATE UNLOGGED TABLE cluster_stat_median 
+CREATE TABLE cluster_stat_median 
 (
 	id SERIAL , 
 	curr_timestamp timestamp with time zone , 
@@ -742,7 +742,7 @@ COMMENT ON COLUMN cluster_stat_median.curr_shared_blk_write_time IS 'Общее 
 --------------------------------------------------------------------------------
 -- Инциденты производительности
 DROP TABLE IF EXISTS performance_incident ;
-CREATE UNLOGGED TABLE performance_incident 
+CREATE TABLE performance_incident 
 (
 	id BIGSERIAL ,
 	priority smallint , 
@@ -1730,7 +1730,7 @@ COMMENT ON FUNCTION os_stat_iostat_device IS 'Сформировать стат�
 -- Сформировать статистику по метрикам iostat
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- core_os_tables.sql
--- version 6.0
+-- version 7.2
 --------------------------------------------------------------------------------
 -- Статистика уровня ОС
 --------------------------------------------------------------------------------
@@ -1811,7 +1811,7 @@ COMMENT ON COLUMN os_stat_vmstat.available_mem_mb IS 'free + cached memory';
 --------------------------------------------------------------------------------
 --Скользящие медианы по метрикам vmstat
 DROP TABLE IF EXISTS os_stat_vmstat_median;
-CREATE UNLOGGED TABLE os_stat_vmstat_median 
+CREATE TABLE os_stat_vmstat_median 
 (
 	id SERIAL , 
 	curr_timestamp timestamp with time zone , 
@@ -1948,7 +1948,7 @@ COMMENT ON COLUMN os_stat_iostat_device.dev_f_await IS 'f_await Среднее �
 --------------------------------------------------------------------------------
 --Скользящие медианы по метрикам iostat
 DROP TABLE IF EXISTS os_stat_iostat_device_median;
-CREATE UNLOGGED TABLE os_stat_iostat_device_median 
+CREATE TABLE os_stat_iostat_device_median 
 (
 	id SERIAL , 
 	curr_timestamp timestamp with time zone ,	
@@ -2654,7 +2654,7 @@ COMMENT ON FUNCTION wait_queryid_jsonb IS 'Сформировать jsonb по �
 
 --------------------------------------------------------------------------------
 -- core_statement_tables.sql
--- version 1.0
+-- version 7.2
 --------------------------------------------------------------------------------
 -- Статистика уровня SQL выражений
 --------------------------------------------------------------------------------
@@ -2695,7 +2695,7 @@ COMMENT ON COLUMN statement_stat.curr_wait_stats IS 'Объект типа jsonb
 --------------------------------------------------------------------------------
 -- Текст SQL выражения
 DROP TABLE IF EXISTS statement_stat_sql;
-CREATE UNLOGGED TABLE statement_stat_sql
+CREATE TABLE statement_stat_sql
 (
  queryid bigint ,
  query text 
@@ -2747,7 +2747,7 @@ COMMENT ON COLUMN statement_stat_wait_events.curr_value IS 'Количество
 --------------------------------------------------------------------------------
 --Скользящие медианы на уровне SQL
 DROP TABLE IF EXISTS statement_stat_median;
-CREATE UNLOGGED TABLE statement_stat_median 
+CREATE TABLE statement_stat_median 
 (
   -----------------------------------------
   -- PRIMARY KEY
@@ -2795,7 +2795,7 @@ COMMENT ON COLUMN  statement_stat_median.timeout_long IS 'Скользящая �
 --------------------------------------------------------------------------------
 --Скользящие медианы по событиям ожидания для SQL выполнения
 DROP TABLE IF EXISTS statement_stat_waitings_median;
-CREATE UNLOGGED TABLE statement_stat_waitings_median 
+CREATE TABLE statement_stat_waitings_median 
 (
   -----------------------------------------
   -- PRIMARY KEY
@@ -3085,12 +3085,20 @@ BEGIN
 	
     -- Общее количество итераций (целочисленное деление)
     total := (Nmax - N0) / 10;	
+
+RAISE NOTICE 'N0=%',N0;
+RAISE NOTICE 'Nmax=%',Nmax;
+RAISE NOTICE 'iter=%',iter;
+RAISE NOTICE 'total=%',total;
+
 	
     IF load_test_rec.pass_counter < total 
 	THEN
 		-- Экспоненциальный рост: N0 * (Nmax/N0)^(iter/total)
 		sessions := N0 * power(Nmax::numeric / N0, iter::numeric / total);
 		result_load_connections = round(sessions) ; 
+RAISE NOTICE 'sessions=%',sessions;
+RAISE NOTICE 'result_load_connections=%',result_load_connections;		
 	ELSE
 		-- Для последней итерации сразу возвращаем load_test_rec.max_load (избегаем погрешностей)
         result_load_connections = Nmax ;
@@ -3103,6 +3111,10 @@ BEGIN
 	WHERE  
 		test_id = current_test_id AND 
 		pass_counter = load_test_rec.pass_counter ;
+
+RAISE NOTICE 'sessions=%',sessions;
+RAISE NOTICE 'result_load_connections=%',result_load_connections;		
+RAISE NOTICE 'load_test_rec.pass_counter=%',load_test_rec.pass_counter;		
 
 
 	return result_load_connections  ;
@@ -3726,7 +3738,7 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION get_vm_params_list IS 'получить список текущих параметров управления RAM ';	
 -----------------------------------------------------------------------------------
 -- load_test_tables.sql
--- version 6.0
+-- version 7.2
 --------------------------------------------------------------------------------
 --Таблицы для анализа нагрузочного тестирования
 -----------------------------------------------------------------------------------
@@ -3734,7 +3746,7 @@ COMMENT ON FUNCTION get_vm_params_list IS 'получить список тек�
 -----------------------------------------------------------------------------------
 --Нагрузочный тест 
 DROP TABLE IF EXISTS load_test CASCADE;
-CREATE UNLOGGED TABLE load_test
+CREATE TABLE load_test
 (
   test_id SERIAL , 
   base_load_connections DOUBLE PRECISION DEFAULT 5, -- Базовое количество соединений pgbench
@@ -3801,7 +3813,7 @@ COMMENT ON COLUMN load_test.swappiness IS 'склонность системы �
 -----------------------------------------------------------------------------------
 -- Итерация нагрузочного теста 
 DROP TABLE IF EXISTS load_test_pass CASCADE;
-CREATE UNLOGGED TABLE load_test_pass
+CREATE TABLE load_test_pass
 (
   id SERIAL , 
   test_id integer , --Тест
@@ -3828,7 +3840,7 @@ COMMENT ON COLUMN load_test_pass.load_connections IS 'Текущая нагру�
 -------------------------------------------------------------------------------------
 --Тестовые сценарии
 DROP TABLE IF EXISTS testing_scenarios ; 
-CREATE UNLOGGED TABLE testing_scenarios
+CREATE TABLE testing_scenarios
 (  
   id integer  ,
   weight real ,
@@ -10436,98 +10448,94 @@ COMMENT ON PROCEDURE truncate_time_series IS 'БЫСТРАЯ ОЧИСТКА ТА
 
 --------------------------------------------------------------------------------
 -- БЫСТРАЯ ПРОВЕРКА ЗНАЧИМОСТИ КОРРЕЛЯЦИИ
-CREATE OR REPLACE FUNCTION quick_significance_check() RETURNS 
-TABLE 
-(
-	correvation_value  DOUBLE PRECISION , 
-	p_value numeric ,
-	significance_empirical text , 
-	significance_t_test text 
+CREATE OR REPLACE FUNCTION quick_significance_check()
+RETURNS TABLE (
+    correvation_value  DOUBLE PRECISION,
+    p_value numeric,
+    significance_empirical text,
+    significance_t_test text
 )
-AS $$ 
-DECLARE 
-	diff_sum numeric := 0;
+AS $$
+DECLARE
+    diff_sum numeric := 0;
     diff_sq_sum numeric := 0;
     mean_diff numeric;
     sd_diff numeric;
     t_stat numeric;
     df INT;
     p_val numeric;
-	i integer ;
-	total_n integer ; 
-	t_value_rec record ; 
-BEGIN	
+    i integer;
+    total_n integer;
+    t_value_rec record;
+    variance_num numeric;   -- числитель дисперсии
+BEGIN  
+    ------------------------------------------------------------------
+    -- Расчет p-value (парный t-критерий)
+    SELECT COUNT(*) INTO total_n FROM first_time_series;
 
-	------------------------------------------------------------------
-	-- Расчет p-value
-		SELECT COUNT(*) 
-		INTO total_n
-		FROM first_time_series ; 
-		
-		-- Вычисление суммы разностей и суммы квадратов разностей
-		FOR t_value_rec IN 
-		SELECT t1.curr_value AS t1_value , t2.curr_value AS t2_value
-		FROM first_time_series t1 JOIN second_time_series t2 ON ( t1.curr_timestamp = t2.curr_timestamp )
-		ORDER BY  t1.curr_timestamp
-		LOOP 
-			diff_sum := diff_sum + (t_value_rec.t1_value - t_value_rec.t2_value);
-			diff_sq_sum := diff_sq_sum + (t_value_rec.t1_value - t_value_rec.t2_value)^2;
-		END LOOP;
-		
-		-- Среднее разностей
-		mean_diff := diff_sum / total_n;
-		-- Стандартное отклонение разностей (несмещённое)
-		IF total_n > 1 THEN
-			sd_diff := sqrt((diff_sq_sum - diff_sum^2 / total_n) / (total_n - 1));
-		ELSE
-			sd_diff := 0;
-		END IF;
+    -- Вычисление суммы разностей и суммы квадратов разностей
+    FOR t_value_rec IN
+        SELECT t1.curr_value AS t1_value, t2.curr_value AS t2_value
+        FROM first_time_series t1
+        JOIN second_time_series t2 ON t1.curr_timestamp = t2.curr_timestamp
+        ORDER BY t1.curr_timestamp
+    LOOP
+        diff_sum := diff_sum + (t_value_rec.t1_value - t_value_rec.t2_value);
+        diff_sq_sum := diff_sq_sum + (t_value_rec.t1_value - t_value_rec.t2_value)^2;
+    END LOOP;
 
-		-- t-статистика
-		IF sd_diff = 0 THEN
-			-- Если все разности равны нулю
-			p_val =  1.0;
-		END IF;
-		t_stat := mean_diff / (sd_diff / sqrt(total_n));
-		df := total_n - 1;
+    IF total_n > 1 THEN
+        -- Среднее разностей
+        mean_diff := diff_sum / total_n;
 
-		-- Вычисление двустороннего p-значения
-		p_val := 2 * (1 - student_t_cdf(t_stat, df));
-	-- Расчет p-value
-	------------------------------------------------------------------
+        -- Дисперсия (несмещённая)
+        variance_num := diff_sq_sum - (diff_sum * diff_sum) / total_n;
+        IF variance_num < 0 THEN
+            variance_num := 0;   -- защита от погрешностей
+        END IF;
 
-	RETURN QUERY 
-	WITH stats AS (
-		SELECT 
-			COALESCE( CORR(v2.curr_value, v1.curr_value) , 0 ) as r,
-			COUNT(*) as n,
-			SQRT(COUNT(*) - 2) / 
-			SQRT(1 - POWER(CORR(v2.curr_value, v1.curr_value), 2)) as test_value
-		FROM
-			first_time_series v1 JOIN second_time_series v2 ON (v1.curr_timestamp = v2.curr_timestamp )		
-	)
-	SELECT 
-		r AS correvation_value,
-		-- p-value
-        p_val  AS p_value , 
-		-- p-value		
-		-- Эмпирическое правило: для n > 30 и |r| > 2/√n корреляция значима
-		CASE 
-			WHEN n > 30 AND ABS(r) > 2 / SQRT(n) THEN 'Значима (p < ~0.05)'
-			WHEN n > 100 AND ABS(r) > 1.65 / SQRT(n) THEN 'Значима (p < ~0.1)'
-			WHEN n > 10 AND ABS(r) > 3 / SQRT(n) THEN 'Значима (p < ~0.01)'
-			ELSE 'Незначима'
-		END as significance_empirical,
-		-- Более точная проверка через t-критерий
-		CASE 
-			WHEN ABS(r * SQRT((n - 2) / (1 - r*r))) > 1.96 THEN 'Значима (95% уровень)'
-			WHEN ABS(r * SQRT((n - 2) / (1 - r*r))) > 1.645 THEN 'Значима (90% уровень)'
-			ELSE 'Незначима'
-		END as significance_t_test
-	FROM stats;	
-	
+        sd_diff := sqrt(variance_num / (total_n - 1));
+
+        IF sd_diff = 0 THEN
+            -- Все разности одинаковы → нет значимых отличий
+            p_val := 1.0;
+        ELSE
+            t_stat := mean_diff / (sd_diff / sqrt(total_n));
+            df := total_n - 1;
+            p_val := 2 * (1 - student_t_cdf(t_stat, df));
+        END IF;
+    ELSE
+        -- Недостаточно наблюдений для расчёта
+        p_val := NULL;
+    END IF;
+
+    ------------------------------------------------------------------
+    RETURN QUERY
+    WITH stats AS (
+        SELECT
+            COALESCE(CORR(v2.curr_value, v1.curr_value), 0) as r,
+            COUNT(*) as n
+        FROM first_time_series v1
+        JOIN second_time_series v2 ON v1.curr_timestamp = v2.curr_timestamp
+    )
+    SELECT
+        r AS correvation_value,
+        p_val AS p_value,
+        CASE
+            WHEN n > 30 AND ABS(r) > 2 / SQRT(n) THEN 'Значима (p < ~0.05)'
+            WHEN n > 100 AND ABS(r) > 1.65 / SQRT(n) THEN 'Значима (p < ~0.1)'
+            WHEN n > 10 AND ABS(r) > 3 / SQRT(n) THEN 'Значима (p < ~0.01)'
+            ELSE 'Незначима'
+        END as significance_empirical,
+        CASE
+            WHEN ABS(r * SQRT((n - 2) / (1 - r*r))) > 1.96 THEN 'Значима (95% уровень)'
+            WHEN ABS(r * SQRT((n - 2) / (1 - r*r))) > 1.645 THEN 'Значима (90% уровень)'
+            ELSE 'Незначима'
+        END as significance_t_test
+    FROM stats;
 END
-$$ LANGUAGE plpgsql; 
+$$ LANGUAGE plpgsql;
+
 COMMENT ON FUNCTION quick_significance_check IS 'БЫСТРАЯ ПРОВЕРКА ЗНАЧИМОСТИ КОРРЕЛЯЦИИ';
 -- БЫСТРАЯ ПРОВЕРКА ЗНАЧИМОСТИ КОРРЕЛЯЦИИ
 --------------------------------------------------------------------------------
@@ -12059,7 +12067,7 @@ END
 $$ LANGUAGE plpgsql;
 COMMENT ON PROCEDURE norm_wait_event_type_criteria_matrix IS 'Нормализовать значения в матрице критериев';--------------------------------------------------------------------------------
 -- stats_proсessing_tables.sql
--- version 7.0
+-- version 7.2
 --------------------------------------------------------------------------------
 -- Таблицы для статистической обработки  данных
 --------------------------------------------------------------------------------
@@ -12146,10 +12154,11 @@ COMMENT ON COLUMN test_stationary_series.curr_timestamp IS 'Значение';
 --------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
+-- СПРАВОЧНИКИ - ЛОГИРУЮТСЯ 
 -- мероприятия ВКО по типам ожиданий
 -- Weighted Correlation of Expectations
 DROP TABLE IF EXISTS wce;
-CREATE UNLOGGED TABLE wce 
+CREATE TABLE wce 
 (
 	id SERIAL  , 
 	wait_event_type text
@@ -12159,7 +12168,7 @@ COMMENT ON TABLE wce IS 'мероприятия ВКО по типам ожид�
 COMMENT ON COLUMN wce.wait_event_type IS 'Тип ожидания';
 
 DROP TABLE IF EXISTS score;
-CREATE UNLOGGED TABLE score 
+CREATE TABLE score 
 (	
 	id SERIAL ,
 	wait_event_type_id integer  ,
@@ -12173,7 +12182,7 @@ COMMENT ON COLUMN score.min_score_wait_event_type IS 'Левая граница 
 COMMENT ON COLUMN score.max_score_wait_event_type IS 'Правая граница - значение ВКО для данного типа ожидания';
 
 DROP TABLE IF EXISTS activities;
-CREATE UNLOGGED TABLE activities 
+CREATE TABLE activities 
 (	
 	score_wait_event_type_id integer ,
 	list text[] 
@@ -12235,6 +12244,20 @@ INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_w
 INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Timeout') , 0.1 , 0.2 );
 INSERT INTO score ( wait_event_type_id , min_score_wait_event_type , max_score_wait_event_type ) VALUES ( (SELECT id FROM wce WHERE wait_event_type = 'Timeout') , 0.2 , 1.0 );
 -- Заполнение таблиц ВКО
+
+--------------------------------------------------------------------------------
+-- Веса критериев
+DROP TABLE IF EXISTS wait_event_type_criteria_weight  ;
+CREATE TABLE wait_event_type_criteria_weight 
+(	
+	curr_value numeric[4]	
+);
+
+COMMENT ON TABLE wait_event_type_criteria_weight IS 'Веса критериев';
+COMMENT ON COLUMN wait_event_type_criteria_weight.curr_value IS 'Вес i-критерия';
+-- Веса критериев
+--------------------------------------------------------------------------------
+-- СПРАВОЧНИКИ - ЛОГИРУЮТСЯ 
 -------------------------------------------------------------------
 
 -- мероприятия ВКО по типам ожиданий
@@ -12258,18 +12281,6 @@ COMMENT ON COLUMN correlation_regression_flags.is_series_stationary_flag IS 'Ш�
 --Сервисная таблица для комплексного корреляционного анализа 
 
 
---------------------------------------------------------------------------------
--- Веса критериев
-DROP TABLE IF EXISTS wait_event_type_criteria_weight  ;
-CREATE UNLOGGED TABLE wait_event_type_criteria_weight 
-(	
-	curr_value numeric[4]	
-);
-
-COMMENT ON TABLE wait_event_type_criteria_weight IS 'Веса критериев';
-COMMENT ON COLUMN wait_event_type_criteria_weight.curr_value IS 'Вес i-критерия';
--- Веса критериев
---------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
 -- Матрица критериев

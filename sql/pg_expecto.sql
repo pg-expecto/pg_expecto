@@ -5466,6 +5466,7 @@ COMMENT ON FUNCTION report_postgresql_wait_event_type IS 'КОРРЕЛЯЦИЯ �
 --------------------------------------------------------------------------------
 -- report_queryid_for_pareto.sql
 -- version 7.1
+-- changed 13/03/2026
 --------------------------------------------------------------------------------
 --
 -- report_queryid_for_pareto Диаграмма Парето по queryid
@@ -5484,7 +5485,7 @@ DECLARE
  wait_event_type_rec record ;
  wait_event_rec record ;
  
- total_wait_event_count integer ;
+ total_wait_event_count bigint ;
  pct_for_80 numeric ;
  
  
@@ -5498,13 +5499,13 @@ DECLARE
  
  wait_event_type_corr_rec  record ; 
   
- tmp_queryid_index integer ; 
+ tmp_queryid_index bigint ; 
  wait_event_list text ;
  wait_event_list_rec record ;
  
  curr_calls numeric; 
 
- wait_event_type_counter integer ; 
+ wait_event_type_counter bigint ; 
  wait_event_type_Pi_rec record ; 
 
 BEGIN
@@ -7745,7 +7746,8 @@ COMMENT ON FUNCTION report_vmstat_performance IS 'Статистика прои�
 
 ﻿--------------------------------------------------------------------------------
 -- report_wait_event_type_for_pareto.sql
--- version 7.0
+-- version 7.1
+-- changed 13/03/2026
 --------------------------------------------------------------------------------
 --
 -- report_wait_event_type_for_pareto Диаграмма Парето по wait_event_type
@@ -7769,12 +7771,12 @@ DECLARE
  
  query_min_timestamp timestamptz ; 
  query_max_timestamp timestamptz ; 
- total_wait_event_count integer ;
+ total_wait_event_count bigint ;
  pct_for_80 numeric ;
  
  report_wait_event_for_pareto text[];
- report_wait_event_for_pareto_count integer ;
- index_for_wait_event integer ;
+ report_wait_event_for_pareto_count bigint ;
+ index_for_wait_event bigint ;
  
  corr_bufferpin DOUBLE PRECISION ; 
  corr_extension DOUBLE PRECISION ; 
@@ -7786,9 +7788,9 @@ DECLARE
  
  wait_event_type_corr_rec  record ; 
   
- tmp_wait_event_type_corr_index integer ; 
+ tmp_wait_event_type_corr_index bigint ; 
  	
- wait_event_type_counter integer ; 
+ wait_event_type_counter bigint ; 
  wait_event_type_Pi_rec record ; 
 BEGIN
 	line_count = 1 ;

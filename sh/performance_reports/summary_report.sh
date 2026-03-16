@@ -2,7 +2,8 @@
 ########################################################################################################
 # summary_report.sh
 # Сводный отчет  производительности/ожиданиям СУБД и метрикам ОС 
-# version 7.1
+# version 7.3
+# updated 16/03/2026
 ########################################################################################################
 
 #Обработать код возврата 
@@ -210,12 +211,13 @@ do
   then
     REPORT_FILE=$current_path'/2.1.vmstat_iostat_'$device'.txt'
   else
-    REPORT_FILE=$current_path'/2.1.1.vmstat_iostat_'$device'.txt'
+    REPORT_FILE=$current_path'/2.1.1.test.vmstat_iostat_'$device'.txt'
   fi  
   
   
   psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( report_vmstat_iostat('$start_timestamp' , '$finish_timestamp' , '$device'))" > $REPORT_FILE 2>$ERR_FILE
   exit_code $? $LOG_FILE $ERR_FILE
+  
   chmod 777 $REPORT_FILE
   mv $REPORT_FILE $REPORT_DIR
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ '$REPORT_FILE' СОХРАНЕН В ПАПКЕ '$REPORT_DIR
@@ -399,9 +401,9 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТ
 
 if [ "$test_mode" == "DEFAULT" ]
 then
-  REPORT_FILE=$current_path'/1.4.wait_event_type_pareto.txt.txt'
+  REPORT_FILE=$current_path'/1.4.wait_event_type_pareto.txt'
 else
-  REPORT_FILE=$current_path'/1.4.1.test.wait_event_type_pareto.txt.txt'
+  REPORT_FILE=$current_path'/1.4.1.test.wait_event_type_pareto.txt'
 fi  
 
 

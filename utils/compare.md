@@ -47,15 +47,21 @@
 
 ## Пример
 ### Формирование file1.txt
+```
 psql -Aqtc "select name||' = '||setting from pg_settings order by name" > /tmp/file1.txt
 chmod 777 /tmp/file1.txt
+```
 
 ### Формирование file2.txt
+```
 psql -Aqtc "select name||' = '||setting from pg_settings order by name" > /tmp/file2.txt
 chmod 777 /tmp/file2.txt
+```
 
 ### Формирование результата
+```
 ./compare.sh file1.txt file2.txt /tmp/settings.txt
+```
 
 ## Примечания
 ```

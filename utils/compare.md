@@ -1,5 +1,5 @@
 ```txt
-# compare_config.sh
+# compare.sh
 
 Скрипт для сравнения двух файлов конфигурации в формате «ключ=значение».
 
@@ -46,34 +46,16 @@
     `ключ | | значение2`
 
 ## Пример
+### Формирование file1.txt
+psql -Aqtc "select name||' = '||setting from pg_settings order by name" > /tmp/file1.txt
+chmod 777 /tmp/file1.txt
 
-**file1.txt**  
-```
-name=John
-age=30
-city=Paris
-timeout=60  # seconds
-```
+### Формирование file2.txt
+psql -Aqtc "select name||' = '||setting from pg_settings order by name" > /tmp/file2.txt
+chmod 777 /tmp/file2.txt
 
-**file2.txt**  
-```
-name=John
-age=31
-country=France
-```
-
-**Вызов**  
-```bash
-./compare_config.sh file1.txt file2.txt result.txt
-```
-
-**Содержимое result.txt**  
-```
-ключ | file1.txt | file2.txt
-age | 30 | 31
-city | Paris | 
-country | | France
-```
+### Формирование результата
+./compare.sh file1.txt file2.txt /tmp/settings.txt
 
 ## Примечания
 - Скрипт использует ассоциативные массивы bash, поэтому требуется версия bash 4.0 или выше.

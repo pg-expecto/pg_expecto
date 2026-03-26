@@ -2,8 +2,8 @@
 ########################################################################################################
 # incident_report.sh
 # Отчет по производительности СУБД и инфраструктуры
-# version 7.3
-# updated 16/03/2026
+# version 7.4
+# updated 26/03/2026
 ########################################################################################################
 
 #Обработать код возврата 
@@ -118,15 +118,11 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ФОРМИРОВАНИ
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ФОРМИРОВАНИЕ СТАТИСТИЧЕСКИХ ДАННЫХ ДЛЯ НЕЙРОСЕТИ - НАЧАТО' >> $LOG_FILE
 
 ##########################################################################################
-# 1. НАСТРОЙКИ
+# 1.НАСТРОЙКИ
 REPORT_FILE='_1.settings.txt'
 echo 'НАСТРОЙКИ СУБД и VM' > $REPORT_FILE 
-#файл postgresql.auto.conf
 psql -c 'select version()' >> $REPORT_FILE 
-data_directory=`psql -Aqtc  'SHOW data_directory'`
-postgresql_auto_conf=$data_directory'/postgresql.auto.conf'
-#cat $postgresql_auto_conf >> $REPORT_FILE
-grep -vwE "(log_filename)" $postgresql_auto_conf >> $REPORT_FILE
+psql -Aqtc "select name , setting from pg_settings where not pending_restart and name != 'log_filename'" >> $REPORT_FILE
 echo ' ' >> $REPORT_FILE
 
 #количество ядер CPU
@@ -482,6 +478,8 @@ REPORT_DIR='/tmp/pg_expecto_reports'
 cd $REPORT_DIR
 REPORT_FILE='_4.7.io_prompt.advice.txt'  
 echo 'Сформируй рекомендации по итогам анализа производительности подсистемы IO' > $REPORT_FILE
+echo '_3.vmstat_iostat.txt - ИНЦИДЕНТ ПРОИЗВОДИТЕЛЬНОСТИ СУБД' >> $REPORT_FILE
+echo '_3.1.test.vmstat_iostat.txt - ТЕСТОВЫЙ ОТРЕЗОК ПРОИЗВОДИТЕЛЬНОСТИ СУБД' >> $REPORT_FILE
 echo 'Для формирования отчета используй списки, вместо таблиц.' >> $REPORT_FILE 
 echo 'Состав отчета:' >> $REPORT_FILE 
 echo '# Рекомендации по итогам анализа инцидента' >> $REPORT_FILE 

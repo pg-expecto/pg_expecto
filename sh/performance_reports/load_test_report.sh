@@ -2,8 +2,8 @@
 ########################################################################################################
 # load_test_report.sh
 # Отчет по нагрузочному тестированию
-# version 7.3
-# updated 16/03/2026
+# version 7.4
+# updated 26/03/2026
 ########################################################################################################
 
 #Обработать код возврата 
@@ -157,10 +157,11 @@ REPORT_FILE='_1.settings.txt'
 echo 'НАСТРОЙКИ СУБД и VM' > $REPORT_FILE 
 #файл postgresql.auto.conf
 psql -c 'select version()' >> $REPORT_FILE 
-data_directory=`psql -Aqtc  'SHOW data_directory'`
-postgresql_auto_conf=$data_directory'/postgresql.auto.conf'
-#cat $postgresql_auto_conf >> $REPORT_FILE
-grep -vwE "(log_filename)" $postgresql_auto_conf >> $REPORT_FILE
+#data_directory=`psql -Aqtc  'SHOW data_directory'`
+#postgresql_auto_conf=$data_directory'/postgresql.auto.conf'
+##cat $postgresql_auto_conf >> $REPORT_FILE
+#grep -vwE "(log_filename)" $postgresql_auto_conf >> $REPORT_FILE
+psql -Aqtc "select name , setting from pg_settings where not pending_restart and name != 'log_filename'" >> $REPORT_FILE
 echo ' ' >> $REPORT_FILE
 
 #количество ядер CPU

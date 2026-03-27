@@ -17,6 +17,7 @@
 - Ринат Сунгатуллин **kznalp@yandex.ru**
 - [Дзен-канал](https://dzen.ru/kznalp) : https://dzen.ru/kznalp
 - [Телеграм-канал](https://t.me/pg_expecto) : https://t.me/pg_expecto
+- [Max](https://max.ru/join/T8sCiETC85Tr4Dkh_nM362PVcCbGDLagF4RZKHf4Udg)
 
 ## Статус проекта
 Текущая версия: 7

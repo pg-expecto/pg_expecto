@@ -1,4 +1,3 @@
-```markdown
 # load_test_report.sh
 
 **Версия:** 7.4  
@@ -24,16 +23,6 @@
   - Подключаться к `expecto_db` от имени `expecto_user` (предполагается, что аутентификация настроена через `.pgpass` или доверительное соединение).
   - Записывать файлы в `/tmp/pg_expecto_reports/`.
   - Выполнять сопутствующие скрипты `summary_report.sh` и `get_reports_param.sh`, которые должны находиться в том же каталоге.
-
-## Установка / Подготовка
-
-1. Поместите `load_test_report.sh` и сопутствующие скрипты (`summary_report.sh`, `get_reports_param.sh`) в один каталог.
-2. Установите права на выполнение:
-   ```bash
-   chmod +x load_test_report.sh summary_report.sh get_reports_param.sh
-   ```
-3. Убедитесь, что база данных `expecto_db` существует и содержит необходимые функции pg_expecto.
-4. При необходимости измените имя базы данных и пользователя внутри скрипта (по умолчанию `expecto_db` и `expecto_user`).
 
 ## Использование
 

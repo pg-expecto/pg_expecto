@@ -117,5 +117,3 @@ cd /path/to/pg_expecto_scripts
 
 - [PG_EXPECTO : HOW TO.](https://dzen.ru/suite/d271591a-d763-4191-9551-598bc5be9450)
 
-Более подробную информацию можно найти в документации pg_expecto.
-```

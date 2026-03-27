@@ -52,6 +52,9 @@
 
 ### Запуск теста
 
+cd /postgres/pg_expecto/load_test
+./load_test_start.sh
+
 
 ### Остановка теста
 

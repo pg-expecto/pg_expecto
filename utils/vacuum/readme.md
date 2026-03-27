@@ -38,14 +38,14 @@
 
 ### Пример
 ```bash
-sudo -u postgres ./find_table.sh "_InfoRg4922"
+sudo -u postgres ./find_table.sh "_table1"
 ```
 
-**Пример содержимого файла `databases_with_table__InfoRg4922.txt`:**
+**Пример содержимого файла `databases_with_table__table1.txt`:**
 ```
-zak_kis_for_migration_to_mb
-testdb
-analytics
+db1
+db2
+db3
 ```
 
 ---
@@ -75,26 +75,26 @@ analytics
 ### Пример
 **Файл `databases_list.txt`:**
 ```
-zak_kis_for_migration_to_mb
-testdb
+db1
+db2
 ```
 
 **Запуск:**
 ```bash
-sudo -u postgres ./vacuum_table.sh "_InfoRg4922" databases_list.txt
+sudo -u postgres ./vacuum_table.sh "_table1" databases_list.txt
 ```
 
-**Фрагмент лог-файла (`vacuum_analyze__InfoRg4922_20260327_105103.log`):**
+**Фрагмент лог-файла (`vacuum_analyze__table1_20260327_105103.log`):**
 ```
 === Начало выполнения Fri Mar 27 10:51:03 AM MSK 2026 ===
-Таблица: _InfoRg4922
+Таблица: _table1
 Список БД: databases_list.txt
 ================================
 ----------------------------------------
-База данных: zak_kis_for_migration_to_mb
-Выполнение: VACUUM (VERBOSE, ANALYZE) "public"."_inforg4922";
-INFO:  vacuuming "public._inforg4922"
-INFO:  scanned index "_inforg4922_1" to remove 0 row versions
+База данных: db1
+Выполнение: VACUUM (VERBOSE, ANALYZE) "public"."_table1";
+INFO:  vacuuming "public._table1"
+INFO:  scanned index "_table1_1" to remove 0 row versions
 ...
 Результат: УСПЕШНО
 ================================

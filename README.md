@@ -67,7 +67,7 @@ tail -f /postgres/pg_expecto/sh/pg_expecto.log
 
 ## Статус проекта
 
-Текущая версия: 7.4.2
+Текущая версия: 7.4.3
 
 ---
 

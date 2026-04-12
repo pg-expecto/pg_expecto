@@ -69,6 +69,12 @@ tail -f /postgres/pg_expecto/sh/pg_expecto.log
 
 Текущая версия: 7.4.3
 
+## 📜 Лицензия
+
+Начиная с версии 8.0, проект `pg_expecto` распространяется под лицензией [Apache License 2.0](LICENSE).  
+Предыдущие версии (до 12.04.2026) доступны под лицензией MIT.  
+Полный текст лицензии находится в файле [LICENSE](LICENSE) в корне репозитория.
+
 ---
 
 # pg_expecto – Statistical Performance and Wait Event Analysis for PostgreSQL
@@ -140,4 +146,10 @@ A detailed example of using pg_expecto v.7 with the DeepSeek neural network is a
 
 ## Project Status
 
-Current version: 7
+Current version: 7.4.3
+
+## 📜 License
+
+Starting from version 8.0, `pg_expecto` is distributed under the [Apache License 2.0](LICENSE).  
+Previous versions (prior to 2026-04-12) are available under the MIT License.  
+The full license text is available in the [LICENSE](LICENSE) file in the repository root.

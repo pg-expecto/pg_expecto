@@ -97,5 +97,5 @@ https://github.com/pg-expecto/Philosophical_instruction/blob/main/Philosophical_
 ## Примечания
 
 - Все действия, связанные с DeepSeek, выполняются вручную. Скрипты автоматизации не предусмотрены.
-- Архив `deepseek.zip` не должен добавляться в систему контроля версий.
+- Архив `load_test_4deepseek.zip` не должен добавляться в систему контроля версий.
 - Путь к скрипту `load_test_report.sh` жёстко задан и не требует изменения.

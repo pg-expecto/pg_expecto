@@ -60,7 +60,7 @@ https://github.com/pg-expecto/Philosophical_instruction/blob/main/Philosophical_
 1. Откройте новый чат в [DeepSeek](https://chat.deepseek.com).
 2. Выберите **«Эксперт режим»**.
 3. Включите **«Глубокое мышление»** и **«Умный поиск»**.
-4. Загрузите файл `_instruction.txt`.
+4. Загрузите файл `_pg_expecto_instruction.txt`.
 5. Введите сообщение:
    ```
    Строго следуй инструкции, ожидай входные данные.

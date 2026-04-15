@@ -42,9 +42,9 @@ cd ./deepseek_workspace
 
 - `_1.settings.txt` — конфигурация СУБД и ОС
 - `_2.postgresql_vmstat_iostat.txt` — статистические данные производительности СУБД и ОС
-- `_instruction.txt` — инструкция по подготовке отчёта по нагрузочному тестированию
-- `_performance_prompt.txt` — промпт для подготовки отчёта по нагрузочному тестированию
-- `_philosophical_instruction_prompt.txt` — промпт для подготовки финального отчёта с помощью философской инструкции
+- `_pg_expecto_instruction.txt` — инструкция по подготовке отчёта по нагрузочному тестированию
+- `_load_test_prompt.txt` — промпт для подготовки отчёта по нагрузочному тестированию
+- `_load_test_philosophical_instruction_prompt.txt` — промпт для подготовки финального отчёта с помощью философской инструкции
 
 Для проверки можно использовать команду `ls -1` или открыть папку в файловом менеджере.
 
@@ -66,7 +66,7 @@ https://github.com/pg-expecto/Philosophical_instruction/blob/main/Philosophical_
    Строго следуй инструкции, ожидай входные данные.
    ```
 6. Загрузите файлы `_1.settings.txt` и `_2.postgresql_vmstat_iostat.txt`.
-7. Введите в качестве следующего сообщения полное содержимое файла `_performance_prompt.txt`.
+7. Введите в качестве следующего сообщения полное содержимое файла `_load_test_prompt.txt`.
 8. Запустите генерацию ответа.
 9. Полученный результат сохраните в текстовый файл `performance.txt` в целевой папке.
 
@@ -76,14 +76,14 @@ https://github.com/pg-expecto/Philosophical_instruction/blob/main/Philosophical_
 2. Выберите **«Эксперт режим»**.
 3. Включите **«Глубокое мышление»** и **«Умный поиск»**.
 4. Загрузите два файла:
-   - `_instruction.txt`
+   - `_pg_expecto_instruction.txt`
    - `Philosophical_instruction_BETA_v5.1.md`
 5. Введите сообщение:
    ```
    Строго следуй инструкции, ожидай входные данные.
    ```
 6. Загрузите файл `performance.txt`.
-7. Введите в качестве сообщения полное содержимое файла `_philosophical_instruction_prompt.txt`.
+7. Введите в качестве сообщения полное содержимое файла `_load_test_philosophical_instruction_prompt.txt`.
 8. Запустите генерацию ответа.
 9. Сохраните итоговый результат как финальный аналитический отчёт (например, `final_report.md` или `final_report.txt`).
 

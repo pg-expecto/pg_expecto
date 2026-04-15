@@ -15,9 +15,9 @@
 #
 ########################################################################################################
 # performance_report.sh
-# Отчет по производительности СУБД и инфраструктуры
-# version 7.4.2
-# updated 31/03/2026
+# ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ СУБД И ИНФРАСТРУКТУРЫ
+# version 8.1
+# updated 15/04/2026
 ########################################################################################################
 
 #Обработать код возврата 
@@ -44,8 +44,8 @@ LOG_FILE=$current_path'/performance_report.log'
 ERR_FILE=$current_path'/performance_report.err'
 REPORT_DIR='/tmp/pg_expecto_reports'
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ ПО НАГРУЗОЧНОМУ ТЕСТИРОВАНИЮ - НАЧАТ '
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ ПО НАГРУЗОЧНОМУ ТЕСТИРОВАНИЮ - НАЧАТ ' > $LOG_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ СУБД И ИНФРАСТРУКТУРЫ - НАЧАТ '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ СУБД И ИНФРАСТРУКТУРЫ - НАЧАТ ' > $LOG_FILE
 
 
 timestamp_label=$(date "+%Y%m%d")'T'$(date "+%H%M")
@@ -113,103 +113,22 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ФОРМИРОВАНИ
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ФОРМИРОВАНИЕ СТАТИСТИЧЕСКИХ ДАННЫХ ДЛЯ НЕЙРОСЕТИ - НАЧАТО' >> $LOG_FILE
 
 
+####################################################################################################################################################################################
+# ВХОДНЫЕ ДАННЫЕ ДЛЯ НЕЙРОСЕТИ
 
 ##########################################################################################
-# НАСТРОЙКИ
-# 1.НАСТРОЙКИ
-REPORT_FILE='_1.settings.txt'
-echo 'НАСТРОЙКИ СУБД и VM' > $REPORT_FILE 
-psql -c 'select version()' >> $REPORT_FILE 
-psql -Aqtc "select name , setting from pg_settings where not pending_restart and name != 'log_filename'" >> $REPORT_FILE
-echo ' ' >> $REPORT_FILE
-
-#количество ядер CPU
-lscpu >>  $REPORT_FILE
-echo ' ' >> $REPORT_FILE
-
-#размер RAM
-ram=`free -b | awk '/^Mem:/ {printf "%.2f GB\n", $2/1024/1024/1024}'`
-echo 'RAM = '$ram >> $REPORT_FILE
-echo ' ' >> $REPORT_FILE
-
-#IO
-lsblk >> $REPORT_FILE
-echo 'devices = '$devices_list >> $REPORT_FILE
-echo ' ' >> $REPORT_FILE
-
-#VM
-#################################################################################
-# ПАРАМЕТРЫ vm
-  psql -d $expecto_db -U $expecto_user -Aqtc "SELECT unnest( get_vm_params_list())" >> $REPORT_FILE 2>$ERR_FILE
-  if [ $? -ne 0 ]
-  then
-	echo 'ERROR : queryid_stat TERMINATED WITH ERROR. SEE DETAILS IN '$ERR_FILE
-	echo 'ERROR : queryid_stat TERMINATED WITH ERROR. SEE DETAILS IN '$ERR_FILE >> $LOG_FILE
-	exit 100
-  fi
-# ПАРАМЕТРЫ vm
-#################################################################################
-echo '-------------------------------------------------------------------------' >> $REPORT_FILE
-echo 'МЕТОДОЛОГИЯ СТАТИСТИЧЕСКОГО АНАЛИЗА PG_EXPECTO' >> $REPORT_FILE
-echo 'МЕТОДИКА 3-Х ЭТАПНОГО СТАТИСТИЧЕСКОГО АНАЛИЗА ОЖИДАНИЙ СУБД'>> $REPORT_FILE
-echo 'Этап-1.СТАТИСТИЧЕСКАЯ ЗНАЧИМОСТЬ КОЭФФИЦИЕНТА КОРРЕЛЯЦИИ:'>> $REPORT_FILE
-echo '  p-value < 0.05 — корреляция считается статистически значимой. Анализ целесообразен.'>> $REPORT_FILE
-echo '  p-value >= 0.05 — связь нестабильна и может быть случайной. Интерпретация силы корреляции неприменима.'>> $REPORT_FILE
-echo ' '>> $REPORT_FILE
-echo 'Этап-2.ВЗВЕШЕННАЯ КОРРЕЛЯЦИЯ ОЖИДАНИЙ (ВКО)'>> $REPORT_FILE
-echo '  Аналитическая метрика, предназначенная для ранжирования типов событий ожидания.'>> $REPORT_FILE
-echo '  по степени их влияния на общую нагрузку системы.'>> $REPORT_FILE
-echo '  Чем выше значение ВКО, тем критичнее проблема.'>> $REPORT_FILE
-echo '  >= 0.2         КРИТИЧЕСКОЕ ЗНАЧЕНИЕ : Немедленный анализ и действие. '>> $REPORT_FILE
-echo '  [0.1 ; 0.2[    ВЫСОКОЕ ЗНАЧЕНИЕ : Глубокий анализ и планирование оптимизации.'>> $REPORT_FILE
-echo '  [0.04 ; 0.1[   СРЕДНЕЕ ЗНАЧЕНИЕ : Контекстный анализ и наблюдение. '>> $REPORT_FILE
-echo '  [0.01 ; 0.04[ НИЗКОЕ ЗНАЧЕНИЕ : Наблюдение и документирование.'>> $REPORT_FILE
-echo '  < 0.01 Игнорировать в текущем анализе.'>> $REPORT_FILE
-echo ' '
-echo 'Этап-3.ИНТЕРПРЕТАЦИЯ КОЭФФИЦИЕНТА ДЕТЕРМИНАЦИИ R2'>> $REPORT_FILE
-echo '  >= 0.8      — Исключительно сильная модель.'>> $REPORT_FILE
-echo '  [0.6 ; 0.8[ — Качественная модель.'>> $REPORT_FILE
-echo '  [0.4 ; 0.6[ — Приемлемая модель (средняя).'>> $REPORT_FILE
-echo '  [0.2 ; 0.4[ — Слабая модель.'>> $REPORT_FILE
-echo '   < 0.2      — Непригодная модель.'>> $REPORT_FILE
-echo '   '>> $REPORT_FILE
-echo 'АНАЛИЗ ОЖИДАНИЙ(wait_event_type) '>> $REPORT_FILE
-echo 'Этап-1. Интерпретация корреляций.'>> $REPORT_FILE
-echo '  Отбросить невалидные значения (p-value > 0.05) : связь нестабильна и может быть случайной.'>> $REPORT_FILE
-echo 'Этап-2. Интерпретация ВКО.'>> $REPORT_FILE
-echo '  Отбросить значения, если ВКО < 0.01 : Игнорировать в текущем анализе.'>> $REPORT_FILE
-echo 'Этап-3. Интерпретация коэффициента детерминации R2.'>> $REPORT_FILE
-echo '  Отбросить значения, если R2 < 0.2 :Непригодная модель'>> $REPORT_FILE
-echo '-------------------------------------------------------------------------' >> $REPORT_FILE
-echo 'МЕТОДИКА 2-Х ЭТАПНОГО СТАТИСТИЧЕСКОГО АНАЛИЗА МЕТРИК'>> $REPORT_FILE
-echo 'Этап-1.СТАТИСТИЧЕСКАЯ ЗНАЧИМОСТЬ КОЭФФИЦИЕНТА КОРРЕЛЯЦИИ:'>> $REPORT_FILE
-echo '  p-value < 0.05 — корреляция считается статистически значимой. Анализ целесообразен.'>> $REPORT_FILE
-echo '  p-value >= 0.05 — связь нестабильна и может быть случайной. Интерпретация силы корреляции неприменима.'>> $REPORT_FILE
-echo ' '>> $REPORT_FILE
-echo ' '
-echo 'Этап-2.ИНТЕРПРЕТАЦИЯ КОЭФФИЦИЕНТА ДЕТЕРМИНАЦИИ R2'>> $REPORT_FILE
-echo '  >= 0.8      — Исключительно сильная модель.'>> $REPORT_FILE
-echo '  [0.6 ; 0.8[ — Качественная модель.'>> $REPORT_FILE
-echo '  [0.4 ; 0.6[ — Приемлемая модель (средняя).'>> $REPORT_FILE
-echo '  [0.2 ; 0.4[ — Слабая модель.'>> $REPORT_FILE
-echo '   < 0.2      — Непригодная модель.'>> $REPORT_FILE
-echo '   '>> $REPORT_FILE
-echo 'АНАЛИЗ КОРРЕЛЯЦИ МЕЖДУ МЕТРИКАМИ '>> $REPORT_FILE
-echo 'Этап-1. Интерпретация корреляций.'>> $REPORT_FILE
-echo '  Отбросить невалидные значения (p-value > 0.05) : связь нестабильна и может быть случайной.'>> $REPORT_FILE
-echo 'Этап-2. Интерпретация коэффициента детерминации R2.'>> $REPORT_FILE
-echo '  Отбросить значения, если R2 < 0.2 :Непригодная модель'>> $REPORT_FILE
-echo '-------------------------------------------------------------------------' >> $REPORT_FILE
-
-
-# НАСТРОЙКИ
+# 1. КОНФИГУРАЦИЯ 
+$current_path'/'current_settings.sh
+exit_code $? $LOG_FILE $ERR_FILE
+# 1. КОНФИГУРАЦИЯ 
 ##########################################################################################
 
 ##########################################################################################
-# КОМПЛЕКСНЫЙ КОРРЕЛЯЦИОННЫЙ АНАЛИЗ СУБД и VMSTAT
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : КОМПЛЕКСНЫЙ КОРРЕЛЯЦИОННЫЙ АНАЛИЗ СУБД и VMSTAT'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : КОМПЛЕКСНЫЙ КОРРЕЛЯЦИОННЫЙ АНАЛИЗ СУБД и VMSTAT' >> $LOG_FILE
-REPORT_FILE='_2.1.postgresql_vmstat.txt'
+# 2.СТАТИСТИКА ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ СУБД и VMSTAT
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : 1.СТАТИСТИКА ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ СУБД и VMSTAT'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : 1.СТАТИСТИКА ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ СУБД и VMSTAT' >> $LOG_FILE
+
+REPORT_FILE='_2.postgresql_vmstat_iostat.txt'
 echo 'КОМПЛЕКСНЫЙ КОРРЕЛЯЦИОННЫЙ АНАЛИЗ СУБД и VMSTAT' > $REPORT_FILE 
 echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 cat '1.1.postgresql.wait_event_type.txt' >> $REPORT_FILE 
@@ -221,71 +140,19 @@ echo '-------------------------------------------------------------------------'
 cat '1.4.wait_event_type_pareto.txt' >> $REPORT_FILE 
 echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 cat '1.5.queryid_pareto.txt' >> $REPORT_FILE 
-# СТАТИСТИКА ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ
-##########################################################################################
-
+# 2.СТАТИСТИКА ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ СУБД и VMSTAT
 
 ##########################################################################################
-# ПРОМПТЫ
+
 ##########################################################################################
-# СВОДНЫЙ ОТЧЕТ ПО ИНЦИДЕНТУ
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : PROMPT'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : PROMPT' >> $LOG_FILE
-REPORT_DIR='/tmp/pg_expecto_reports'
-cd $REPORT_DIR
-REPORT_FILE='_3.1.prompt.txt'  
-echo 'Сформируй сводный отчет по производительности СУБД и инфраструктуры.' > $REPORT_FILE
-echo 'Ты — эксперт по производительности СУБД PostgreSQL.' >> $REPORT_FILE  
-echo 'Твоя задача — анализировать статистические данные (метрики, логи, выводы из pg_stat_database, pg_stat_statements, системные показатели) и давать точный, предметный анализ метрик и корреляций.' >> $REPORT_FILE  
-echo 'Правила:' >> $REPORT_FILE  
-echo '1. Отвечай строго на основе предоставленных данных. Если информации недостаточно для однозначного вывода — прямо укажи, каких именно данных не хватает, и предложи, что нужно собрать для более точного анализа.' >> $REPORT_FILE  
-echo '2. Не придумывай метрики, значения или причины. Не используй общие фразы без подтверждения цифрами.' >> $REPORT_FILE  
-echo '3. Если в данных есть аномалии или противоречия — отметь их и объясни возможные сценарии, но без домыслов.' >> $REPORT_FILE  
-echo '4. Ответ должен быть структурирован:' >> $REPORT_FILE  
-echo '   - Краткое резюме (основные выводы).' >> $REPORT_FILE  
-echo '   - Детальный анализ по ключевым метрикам (нагрузка на CPU/IO, использование памяти, блокировки, медленные запросы, эффективность кэша, параметры конфигурации).' >> $REPORT_FILE  
-echo '   - Если данных недостаточно — перечень необходимых дополнительных метрик или срезов.' >> $REPORT_FILE  
-echo '5. Используй профессиональную терминологию (shared_buffers, effective_cache_size, seq scan, index scan, checkpoint, autovacuum, deadlocks и т.п.). При ссылке на параметры указывай их единицы измерения.' >> $REPORT_FILE  
-echo '6. Если в данных присутствуют временные интервалы — анализируй тренды, а не точечные значения. Указывай период наблюдения.' >> $REPORT_FILE  
-echo '7. Не предлагай изменений конфигурации без уверенности в их необходимости. Если сомневаешься — предложи провести дополнительную диагностику.' >> $REPORT_FILE  
-echo '8.Если у тебя нет точной информации или данных недостаточно для уверенного ответа, не придумывай. Скажи:Недостаточно данных для ответа.' >> $REPORT_FILE  
-echo '9.Даже если таблицы нагляднее — используй только списки.' >> $REPORT_FILE  
-echo '10.Исключи из отчета рекомендации, только анализ.' >> $REPORT_FILE  
-echo 'Стиль: деловой, технически точный, без лишних пояснений.' >> $REPORT_FILE    
-echo 'Если пользователь не предоставил сами данные, а только вопрос — запроси конкретные метрики и период наблюдения.' >> $REPORT_FILE  
-echo 'Состав отчета: ' >> $REPORT_FILE 
-echo '# Общая информация' >> $REPORT_FILE 
-echo '# Общий анализ операционной скорости и ожиданий СУБД' >> $REPORT_FILE 
-echo '## Граничные значение операционной скорости (SPEED) и ожиданий СУБД(WAITINGS)' >> $REPORT_FILE 
-echo '## Анализ трендов операционной скорости (SPEED) и ожиданий СУБД(WAITINGS)' >> $REPORT_FILE 
-echo '## 1. СТАТИСТИЧЕСКИЙ АНАЛИЗ ОЖИДАНИЙ СУБД' >> $REPORT_FILE 
-echo '### Итог по разделу "1. СТАТИСТИЧЕСКИЙ АНАЛИЗ ОЖИДАНИЙ СУБД"' >> $REPORT_FILE 
-echo '## 2. ТРЕНДОВЫЙ АНАЛИЗ ПРОИЗВОДИТЕЛЬНОСТИ vmstat' >> $REPORT_FILE 
-echo '### Итог по разделу "2. ТРЕНДОВЫЙ АНАЛИЗ ПРОИЗВОДИТЕЛЬНОСТИ vmstat"' >> $REPORT_FILE 
-echo '## 3. СТАТИСТИЧЕСКИЙ АНАЛИЗ ОЖИДАНИЙ СУБД и МЕТРИК vmstat' >> $REPORT_FILE 
-echo '### Итог по разделу "3. СТАТИСТИЧЕСКИЙ АНАЛИЗ ОЖИДАНИЙ СУБД и МЕТРИК vmstat"' >> $REPORT_FILE 
-echo '## 4. ДИАГРАММЫ ПАРЕТО ПО WAIT_EVENT_TYPE и QUERYID' >> $REPORT_FILE 
-echo '### Итог по разделу "4. ДИАГРАММЫ ПАРЕТО ПО WAIT_EVENT_TYPE и QUERYID"' >> $REPORT_FILE 
-echo '# Детальный анализ – граничные значения и корреляции' >> $REPORT_FILE 
-echo '## Ожидания СУБД' >> $REPORT_FILE 
-echo '## Память и буферный кэш' >> $REPORT_FILE 
-echo '## Дисковая подсистема (I/O)' >> $REPORT_FILE 
-echo '## CPU и системные вызовы' >> $REPORT_FILE 
-echo '##  Блокировки и ожидания LWLock' >> $REPORT_FILE 
-echo '##  Анализ запросов (queryid)' >> $REPORT_FILE 
-echo '# Ключевые проблемы' >> $REPORT_FILE 
-echo '##  Проблемы СУБД ' >> $REPORT_FILE 
-echo '##  Проблемы инфраструктуры' >> $REPORT_FILE 
-echo '# Рекомендации' >> $REPORT_FILE 
-echo '## Рекомендации по настройкам СУБД' >> $REPORT_FILE 
-echo '## Рекомендации по настройкам операционной системы' >> $REPORT_FILE 
-echo '# Заключение ' >> $REPORT_FILE ##########################################################################################
-# СТАТИСТИКА IOSTAT
-######################################################################################################
+# 3.СТАТИСТИКА VMSTAT - IOSTAT
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : 2.СТАТИСТИКА IOSTAT'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : 2.СТАТИСТИКА IOSTAT' >> $LOG_FILE
 REPORT_DIR='/tmp/pg_expecto_reports'
 cd $REPORT_DIR
+
+echo 'КОМПЛЕКСНЫЙ КОРРЕЛЯЦИОННЫЙ АНАЛИЗ МЕТРИК VMSTAT-IOSTAT' >> $REPORT_FILE 
+echo '-------------------------------------------------------------------------' >> $REPORT_FILE
 
 let i=0
 while :
@@ -300,31 +167,44 @@ do
   
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  DEVICE =  '$device
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  DEVICE =  '$device >> $LOG_FILE
-  REPORT_FILE='_iostat_'$device'.txt'  
-  echo 'СТАТИСТИКА IOSTAT. device = '$device > $REPORT_FILE
   
   CURRENT_REPORT_FILE='2.1.vmstat_iostat_'$device'.txt'
-  cat $CURRENT_REPORT_FILE > $REPORT_FILE 
+  cat $CURRENT_REPORT_FILE >> $REPORT_FILE 
+  echo '-------------------------------------------------------------------------' >> $REPORT_FILE
   
   let i=i+1
 done
-
-
-# СТАТИСТИКА IOSTAT
+# 3.СТАТИСТИКА VMSTAT - IOSTAT
 ##########################################################################################
 
+##########################################################################################
+# ИНСТРУКЦИЯ И ПРОМПТЫ
+######################################################################################################
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНСТРУКЦИЯ И ПРОМПТЫ'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНСТРУКЦИЯ И ПРОМПТЫ' >> $LOG_FILE
+
+REPORT_DIR='/tmp/pg_expecto_reports' 
+#Инструкция
+cp $current_path'/_pg_expecto_instruction.txt' $REPORT_DIR'/'
+cp $current_path'/prompt_header.txt' $REPORT_DIR'/_performance_prompt.txt'
+cat $current_path'/prompt_task.txt' >> $REPORT_DIR'/_performance_prompt.txt'
+cat $current_path'/prompt_body.txt' >> $REPORT_DIR'/_performance_prompt.txt'
+cp $current_path'/_philosophical_instruction_prompt.txt' $REPORT_DIR'/_performance_philosophical_instruction_prompt.txt'
 
 
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ФОРМИРОВАНИЕ ZIP для DeepSeek'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ФОРМИРОВАНИЕ ZIP для DeepSeek' >> $LOG_FILE
 
-
+zip performance_4deepseek.zip  _1.settings.txt _2.postgresql_vmstat_iostat.txt _pg_expecto_instruction.txt _performance_prompt.txt _performance_philosophical_instruction_prompt.txt
+exit_code $? $LOG_FILE $ERR_FILE
 
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ФОРМИРОВАНИЕ СТАТИСТИЧЕСКИХ ДАННЫХ ДЛЯ НЕЙРОСЕТИ - ЗАКОНЧЕНО'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ФОРМИРОВАНИЕ СТАТИСТИЧЕСКИХ ДАННЫХ ДЛЯ НЕЙРОСЕТИ - ЗАКОНЧЕНО' >> $LOG_FILE
 
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ ПО НАГРУЗОЧНОМУ ТЕСТИРОВАНИЮ - ВЫПОЛНЕН'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ ПО НАГРУЗОЧНОМУ ТЕСТИРОВАНИЮ - ВЫПОЛНЕН' >> $LOG_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ СУБД И ИНФРАСТРУКТУРЫ - ВЫПОЛНЕН'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ СУБД И ИНФРАСТРУКТУРЫ - ВЫПОЛНЕН' >> $LOG_FILE
 
 exit 0 
 

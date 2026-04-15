@@ -10,7 +10,7 @@
   ```
   Изменение пути при инсталляции не предусмотрено.
 
-- Архив `deepseek.zip` формируется на первом шаге и **не загружается** в репозиторий.
+- Архив `load_test_4deepseek.zip` формируется на первом шаге и **не загружается** в репозиторий.
 
 - Взаимодействие с DeepSeek производится **вручную** через веб-интерфейс [chat.deepseek.com](https://chat.deepseek.com). Автоматизация не предусмотрена.
 
@@ -24,7 +24,7 @@
 /postgres/pg_expecto/sh/performance_reports/load_test_report.sh
 ```
 
-В результате работы скрипта будет создан архив `deepseek.zip`, содержащий исходные файлы для дальнейшего анализа.
+В результате работы скрипта будет создан архив `load_test_4deepseek.zip`, содержащий исходные файлы для дальнейшего анализа.
 
 ### 2. Подготовить целевую папку и распаковать архив
 
@@ -32,7 +32,7 @@
 
 ```bash
 mkdir -p ./deepseek_workspace
-unzip deepseek.zip -d ./deepseek_workspace
+unzip load_test_4deepseek.zip -d ./deepseek_workspace
 cd ./deepseek_workspace
 ```
 

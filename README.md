@@ -67,7 +67,7 @@ tail -f /postgres/pg_expecto/sh/pg_expecto.log
 
 ## Статус проекта
 
-Текущая версия: 7.4.3
+Текущая версия: 8.1
 
 ## 📜 Лицензия
 
@@ -146,7 +146,7 @@ A detailed example of using pg_expecto v.7 with the DeepSeek neural network is a
 
 ## Project Status
 
-Current version: 7.4.3
+Current version: 8.1
 
 ## 📜 License
 

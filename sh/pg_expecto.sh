@@ -1,6 +1,6 @@
-#!/bin/sh
+#!/bin/bash
 # Copyright 2026 Ринат (pg_expecto)
-# 
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -16,7 +16,8 @@
 ########################################################################################################
 # pg_expecto.sh
 # Корневой скрипт 
-# version 6.0
+# version 8.1.1
+# Updated 20.04.2026
 ########################################################################################################
 
  
@@ -115,9 +116,14 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : РАСЧЕТ СТАТИ
 # СБРОС СТАТИСТИКИ 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СБРОС СТАТИСТИКИ  '
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СБРОС СТАТИСТИКИ  ' >> $LOG_FILE
-for db in $(psql -t -c "SELECT datname FROM pg_database WHERE datallowconn AND datname != 'template0'"); do
-    psql -d "$db" -c "SELECT pg_stat_reset();"
-done
+###############################################
+# 8.1.1
+#for db in $(psql -t -c "SELECT datname FROM pg_database WHERE datallowconn AND datname != 'template0'"); do
+#    psql -d "$db" -c "SELECT pg_stat_reset();"
+#done
+# 8.1.1
+###############################################
+
 
 psql -d $expecto_db -Aqtc "SELECT pg_stat_statements_reset()" >> $LOG_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
@@ -216,6 +222,16 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : РЕСТАРТ IOSTAT -
 
 fi	
 
+#################################################
+# Собрать статистику по автовакууму 
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СБОР СТАТИСТИКИ ПО autovacuum - НАЧАТ'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СБОР СТАТИСТИКИ ПО autovacuum - НАЧАТ'>> $LOG_FILE
+$current_path'/'cron_autovacuum_import.sh /log/pg_log >> $LOG_FILE 2>$ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СБОР СТАТИСТИКИ ПО autovacuum - ЗАКОНЧЕН'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СБОР СТАТИСТИКИ ПО autovacuum - ЗАКОНЧЕН'>> $LOG_FILE
+# Собрать статистику по автовакууму 
+#################################################
 
 #################################################
 # Опустить флаг

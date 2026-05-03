@@ -16,8 +16,8 @@
 ########################################################################################################
 # summary_report.sh
 # Сводный отчет  производительности/ожиданиям СУБД и метрикам ОС 
-# version 7.3
-# updated 16/03/2026
+# version 8.1.1
+# updated 03/05/2026
 ########################################################################################################
 
 #Обработать код возврата 
@@ -485,6 +485,73 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТ
 # QUERYID FOR PARETO
 ####################################################################################################################################
 
+####################################################################################################################################
+# LOG PROCESSING
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО ЛОГ ФАЙЛУ СУБД - НАЧАТ'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО ЛОГ ФАЙЛУ СУБД - НАЧАТ' >> $LOG_FILE
+
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  extract_pg_log'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  extract_pg_log' >> $LOG_FILE
+./extract_pg_log.sh "$start_timestamp" "$finish_timestamp"
+exit_code $? $LOG_FILE $ERR_FILE
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  extract_errors'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  extract_errors' >> $LOG_FILE
+./extract_errors.sh 
+exit_code $? $LOG_FILE $ERR_FILE	
+if [ "$test_mode" == "DEFAULT" ]
+then
+  REPORT_FILE=$current_path'/x.error_report.txt'
+else
+  REPORT_FILE=$current_path'/x.1.test.error_report.txt'
+fi  
+cp $current_path'/error_report.md' $REPORT_FILE
+chmod 777 $REPORT_FILE
+mv $REPORT_FILE $REPORT_DIR
+
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  autovacuum_log_processing'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  autovacuum_log_processing' >> $LOG_FILE
+./autovacuum_log_processing.sh 
+exit_code $? $LOG_FILE $ERR_FILE
+if [ "$test_mode" == "DEFAULT" ]
+then
+  REPORT_FILE=$current_path'/x.autovacuum_report.txt'
+else
+  REPORT_FILE=$current_path'/x.1.test.autovacuum_report.txt'
+fi  
+cp $current_path'/autovacuum_report.md' $REPORT_FILE
+chmod 777 $REPORT_FILE
+mv $REPORT_FILE $REPORT_DIR
+
+
+
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  checkpoint_log_processing'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  checkpoint_log_processing' >> $LOG_FILE
+./checkpoint_log_processing.sh 
+exit_code $? $LOG_FILE $ERR_FILE
+exit_code $? $LOG_FILE $ERR_FILE
+if [ "$test_mode" == "DEFAULT" ]
+then
+  REPORT_FILE=$current_path'/x.checkpoint_report.txt'
+else
+  REPORT_FILE=$current_path'/x.1.test.checkpoint_report.txt'
+fi  
+cp $current_path'/checkpoint_report.md' $REPORT_FILE
+chmod 777 $REPORT_FILE
+mv $REPORT_FILE $REPORT_DIR
+
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО ЛОГ ФАЙЛУ СУБД - ЗАКОНЧЕН'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО ЛОГ ФАЙЛУ СУБД - ЗАКОНЧЕН' >> $LOG_FILE
+
+
+# LOG PROCESSING
+####################################################################################################################################
+
+
 
 
 ##################################################################################################################################
@@ -518,5 +585,11 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK ' >> $LOG_FILE
 
 # SQL LIST 
 ####################################################################################################################################
+
+./current_settings.sh
+exit_code $? $LOG_FILE $ERR_FILE
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  КОНФИГУРАЦИЯ СУБД и ОС - СОХРАНЕНА'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  КОНФИГУРАЦИЯ СУБД и ОС - СОХРАНЕНА' >> $LOG_FILE
+
 
 exit 0 

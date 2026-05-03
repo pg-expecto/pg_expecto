@@ -17,8 +17,8 @@
 ########################################################################################################
 # performance_report.sh
 # ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ СУБД И ИНФРАСТРУКТУРЫ
-# version 8.1
-# updated 17/04/2026
+# version 8.1.1
+# updated 03/05/2026
 ########################################################################################################
 
 #Обработать код возврата 
@@ -123,15 +123,15 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : 1.СТАТИСТИКА 
 
 REPORT_FILE='_2.postgresql_vmstat_iostat.txt'
 echo 'КОМПЛЕКСНЫЙ КОРРЕЛЯЦИОННЫЙ АНАЛИЗ СУБД и VMSTAT' > $REPORT_FILE 
-echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+echo '  ' >> $REPORT_FILE
 cat '1.1.postgresql.wait_event_type.txt' >> $REPORT_FILE 
-echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+echo '  ' >> $REPORT_FILE
 cat '1.2.vmstat.performance.txt' >> $REPORT_FILE 
-echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+echo '  ' >> $REPORT_FILE
 cat '1.3.wait_event_type_vmstat.txt' >> $REPORT_FILE 
-echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+echo '  ' >> $REPORT_FILE
 cat '1.4.wait_event_type_pareto.txt' >> $REPORT_FILE 
-echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+echo '  ' >> $REPORT_FILE
 cat '1.5.queryid_pareto.txt' >> $REPORT_FILE 
 # 2.СТАТИСТИКА ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ СУБД и VMSTAT
 
@@ -145,7 +145,7 @@ REPORT_DIR='/tmp/pg_expecto_reports'
 cd $REPORT_DIR
 
 echo 'КОМПЛЕКСНЫЙ КОРРЕЛЯЦИОННЫЙ АНАЛИЗ МЕТРИК VMSTAT-IOSTAT' >> $REPORT_FILE 
-echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+echo '  ' >> $REPORT_FILE
 
 let i=0
 while :
@@ -163,11 +163,23 @@ do
   
   CURRENT_REPORT_FILE='2.1.vmstat_iostat_'$device'.txt'
   cat $CURRENT_REPORT_FILE >> $REPORT_FILE 
-  echo '-------------------------------------------------------------------------' >> $REPORT_FILE
+  echo '  ' >> $REPORT_FILE
   
   let i=i+1
 done
 # 3.СТАТИСТИКА VMSTAT - IOSTAT
+# ЛОГ ФАЙЛ - ERRORS , AUTOVACUUM , CHECKPOINT
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНЦИДЕНТ: ЛОГ ФАЙЛ - ERRORS , AUTOVACUUM , CHECKPOINT'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНЦИДЕНТ: ЛОГ ФАЙЛ - ERRORS , AUTOVACUUM , CHECKPOINT' >> $LOG_FILE
+echo '  ' >> $REPORT_FILE
+echo 'СТАТИСТИКА ПО ОШИБКАМ СУБД ' >> $REPORT_FILE
+cat 'x.error_report.txt' >> $REPORT_FILE 
+echo '  ' >> $REPORT_FILE
+echo 'СТАТИСТИКА ПО ПРОЦЕССУ autovacuum' >> $REPORT_FILE
+cat 'x.autovacuum_report.txt' >> $REPORT_FILE 
+echo '  ' >> $REPORT_FILE
+echo 'СТАТИСТИКА ПО ПРОЦЕССУ checkpoint' >> $REPORT_FILE
+cat 'x.checkpoint_report.txt' >> $REPORT_FILE 
 ##########################################################################################
 
 ##########################################################################################

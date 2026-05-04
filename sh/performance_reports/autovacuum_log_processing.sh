@@ -17,7 +17,7 @@
 # Скрипт формирования markdown-отчета по работе autovacuum из лога PostgreSQL
 #
 # version 8.1.1
-# updated 03/05/2026
+# updated 04/05/2026
 
 
 set -euo pipefail
@@ -41,6 +41,7 @@ BEGIN {
     scans_sum = 0;
     removed_sum = 0;
     remain_sum = 0;
+    count = 0;                  # счётчик операций autovacuum
     in_block = 0;
     block = "";
 }
@@ -51,6 +52,9 @@ function process_block() {
     if (block !~ /автоматическая очистка таблицы|automatic vacuum of table/) {
         in_block = 0; block = ""; return;
     }
+
+    # увеличиваем счётчик операций
+    count++;
 
     # Длительность: секунды → миллисекунды
     duration = 0;
@@ -109,10 +113,17 @@ function process_block() {
 END {
     process_block();
 
+    # Итоговые переменные для отчёта
+    autovacuum_count = count;
+    duration = duration_sum;
+    scans = scans_sum;
+    removed = removed_sum;
+    remain = remain_sum;
+
     # Запись отчета в формате Markdown
-    print "| Длительность autovacuum (ms) | Количество сканирований индексов | Удалено страниц | Оставлено страниц |" > "'"$OUTPUT_FILE"'";
-    print "|------------------------------|----------------------------------|-----------------|-------------------|" > "'"$OUTPUT_FILE"'";
-    printf "| %d | %d | %d | %d |\n", duration_sum, scans_sum, removed_sum, remain_sum > "'"$OUTPUT_FILE"'";
+    print "| Операций autovacuum | Длительность autovacuum (ms) | Количество сканирований индексов | Удалено страниц | Оставлено страниц |" > "'"$OUTPUT_FILE"'";
+    print "|---------------------|-----------------------------|----------------------------------|-----------------|-------------------|" > "'"$OUTPUT_FILE"'";
+    printf "| %d | %d | %d | %d | %d |\n", autovacuum_count, duration, scans, removed, remain > "'"$OUTPUT_FILE"'";
 }
 ' "$LOG_FILE"
 

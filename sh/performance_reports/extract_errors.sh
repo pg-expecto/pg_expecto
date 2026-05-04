@@ -13,36 +13,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# extract_errors.sh
-# Анализ лога PostgreSQL: подсчёт ошибок по справочнику кодов,
-# вывод только строк с ненулевым количеством ошибок и кодом не 00000.
-#
-# version 8.1.1
-# updated 03/05/2026
+# extract_errors.sh — подсчёт ошибок PostgreSQL по справочнику кодов
+# Версия: 8.1.1 (исправлен парсинг справочника и лога)
 
+LOG_FILE="postgresql_extract.log"
+CODES_FILE="A.1.txt"
+REPORT_FILE="error_report.md"
 
-# Константы
-LOG_FILE="postgresql_extract.log"          # лог-файл
-CODES_FILE="A.1.txt"                       # справочник кодов ошибок
-REPORT_FILE="error_report.md"             # выходной отчёт в Markdown
-
-# Проверка существования файлов
+# 1. Проверка наличия файлов
 if [ ! -f "$LOG_FILE" ]; then
     echo "Ошибка: файл лога '$LOG_FILE' не найден." >&2
     exit 1
 fi
-
 if [ ! -f "$CODES_FILE" ]; then
     echo "Ошибка: файл кодов '$CODES_FILE' не найден." >&2
     exit 1
 fi
 
-# Временный файл для очищенного списка кодов
+# 2. Формируем временный справочник: код|имя_условия (только корректные строки)
 TMP_CODES=$(mktemp)
-
-# Извлекаем только строки с кодом (5 символов A-Z,0-9) и названием условия
-# Файл A.1.txt имеет табуляцию в качестве разделителя
-awk -F'\t' '$1 ~ /^[0-9A-Z]{5}$/ {print $1, $2}' "$CODES_FILE" > "$TMP_CODES"
+awk '
+    # Ищем строки, начинающиеся ровно с 5 символов [0-9A-Z] и затем пробельный разделитель
+    /^[0-9A-Z]{5}[[:space:]]+[A-Za-z_][A-Za-z_0-9]*/ {
+        code = substr($1, 1, 5)          # первый токен — код
+        # Удаляем код и следующие за ним пробельные символы, получаем имя условия
+        sub(/^[0-9A-Z]{5}[[:space:]]+/, "")
+        name = $0
+        # Оставляем только первую часть имени (до возможного комментария)
+        sub(/[[:space:]].*$/, "", name)
+        if (code != "" && name != "")
+            print code "|" name
+    }
+' "$CODES_FILE" > "$TMP_CODES"
 
 if [ ! -s "$TMP_CODES" ]; then
     echo "Ошибка: не удалось извлечь коды ошибок из '$CODES_FILE'." >&2
@@ -50,60 +52,52 @@ if [ ! -s "$TMP_CODES" ]; then
     exit 1
 fi
 
-# Формируем отчёт: считаем строки лога, содержащие каждый код
-awk -v codefile="$TMP_CODES" '
+# 3. Обработка лога и формирование отчёта
+grep -E 'ERROR|ОШИБКА|FATAL|ВАЖНО|ПАНИКА|PANIC' "$LOG_FILE" | \
+awk -F '|' -v codefile="$TMP_CODES" '
 BEGIN {
-    n = 0
-    # Чтение справочника кодов
+    # Загружаем справочник: массив codes[код] = имя, массив count[код] = 0
     while ((getline < codefile) > 0) {
-        code = $1
-        name = $2
-        codes[code] = name
-        count[code] = 0
-        order[++n] = code      # сохраняем исходный порядок
+        if ($1 ~ /^[0-9A-Z]{5}$/ && $2 != "") {
+            codes[$1] = $2
+            count[$1] = 0
+            order[++n] = $1
+        }
     }
     close(codefile)
 }
 {
-    delete seen
-    # Разбиваем строку лога на слова (буквы/цифры)
-    n_words = split($0, words, /[^a-zA-Z0-9]+/)
-    for (i = 1; i <= n_words; i++) {
-        w = words[i]
-        if (length(w) == 5 && w ~ /^[0-9A-Z]{5}$/ && w in codes) {
-            seen[w] = 1
-        }
-    }
-    # Увеличиваем счётчики найденных кодов (одно увеличение на строку)
-    for (c in seen) {
-        count[c]++
+    # Поле 7 — код ошибки, удаляем ведущие/конечные пробелы
+    errcode = $7
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", errcode)
+    # Учитываем, только если код известен и не "00000"
+    if (errcode in codes && errcode != "00000") {
+        count[errcode]++
     }
 }
 END {
-    # Проверяем, есть ли данные для вывода (количество > 0 и код не 00000)
     has_data = 0
     for (i = 1; i <= n; i++) {
-        code = order[i]
-        if (count[code] > 0 && code != "00000") {
+        if (count[order[i]] > 0) {
             has_data = 1
             break
         }
     }
-
     if (has_data) {
         print "| Код ошибки | Имя условия | Количество ошибок |"
         print "| --- | --- | --- |"
         for (i = 1; i <= n; i++) {
-            code = order[i]
-            if (count[code] > 0 && code != "00000") {
-                printf "| %s | %s | %d |\n", code, codes[code], count[code]
+            c = order[i]
+            if (count[c] > 0) {
+                printf "| %s | %s | %d |\n", c, codes[c], count[c]
             }
         }
+    } else {
+        print "Ошибок не обнаружено."
     }
 }
-' "$LOG_FILE" > "$REPORT_FILE"
+' > "$REPORT_FILE"
 
-# Удаляем временный файл
+# 4. Очистка
 rm -f "$TMP_CODES"
-
 echo "Готово: отчёт сохранён в '$REPORT_FILE'"

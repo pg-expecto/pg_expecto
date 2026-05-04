@@ -15,7 +15,7 @@
 #
 # checkpoint_log_processing.sh
 #
-# version 8.1.1
+# version 8.1.1 (добавлена поддержка английских логов)
 # updated 03/05/2026
 #
 # === НАСТРОЙКИ ===
@@ -29,42 +29,51 @@ if [[ ! -f "$LOG_FILE" ]]; then
 fi
 
 # === АНАЛИЗ ЛОГА ===
-# Извлекаем все нужные числа из строк с контрольными точками,
-# суммируем их и записываем в переменные bash
+# Извлекаем все нужные числа из строк с контрольными точками
+# на русском и английском языках, суммируем их и записываем в переменные bash
 read count buffers WAL_added WAL_del WAL_rewrite \
      write_duration sync_duration sync_files < <(
     awk '
+        # Русский вариант строки завершения checkpoint
         /контрольная точка завершена/ {
             count++
 
-            # записано буферов
             if (match($0, /записано буферов: ([0-9]+)/, a))
                 buffers += a[1]
-
-            # добавлено файлов WAL
             if (match($0, /добавлено файлов WAL ([0-9]+)/, a))
                 wal_added += a[1]
-
-            # удалено WAL
             if (match($0, /удалено: ([0-9]+)/, a))
                 wal_del += a[1]
-
-            # переработано WAL
             if (match($0, /переработано: ([0-9]+)/, a))
                 wal_rew += a[1]
-
-            # время записи
             if (match($0, /запись=([0-9.]+) сек\./, a))
                 write_dur += a[1]
-
-            # время синхронизации
             if (match($0, /синхр\.=([0-9.]+) сек\./, a))
                 sync_dur += a[1]
-
-            # синхронизировано файлов
             if (match($0, /синхронизировано_файлов=([0-9]+)/, a))
                 sync_f += a[1]
         }
+
+        # Английский вариант строки завершения checkpoint
+        /checkpoint complete:/ {
+            count++
+
+            if (match($0, /wrote ([0-9]+) buffers/, a))
+                buffers += a[1]
+            if (match($0, /([0-9]+) WAL file\(s\) added/, a))
+                wal_added += a[1]
+            if (match($0, /([0-9]+) removed/, a))
+                wal_del += a[1]
+            if (match($0, /([0-9]+) recycled/, a))
+                wal_rew += a[1]
+            if (match($0, /write=([0-9.]+) s/, a))
+                write_dur += a[1]
+            if (match($0, /sync=([0-9.]+) s/, a))
+                sync_dur += a[1]
+            if (match($0, /sync files=([0-9]+)/, a))
+                sync_f += a[1]
+        }
+
         END {
             # Формат вывода: все числа через пробел
             printf "%d %d %d %d %d %.3f %.3f %d",

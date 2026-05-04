@@ -20,13 +20,27 @@
 Для работы pg_expecto требуются установленные утилиты **vmstat** и **iostat**.
 
 ### Важно
-Для работы pg_expecto требуются установленные библиотеки расширений **pg_stat_statements** и **pg_wait_sampling**.
+#1 Для работы pg_expecto требуются установленные библиотеки расширений **pg_stat_statements** и **pg_wait_sampling**.
 
 Значение параметра `shared_preload_libraries` должно быть:
 
 ```
 shared_preload_libraries = 'pg_stat_statements, pg_wait_sampling'
 ```
+
+#2 Для анализа фоновых процессов и ошибок СУБД, необходимо установить конфигурационне параметры СУБД:
+- log_checkpoints = on
+- log_autovacuum_min_duration = 0
+- track_io_timing = on
+- logging_collector = 'on'
+- log_directory = '/log/pg_log'
+- log_destination = 'stderr'
+- log_rotation_size = '0'
+- log_rotation_age = '1d'
+- log_line_prefix = '%m| %d| %a| %u| %h| %p| %e| '
+- log_truncate_on_rotation = 'on'
+
+
 
 **Порядок библиотек важен.**
 

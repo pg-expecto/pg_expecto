@@ -18,7 +18,7 @@
 # incident_report.sh
 # ОТЧЕТ ПО ИНЦИДЕНТУ ПРОИЗВОДИТЕЛЬНОСТИ СУБД 
 # version 8.1.1
-# updated 03/05/2026
+# updated 04/05/2026
 ########################################################################################################
 
 #Обработать код возврата 
@@ -186,13 +186,16 @@ done
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНЦИДЕНТ: ЛОГ ФАЙЛ - ERRORS , AUTOVACUUM , CHECKPOINT'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНЦИДЕНТ: ЛОГ ФАЙЛ - ERRORS , AUTOVACUUM , CHECKPOINT' >> $LOG_FILE
 echo '  ' >> $REPORT_FILE
-echo 'СТАТИСТИКА ПО ОШИБКАМ СУБД ' >> $REPORT_FILE
+echo 'СТАТИСТИКА ПО ОШИБКАМ СУБД ЗА ПЕРИОД ИНЦИДЕНТА' >> $REPORT_FILE
+echo "$start_incindent_timestamp"' - '"$finish_incindent_timestamp" >> $REPORT_FILE
 cat 'x.error_report.txt' >> $REPORT_FILE 
 echo '  ' >> $REPORT_FILE
-echo 'СТАТИСТИКА ПО ПРОЦЕССУ autovacuum' >> $REPORT_FILE
+echo 'СТАТИСТИКА ПО ПРОЦЕССУ autovacuum ЗА ПЕРИОД ИНЦИДЕНТА' >> $REPORT_FILE
+echo "$start_incindent_timestamp"' - '"$finish_incindent_timestamp" >> $REPORT_FILE
 cat 'x.autovacuum_report.txt' >> $REPORT_FILE 
 echo '  ' >> $REPORT_FILE
-echo 'СТАТИСТИКА ПО ПРОЦЕССУ checkpoint' >> $REPORT_FILE
+echo 'СТАТИСТИКА ПО ПРОЦЕССУ checkpoint ЗА ПЕРИОД ИНЦИДЕНТА' >> $REPORT_FILE
+echo "$start_incindent_timestamp"' - '"$finish_incindent_timestamp" >> $REPORT_FILE
 cat 'x.checkpoint_report.txt' >> $REPORT_FILE 
 ##########################################################################################
 
@@ -251,13 +254,16 @@ done
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНЦИДЕНТ: ЛОГ ФАЙЛ - ERRORS , AUTOVACUUM , CHECKPOINT'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНЦИДЕНТ: ЛОГ ФАЙЛ - ERRORS , AUTOVACUUM , CHECKPOINT' >> $LOG_FILE
 echo '  ' >> $REPORT_FILE
-echo 'СТАТИСТИКА ПО ОШИБКАМ СУБД ' >> $REPORT_FILE
+echo 'СТАТИСТИКА ПО ОШИБКАМ СУБД ЗА ТЕСТОВЫЙ ПЕРИОД' >> $REPORT_FILE
+echo "$start_test_timestamp"' - '"$finish_test_timestamp" >> $REPORT_FILE
 cat 'x.1.error_report.txt' >> $REPORT_FILE 
 echo '  ' >> $REPORT_FILE
-echo 'СТАТИСТИКА ПО ПРОЦЕССУ autovacuum' >> $REPORT_FILE
+echo 'СТАТИСТИКА ПО ПРОЦЕССУ autovacuum ЗА ТЕСТОВЫЙ ПЕРИОД' >> $REPORT_FILE
+echo "$start_test_timestamp"' - '"$finish_test_timestamp" >> $REPORT_FILE
 cat 'x.1.autovacuum_report.txt' >> $REPORT_FILE 
 echo '  ' >> $REPORT_FILE
-echo 'СТАТИСТИКА ПО ПРОЦЕССУ checkpoint' >> $REPORT_FILE
+echo 'СТАТИСТИКА ПО ПРОЦЕССУ checkpoint ЗА ТЕСТОВЫЙ ПЕРИОД' >> $REPORT_FILE
+echo "$start_test_timestamp"' - '"$finish_test_timestamp" >> $REPORT_FILE
 cat 'x.1.checkpoint_report.txt' >> $REPORT_FILE 
 ##########################################################################################
 

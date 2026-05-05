@@ -17,7 +17,7 @@
 ########################################################################################################
 # incident_report.sh
 # ОТЧЕТ ПО ИНЦИДЕНТУ ПРОИЗВОДИТЕЛЬНОСТИ СУБД 
-# version 8.1.1
+# version 8.1.2
 # updated 04/05/2026
 ########################################################################################################
 
@@ -67,14 +67,14 @@ fi
 
 
 finish_incident_timestamp=$1
-start_incindent_timestamp=`psql -Aqtc "select to_char(to_timestamp('$finish_incident_timestamp','YYYY-MM-DD HH24:MI') - interval '1 hour' , 'YYYY-MM-DD HH24:MI')"`
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : start_incindent_timestamp = '$start_incindent_timestamp
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : start_incindent_timestamp = '$start_incindent_timestamp >> $LOG_FILE
+start_incident_timestamp=`psql -Aqtc "select to_char(to_timestamp('$finish_incident_timestamp','YYYY-MM-DD HH24:MI') - interval '1 hour' , 'YYYY-MM-DD HH24:MI')"`
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : start_incident_timestamp = '$start_incident_timestamp
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : start_incident_timestamp = '$start_incident_timestamp >> $LOG_FILE
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : finish_incident_timestamp = '$finish_incident_timestamp
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : finish_incident_timestamp = '$finish_incident_timestamp >> $LOG_FILE
 
-finish_test_timestamp=$start_incindent_timestamp
+finish_test_timestamp=$start_incident_timestamp
 start_test_timestamp=`psql -Aqtc "select to_char(to_timestamp('$finish_test_timestamp','YYYY-MM-DD HH24:MI') - interval '1 hour' , 'YYYY-MM-DD HH24:MI')"`
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : start_test_timestamp = '$start_test_timestamp
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : start_test_timestamp = '$start_test_timestamp >> $LOG_FILE
@@ -97,7 +97,7 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : devic
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ИНЦИДЕНТ: СВОДНЫЙ ОТЧЕТ ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ СУБД И МЕТРИК ОС - НАЧАТ'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ИНЦИДЕНТ: СВОДНЫЙ ОТЧЕТ ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ СУБД И МЕТРИК ОС - НАЧАТ' >> $LOG_FILE
 
-$current_path'/'summary_report.sh "$start_incindent_timestamp" "$finish_incident_timestamp" 
+$current_path'/'summary_report.sh "$start_incident_timestamp" "$finish_incident_timestamp" 
 exit_code $? $LOG_FILE $ERR_FILE
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ИНЦИДЕНТ: СВОДНЫЙ ОТЧЕТ ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ СУБД И МЕТРИК ОС - ЗАКОНЧЕН'
@@ -187,16 +187,21 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНЦИДЕНТ: ЛО�
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНЦИДЕНТ: ЛОГ ФАЙЛ - ERRORS , AUTOVACUUM , CHECKPOINT' >> $LOG_FILE
 echo '  ' >> $REPORT_FILE
 echo 'СТАТИСТИКА ПО ОШИБКАМ СУБД ЗА ПЕРИОД ИНЦИДЕНТА' >> $REPORT_FILE
-echo "$start_incindent_timestamp"' - '"$finish_incindent_timestamp" >> $REPORT_FILE
+echo "$start_incident_timestamp"' - '"$finish_incident_timestamp" >> $REPORT_FILE
 cat 'x.error_report.txt' >> $REPORT_FILE 
 echo '  ' >> $REPORT_FILE
 echo 'СТАТИСТИКА ПО ПРОЦЕССУ autovacuum ЗА ПЕРИОД ИНЦИДЕНТА' >> $REPORT_FILE
-echo "$start_incindent_timestamp"' - '"$finish_incindent_timestamp" >> $REPORT_FILE
+echo "$start_incident_timestamp"' - '"$finish_incident_timestamp" >> $REPORT_FILE
 cat 'x.autovacuum_report.txt' >> $REPORT_FILE 
 echo '  ' >> $REPORT_FILE
 echo 'СТАТИСТИКА ПО ПРОЦЕССУ checkpoint ЗА ПЕРИОД ИНЦИДЕНТА' >> $REPORT_FILE
-echo "$start_incindent_timestamp"' - '"$finish_incindent_timestamp" >> $REPORT_FILE
+echo "$start_incident_timestamp"' - '"$finish_incident_timestamp" >> $REPORT_FILE
 cat 'x.checkpoint_report.txt' >> $REPORT_FILE 
+echo '  ' >> $REPORT_FILE
+echo 'СТАТИСТИКА ПО temp_files ЗА ПЕРИОД ИНЦИДЕНТА' >> $REPORT_FILE
+echo "$start_incident_timestamp"' - '"$finish_incident_timestamp" >> $REPORT_FILE
+cat 'x.temp_files_report.txt' >> $REPORT_FILE 
+
 ##########################################################################################
 
 
@@ -250,21 +255,26 @@ do
   let i=i+1
 done
 # СТАТИСТИКА VMSTAT - IOSTAT
-# ИНЦИДЕНТ: ЛОГ ФАЙЛ - ERRORS , AUTOVACUUM , CHECKPOINT
+# ТЕСТ: ЛОГ ФАЙЛ - ERRORS , AUTOVACUUM , CHECKPOINT
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНЦИДЕНТ: ЛОГ ФАЙЛ - ERRORS , AUTOVACUUM , CHECKPOINT'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНЦИДЕНТ: ЛОГ ФАЙЛ - ERRORS , AUTOVACUUM , CHECKPOINT' >> $LOG_FILE
 echo '  ' >> $REPORT_FILE
 echo 'СТАТИСТИКА ПО ОШИБКАМ СУБД ЗА ТЕСТОВЫЙ ПЕРИОД' >> $REPORT_FILE
 echo "$start_test_timestamp"' - '"$finish_test_timestamp" >> $REPORT_FILE
-cat 'x.1.error_report.txt' >> $REPORT_FILE 
+cat 'x.1.test.error_report.txt' >> $REPORT_FILE 
 echo '  ' >> $REPORT_FILE
 echo 'СТАТИСТИКА ПО ПРОЦЕССУ autovacuum ЗА ТЕСТОВЫЙ ПЕРИОД' >> $REPORT_FILE
 echo "$start_test_timestamp"' - '"$finish_test_timestamp" >> $REPORT_FILE
-cat 'x.1.autovacuum_report.txt' >> $REPORT_FILE 
+cat 'x.1.test.autovacuum_report.txt' >> $REPORT_FILE 
 echo '  ' >> $REPORT_FILE
 echo 'СТАТИСТИКА ПО ПРОЦЕССУ checkpoint ЗА ТЕСТОВЫЙ ПЕРИОД' >> $REPORT_FILE
 echo "$start_test_timestamp"' - '"$finish_test_timestamp" >> $REPORT_FILE
-cat 'x.1.checkpoint_report.txt' >> $REPORT_FILE 
+cat 'x.1.test.checkpoint_report.txt' >> $REPORT_FILE 
+echo '  ' >> $REPORT_FILE
+echo 'СТАТИСТИКА ПО temp_files ЗА ТЕСТОВЫЙ ПЕРИОД' >> $REPORT_FILE
+echo "$start_test_timestamp"' - '"$finish_test_timestamp" >> $REPORT_FILE
+cat 'x.1.test.temp_files_report.txt' >> $REPORT_FILE 
+
 ##########################################################################################
 
 ##########################################################################################
@@ -280,7 +290,7 @@ REPORT_DIR='/tmp/pg_expecto_reports'
 #Инструкция
 cp $current_path'/_pg_expecto_instruction.txt' $REPORT_DIR'/'
 cp $current_path'/prompt_header.txt' $REPORT_DIR'/_incident_prompt.txt'
-echo 'Задача: cформируй сравнительный сводный отчет по производительности СУБД и инфраструктуры о заданным периодам - Тест:'"$start_test_timestamp"'-'"$finish_test_timestamp"' и Инцидент:'"$start_incindent_timestamp"' - '"$finish_incident_timestamp" >> $REPORT_DIR'/_incident_prompt.txt'
+echo 'Задача: cформируй сравнительный сводный отчет по производительности СУБД и инфраструктуры о заданным периодам - Тест:'"$start_test_timestamp"'-'"$finish_test_timestamp"' и Инцидент:'"$start_incident_timestamp"' - '"$finish_incident_timestamp" >> $REPORT_DIR'/_incident_prompt.txt'
 cat $current_path'/prompt_body.txt' >> $REPORT_DIR'/_incident_prompt.txt'
 cp $current_path'/_philosophical_instruction_prompt.txt' $REPORT_DIR'/_incident_philosophical_instruction_prompt.txt'
 

@@ -17,7 +17,7 @@
 ########################################################################################################
 # performance_report.sh
 # ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ СУБД И ИНФРАСТРУКТУРЫ
-# version 8.1.1
+# version 8.1.2
 # updated 04/05/2026
 ########################################################################################################
 
@@ -184,6 +184,10 @@ echo '  ' >> $REPORT_FILE
 echo 'СТАТИСТИКА ПО ПРОЦЕССУ checkpoint' >> $REPORT_FILE
 echo "$start_timestamp"' - '"$finish_timestamp" >> $REPORT_FILE
 cat 'x.checkpoint_report.txt' >> $REPORT_FILE  
+echo '  ' >> $REPORT_FILE
+echo 'СТАТИСТИКА ПО temp_files' >> $REPORT_FILE
+echo "$start_timestamp"' - '"$finish_timestamp" >> $REPORT_FILE
+cat 'x.temp_files_report.txt' >> $REPORT_FILE 
 ##########################################################################################
 
 ##########################################################################################

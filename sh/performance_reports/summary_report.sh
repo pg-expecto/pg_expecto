@@ -16,7 +16,7 @@
 ########################################################################################################
 # summary_report.sh
 # Сводный отчет  производительности/ожиданиям СУБД и метрикам ОС 
-# version 8.1.1
+# version 8.1.2
 # updated 04/05/2026
 ########################################################################################################
 
@@ -526,8 +526,6 @@ chmod 777 $REPORT_FILE
 mv $REPORT_FILE $REPORT_DIR
 
 
-
-
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  checkpoint_log_processing'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  checkpoint_log_processing' >> $LOG_FILE
 ./checkpoint_log_processing.sh 
@@ -540,6 +538,21 @@ else
   REPORT_FILE=$current_path'/x.1.test.checkpoint_report.txt'
 fi  
 cp $current_path'/checkpoint_report.md' $REPORT_FILE
+chmod 777 $REPORT_FILE
+mv $REPORT_FILE $REPORT_DIR
+
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  temp_files_report'
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  temp_files_report' >> $LOG_FILE
+./temp_files_report.sh 
+exit_code $? $LOG_FILE $ERR_FILE
+if [ "$test_mode" == "DEFAULT" ]
+then
+  REPORT_FILE=$current_path'/x.temp_files_report.txt'
+else
+  REPORT_FILE=$current_path'/x.1.test.temp_files_report.txt'
+fi  
+cp $current_path'/temp_files_report.md' $REPORT_FILE
 chmod 777 $REPORT_FILE
 mv $REPORT_FILE $REPORT_DIR
 

@@ -33,6 +33,7 @@ shared_preload_libraries = 'pg_stat_statements, pg_wait_sampling'
 2. Для анализа фоновых процессов и ошибок СУБД, необходимо установить конфигурационне параметры СУБД:
 - log_checkpoints = on
 - log_autovacuum_min_duration = 0
+- log_temp_files = 0 
 - track_io_timing = on
 - logging_collector = 'on'
 - log_directory = '/log/pg_log'

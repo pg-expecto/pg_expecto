@@ -68,8 +68,8 @@ tail -f /postgres/pg_expecto/sh/pg_expecto.log
 
 ## Использование
 
-Подробный пример использования pg_expecto v.7 с нейросетью DeepSeek описан в статье:  
-[PG_EXPECTO v.7 + DeepSeek: полный цикл диагностики производительности PostgreSQL — от нагрузочного тестирования до разбора инцидентов](https://dzen.ru/a/aaATukWy4T8iHW1t?share_to=link)
+Использование pg_expecto :  
+[PG_EXPECTO : HOW TO](https://dzen.ru/suite/d271591a-d763-4191-9551-598bc5be9450?share_to=link)
 
 ## Контакты
 
@@ -147,8 +147,8 @@ tail -f /postgres/pg_expecto/sh/pg_expecto.log
 
 ## Usage
 
-A detailed example of using pg_expecto v.7 with the DeepSeek neural network is available in the article (Russian):  
-[PG_EXPECTO v.7 + DeepSeek: полный цикл диагностики производительности PostgreSQL — от нагрузочного тестирования до разбора инцидентов](https://dzen.ru/a/aaATukWy4T8iHW1t?share_to=link)
+A detailed exampleы of using pg_expecto:  
+[PG_EXPECTO : HOW TO](https://dzen.ru/suite/d271591a-d763-4191-9551-598bc5be9450?share_to=link)
 
 ## Contacts
 

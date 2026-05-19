@@ -17,8 +17,8 @@
 ########################################################################################################
 # current_settings.sh
 # Текущие настройки PostgreSQL , Linux , VM
-# version 8.1
-# updated 17/04/2026
+# version 9.1
+# updated 19/05/2026
 ########################################################################################################
 
 #Обработать код возврата 
@@ -55,7 +55,7 @@ cd $REPORT_DIR
 REPORT_FILE='_1.settings.txt'
 echo 'НАСТРОЙКИ СУБД и VM' > $REPORT_FILE 
 psql -c 'select version()' >> $REPORT_FILE 
-psql -Aqtc "select name , setting from pg_settings where not pending_restart and name != 'log_filename'" >> $REPORT_FILE
+psql -Aqtc "select name , setting from pg_settings where not pending_restart and name NOT IN ('log_filename','listen_addresses','port unix_socket_directories','ssl','ssl_cert_file','ssl_key_file','ssl_ciphers','password_encryption' )" >> $REPORT_FILE
 echo ' ' >> $REPORT_FILE
 
 #количество ядер CPU

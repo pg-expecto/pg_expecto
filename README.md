@@ -80,7 +80,7 @@ tail -f /postgres/pg_expecto/sh/pg_expecto.log
 
 ## Статус проекта
 
-Текущая версия: 8.1
+Текущая версия: 9.1
 
 ## 📜 Лицензия
 
@@ -159,7 +159,7 @@ A detailed exampleы of using pg_expecto:
 
 ## Project Status
 
-Current version: 8.1
+Current version: 9.1
 
 ## 📜 License
 

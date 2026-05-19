@@ -17,8 +17,8 @@
 ########################################################################################################
 # load_test_report.sh
 # ОТЧЕТ ПО НАГРУЗОЧНОМУ ТЕСТИРОВАНИЮ
-# version 8.1.2
-# updated 04/05/2026
+# version 9.1
+# updated 19/05/2026
 ########################################################################################################
 
 #Обработать код возврата 
@@ -249,18 +249,26 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНСТРУКЦИЯ И
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ИНСТРУКЦИЯ И ПРОМПТЫ' >> $LOG_FILE
 
 REPORT_DIR='/tmp/pg_expecto_reports' 
+
 #Инструкция
-cp $current_path'/_pg_expecto_instruction.txt' $REPORT_DIR'/'
-cp $current_path'/prompt_header.txt' $REPORT_DIR'/_load_test_prompt.txt'
-cat $current_path'/prompt_task.txt' >> $REPORT_DIR'/_load_test_prompt.txt'
-cat $current_path'/prompt_body.txt' >> $REPORT_DIR'/_load_test_prompt.txt'
-cp $current_path'/_philosophical_instruction_prompt.txt' $REPORT_DIR'/_load_test_philosophical_instruction_prompt.txt'
+cp $current_path'/pg_expecto_instruction.txt' $REPORT_DIR'/'
+
+#Промпт для сводного отчета
+echo 'Входные данные:'>> $REPORT_DIR'/prompt_source.txt'
+echo '- _1.settings.txt : НАСТРОЙКИ СУБД и VM'>> $REPORT_DIR'/prompt_source.txt'
+echo '- _2.postgresql_vmstat_iostat.txt : КОМПЛЕКСНЫЙ КОРРЕЛЯЦИОННЫЙ АНАЛИЗ СУБД и VMSTAT'>> $REPORT_DIR'/prompt_source.txt'
+echo 'Задача:'>> $REPORT_DIR'/prompt_source.txt' 
+echo '- cформируй сводный отчет по производительности СУБД и инфраструктуры по входным данным'>> $REPORT_DIR'/prompt_source.txt'
+cat $current_path'/prompt_source.txt' >> $REPORT_DIR'/prompt_source.txt'
+
+#Промпт для аналитического  отчета
+cat $current_path'/prompt_result.txt' >> $REPORT_DIR'/prompt_result.txt'
 
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ФОРМИРОВАНИЕ ZIP для DeepSeek'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ФОРМИРОВАНИЕ ZIP для DeepSeek' >> $LOG_FILE
 
-zip load_test_4deepseek.zip  _1.settings.txt _2.postgresql_vmstat_iostat.txt _pg_expecto_instruction.txt _load_test_prompt.txt _load_test_philosophical_instruction_prompt.txt
+zip load_test_4deepseek.zip  _1.settings.txt _2.postgresql_vmstat_iostat.txt pg_expecto_instruction.txt prompt_source.txt prompt_result.txt
 exit_code $? $LOG_FILE $ERR_FILE
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ФОРМИРОВАНИЕ СТАТИСТИЧЕСКИХ ДАННЫХ ДЛЯ НЕЙРОСЕТИ - ЗАКОНЧЕНО'

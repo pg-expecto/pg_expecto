@@ -12420,7 +12420,7 @@ COMMENT ON COLUMN autovacuum_log_events.pages_remain IS 'Количество о
 --Основная таблица переходных частот
 /*
 from_state / to_state — закодированные идентификаторы состояний (например, от 0 до 188 при размерности 189). SMALLINT занимает 2 байта, диапазона ±32 767 достаточно.
-frequency — REAL (4 байта) или DOUBLE PRECISION (8 байт). Для вероятностных расчётов REAL достаточно.
+frequency — REAL (4 байта) . Для вероятностных расчётов REAL достаточно.
 Минимальная строка таблицы: 2+2+4 = 8 байт данных + ≈27 байт служебных полей PostgreSQL ≈ 35 байт. При 35 000 ячеек (189×189) размер таблицы ≈ 1,2 МБ, индексы ещё примерно столько же. 
 Это пренебрежимо мало для любой современной СУБД.
 
@@ -12649,21 +12649,21 @@ COMMENT ON COLUMN markov_probabilities_archive.probability IS '-- оценённ
 -- ОБУЧЕНИЕ ЦЕПИ МАРКОВА
 -- fill_state_descriptions - Функция заполнения справочника состояний
 -- markov_chain_training - обучение цепи Маркова
+-- evaluate_training_sufficiency Основная функция проверки достаточности обучения 
 --
+-- predict_risk_1min получить вероятность попасть в аварийную зону 
+-- predict_risk_k_diag получить вероятность попасть в аварийную зону за K шагов
 --
--- Функции для расчета цепи Маркова 
 -- get_state_id - Получить state_id для заданных r , OS_trend , wait_trend
 -- update_markov_frequency - Обновить основную таблицу переходных частот
 -- log_transition_and_update Функция логирования перехода и обновления матрицы частот
 -- get_current_os_waiting_correlation_for_markov_chain - получить текущее значение коэффициента корреляции для цепи маркова на окне 1 час 
 --
 -- update_markov_probabilities Обновить матрицу вероятностей
--- predict_risk_1min получить вероятность попасть в аварийную зону 
 -- rebuild_markov_absorbing заполнить матрицу поглощения
--- predict_risk_k_diag получить вероятность попасть в аварийную зону за K шагов
 --
 -- Функция создания/обновления снимка матрицы прошлой недели
--- 5 18 * * 5 psql -d expecto_db -U expecto_user  -c "SELECT snapshot_markov_prev_week();"
+-- 5 19 * * 5 psql -d expecto_db -U expecto_user  -c "SELECT snapshot_markov_prev_week();"
 -- snapshot_markov_prev_week()
 --
 -- log_forecast Функция записи прогноза и его фактического исхода
@@ -12671,7 +12671,6 @@ COMMENT ON COLUMN markov_probabilities_archive.probability IS '-- оценённ
 -- compare_brier_scores Расчёт и сравнение Brier Score
 -- get_stationary_distribution Вспомогательная функция: получение стационарного распределения
 -- check_kl_divergence KL-дивергенция стационарного и эмпирического (последняя неделя)
--- evaluate_training_sufficiency Основная функция проверки достаточности обучения 
 -- apply_forgetting Функция забывания
 -- archive_markov_probabilities Архивация вероятностей цепи Маркова
 
@@ -12991,8 +12990,7 @@ BEGIN
 		curr_timestamp BETWEEN timepoint - interval '1 hour' AND timepoint ; 
 	--КОРРЕЛЯЦИЯ АКТИВНЫЕ СЕССИИ - СКОРОСТЬ 
 	-------------------------------------------------------------------
-	DROP TABLE IF EXISTS tmp_timepoints;
-	CREATE TEMPORARY TABLE tmp_timepoints
+	CREATE TEMPORARY TABLE IF NOT EXISTS tmp_timepoints
 	(
 		curr_timestamp timestamptz  ,   
 		curr_timepoint integer 
@@ -13112,7 +13110,7 @@ BEGIN
 	DROP TABLE tmp_timepoints;
 	
 	RETURN QUERY 
-	SELECT speed_waitings_correlation::REAL , speed_regr_slope_value::SMALLINT , waitings_regr_slope_value::SMALLINT ; 
+	SELECT round(speed_waitings_correlation::numeric,1)::REAL , speed_regr_slope_value::SMALLINT , waitings_regr_slope_value::SMALLINT ; 
 		
 
 END;
@@ -13191,7 +13189,7 @@ BEGIN
     INTO markov_chain_rec
     FROM get_current_os_waiting_correlation_for_markov_chain();
 
-    RAISE NOTICE 'markov_chain_rec = %', markov_chain_rec;
+RAISE NOTICE '%', markov_chain_rec;	
 
     RETURN QUERY
     WITH current_state AS (
@@ -13316,7 +13314,7 @@ BEGIN
     INTO markov_chain_rec
     FROM get_current_os_waiting_correlation_for_markov_chain();
 
-RAISE NOTICE 'markov_chain_rec = %', markov_chain_rec;
+RAISE NOTICE '%', markov_chain_rec;
 
     SELECT get_state_id AS state_id
 	INTO current_state_id
@@ -13671,16 +13669,17 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    pi_arr    REAL[];                  -- стационарное распределение
-    emp_arr   REAL[] := array_fill(0.0, ARRAY[189]);  -- эмпирическое распределение
+    pi_arr    REAL[];
+    emp_arr   REAL[] := array_fill(0.0, ARRAY[189]);
     total_obs BIGINT;
     kl        REAL := 0.0;
     i         INT;
+    emp_val   REAL; -- Промежуточная переменная для хранения результата SELECT
 BEGIN
-    -- 1. Получаем стационарное распределение (ранее созданная функция)
+    -- 1. Получаем стационарное распределение
     pi_arr := get_stationary_distribution();
 
-    -- 2. Считаем эмпирические частоты состояний за последние 7 дней
+    -- 2. Считаем общее количество наблюдений за последние 7 дней
     SELECT COUNT(*) INTO total_obs
     FROM transition_log
     WHERE ts >= now() - INTERVAL '7 days';
@@ -13688,16 +13687,21 @@ BEGIN
     IF total_obs = 0 THEN
         kl_value := NULL;
         threshold := 0.1;
-        passed := FALSE;   -- недостаточно данных
+        passed := FALSE;
         RETURN NEXT;
         RETURN;
     END IF;
 
+    -- 2. Считаем эмпирические частоты состояний
+    -- ИСПРАВЛЕНИЕ: Сначала берем в emp_val, потом присваиваем массиву
     FOR i IN 0..188 LOOP
-        SELECT COUNT(*)::REAL / total_obs INTO emp_arr[i+1]
+        SELECT COUNT(*)::REAL / total_obs
+        INTO emp_val
         FROM transition_log
         WHERE from_state = i
           AND ts >= now() - INTERVAL '7 days';
+        
+        emp_arr[i+1] := emp_val;
     END LOOP;
 
     -- 3. Расчёт KL-дивергенции: sum(pi_i * ln(pi_i / emp_i))
@@ -13750,10 +13754,10 @@ C4 – стационарное распределение не соответс
 Такой подход гарантирует объективную оценку зрелости модели без риска ложного оптимизма.
 */
 CREATE OR REPLACE FUNCTION evaluate_training_sufficiency(
-    test_start      DATE DEFAULT NULL,   -- тестовый период для критерия 3
+    test_start      DATE DEFAULT NULL,
     test_end        DATE DEFAULT NULL,
-    model_date_old  DATE DEFAULT NULL,   -- старая модель для критерия 3
-    model_date_new  DATE DEFAULT NULL    -- новая модель для критерия 3
+    model_date_old  DATE DEFAULT NULL,
+    model_date_new  DATE DEFAULT NULL
 )
 RETURNS TABLE (
     criterion TEXT,
@@ -13829,7 +13833,8 @@ BEGIN
     value := COALESCE(d_max, -1);
     threshold := 'D < 0.05';
     passed := (d_max IS NOT NULL AND d_max < 0.05);
-    details := CASE WHEN d_max IS NULL THEN 'Нет исторической матрицы за прошлую неделю' ELSE format('D_max = %.4f', d_max) END;
+    details := CASE WHEN d_max IS NULL THEN 'Нет исторической матрицы за прошлую неделю'
+                   ELSE 'D_max = ' || round(d_max::numeric, 4)::text END;
     RETURN NEXT;
 
     -- --------------------------------------------------------
@@ -13841,8 +13846,8 @@ BEGIN
         criterion := 'C3: Brier Score изменение < 0.01';
         value := COALESCE(brier_change, -1);
         threshold := '< 0.01';
-        -- passed уже из функции (sufficient)
-        details := CASE WHEN brier_change IS NULL THEN 'Нет данных в forecast_log' ELSE format('Изменение BS = %.4f', brier_change) END;
+        details := CASE WHEN brier_change IS NULL THEN 'Нет данных в forecast_log'
+                       ELSE 'Изменение BS = ' || round(brier_change::numeric, 4)::text END;
     ELSE
         criterion := 'C3: Brier Score изменение < 0.01';
         value := -1;
@@ -13860,11 +13865,12 @@ BEGIN
     value := kl_result.kl_value;
     threshold := '< 0.1';
     passed := kl_result.passed;
-    details := CASE WHEN kl_result.kl_value IS NULL THEN 'Нет данных за последнюю неделю' ELSE format('KL = %.4f', kl_result.kl_value) END;
+    details := CASE WHEN kl_result.kl_value IS NULL THEN 'Нет данных за последнюю неделю'
+                   ELSE 'KL = ' || round(kl_result.kl_value::numeric, 4)::text END;
     RETURN NEXT;
 END;
 $$;
-COMMENT ON FUNCTION get_stationary_distribution IS 'Основная функция проверки достаточности обучения (скорректированная)';
+COMMENT ON FUNCTION evaluate_training_sufficiency IS 'Основная функция проверки достаточности обучения (скорректированная)';COMMENT ON FUNCTION get_stationary_distribution IS 'Основная функция проверки достаточности обучения (скорректированная)';
 
 
 ------------------------------------------------------

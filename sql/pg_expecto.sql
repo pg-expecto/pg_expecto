@@ -12852,6 +12852,7 @@ DECLARE
     last_forget      TIMESTAMPTZ;
     forget_alpha     REAL;
     forget_interval  INTERVAL;
+	is_state_descriptions_has_got_data BOOLEAN;
 BEGIN
 
 	---------------------------------------------------------
@@ -12867,6 +12868,14 @@ BEGIN
         RETURN;
     END IF;
     -- ---------------------------------------------------------
+	
+	
+	SELECT EXISTS (SELECT 1 FROM state_descriptions)
+	INTO is_state_descriptions_has_got_data;
+	IF NOT is_state_descriptions_has_got_data
+	THEN 
+		PERFORM fill_state_descriptions();
+	END IF ;
 
     -- ---------------------------------------------------------
     -- Блок планового забывания

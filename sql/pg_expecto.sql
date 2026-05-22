@@ -12585,7 +12585,7 @@ COMMENT ON COLUMN forecast_log.to_state IS '-- (опционально) факт
 
 
 --------------------------------------------------------------------------------
--- Создание таблицы конфигурации забывания
+-- Создание таблицы конфигурации 
 /*
 Настройка параметров
 Параметры alpha и interval_hours можно менять вручную через UPDATE markov_config.
@@ -12602,7 +12602,7 @@ CREATE TABLE IF NOT EXISTS markov_config (
 	forecast_log_retention_days  SMALLINT NOT NULL DEFAULT 90 ,
 	transition_log_retention_days SMALLINT DEFAULT 30
 );
-COMMENT ON TABLE markov_config IS 'таблица конфигурации забывания';
+COMMENT ON TABLE markov_config IS 'таблица конфигурации ';
 COMMENT ON COLUMN markov_config.last_forget_time IS 'Время последнего забывания';
 COMMENT ON COLUMN markov_config.alpha IS 'Скорость забывания';
 COMMENT ON COLUMN markov_config.interval_minute IS 'Интервал забывания в минутах';
@@ -12613,7 +12613,6 @@ COMMENT ON COLUMN markov_config.transition_log_retention_days IS 'Глубина
 Более частое применение забывания позволяет плавно уменьшать веса, 
 не дожидаясь накопления большого объёма «устаревших» переходов. 
 При медианном окне в 1 час полчаса – разумный компромисс между адаптивностью и вычислительной нагрузкой.
-
 скорость забывания: период полураспада ≈6.5 часов (при 0.10)
 */
 INSERT INTO markov_config (last_forget_time, alpha, interval_minute , forecast_log_retention_days , transition_log_retention_days )
@@ -13644,16 +13643,16 @@ COMMENT ON FUNCTION compare_brier_scores IS 'Расчёт и сравнение 
 
 --------------------------------------------------------------------------------
 -- Вспомогательная функция: получение стационарного распределения
-CREATE OR REPLACE FUNCTION get_stationary_distribution(max_iter INT DEFAULT 1000, tol REAL DEFAULT 1e-6)
-RETURNS REAL[]
+CREATE OR REPLACE FUNCTION get_stationary_distribution(max_iter INT DEFAULT 1000, tol DOUBLE PRECISION DEFAULT 1e-6)
+RETURNS DOUBLE PRECISION[]
 LANGUAGE plpgsql
 AS $$
 DECLARE
     n CONSTANT INT := 189;
-    v REAL[] := array_fill(1.0 / n, ARRAY[n]);
-    v_new REAL[];
+    v DOUBLE PRECISION[] := array_fill(1.0 / n, ARRAY[n]);
+    v_new DOUBLE PRECISION[];
     i INT;
-    diff REAL;
+    diff DOUBLE PRECISION;
     to_s RECORD;   -- объявление переменной-записи
 BEGIN
     FOR i IN 1..max_iter LOOP
@@ -13673,8 +13672,7 @@ BEGIN
     RETURN v;
 END;
 $$;
-COMMENT ON FUNCTION get_stationary_distribution IS 'Вспомогательная функция: получение стационарного распределения';
---------------------------------------------------------------------------------
+COMMENT ON FUNCTION get_stationary_distribution IS 'Вспомогательная функция: получение стационарного распределения';--------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
 --KL-дивергенция стационарного и эмпирического (последняя неделя)
@@ -13704,22 +13702,32 @@ SELECT * FROM check_kl_divergence();
 */
 CREATE OR REPLACE FUNCTION check_kl_divergence()
 RETURNS TABLE (
-    kl_value  REAL,
-    threshold REAL,
+    kl_value  DOUBLE PRECISION,
+    threshold DOUBLE PRECISION,
     passed    BOOLEAN
 )
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    pi_arr    REAL[];
-    emp_arr   REAL[] := array_fill(0.0, ARRAY[189]);
+    pi_arr    DOUBLE PRECISION[];
+    emp_arr   DOUBLE PRECISION[] := array_fill(0.0::DOUBLE PRECISION, ARRAY[189]);
     total_obs BIGINT;
-    kl        REAL := 0.0;
+    kl        DOUBLE PRECISION := 0.0;
     i         INT;
-    emp_val   REAL; -- Промежуточная переменная для хранения результата SELECT
+    emp_val   DOUBLE PRECISION;
 BEGIN
-    -- 1. Получаем стационарное распределение
-    pi_arr := get_stationary_distribution();
+    -- 1. Пытаемся получить стационарное распределение; ловим underflow
+    BEGIN
+        pi_arr := get_stationary_distribution()::DOUBLE PRECISION[];
+    EXCEPTION
+        WHEN numeric_value_out_of_range THEN
+            -- Если внутренняя функция упала с underflow, возвращаем NULL-результат
+            kl_value  := NULL;
+            threshold := 0.1;
+            passed    := FALSE;
+            RETURN NEXT;
+            RETURN;
+    END;
 
     -- 2. Считаем общее количество наблюдений за последние 7 дней
     SELECT COUNT(*) INTO total_obs
@@ -13727,40 +13735,40 @@ BEGIN
     WHERE ts >= now() - INTERVAL '7 days';
 
     IF total_obs = 0 THEN
-        kl_value := NULL;
+        kl_value  := NULL;
         threshold := 0.1;
-        passed := FALSE;
+        passed    := FALSE;
         RETURN NEXT;
         RETURN;
     END IF;
 
-    -- 2. Считаем эмпирические частоты состояний
-    -- ИСПРАВЛЕНИЕ: Сначала берем в emp_val, потом присваиваем массиву
+    -- 3. Эмпирические частоты состояний
     FOR i IN 0..188 LOOP
-        SELECT COUNT(*)::REAL / total_obs
+        SELECT COUNT(*)::DOUBLE PRECISION / total_obs
         INTO emp_val
         FROM transition_log
         WHERE from_state = i
           AND ts >= now() - INTERVAL '7 days';
-        
+
         emp_arr[i+1] := emp_val;
     END LOOP;
 
-    -- 3. Расчёт KL-дивергенции: sum(pi_i * ln(pi_i / emp_i))
+    -- 4. Расчёт KL-дивергенции: sum(pi_i * ln(pi_i / emp_i))
     FOR i IN 1..189 LOOP
         IF pi_arr[i] > 0.0 AND emp_arr[i] > 0.0 THEN
             kl := kl + pi_arr[i] * ln(pi_arr[i] / emp_arr[i]);
         END IF;
     END LOOP;
 
-    kl_value := kl;
+    kl_value  := kl;
     threshold := 0.1;
-    passed := (kl < 0.1);
+    passed    := (kl < 0.1);
 
     RETURN NEXT;
 END;
 $$;
-COMMENT ON FUNCTION get_stationary_distribution IS 'Вспомогательная функция: получение стационарного распределения';
+COMMENT ON FUNCTION check_kl_divergence IS 'KL-дивергенция стационарного и эмпирического (последняя неделя)';
+
 --------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------

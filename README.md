@@ -63,10 +63,10 @@ shared_preload_libraries = 'pg_stat_statements, pg_wait_sampling'
 8. Добавить в cron задания для реализации цепи Маркова:
 ``` 
    # Основная процедура check_and_forget
-      */15 * * * * psql -d expecto_db -U expecto_user  -c "SELECT check_and_forget()"
+   */15 * * * * psql -d expecto_db -U expecto_user  -c "SELECT check_and_forget()"
    
    # Функция создания/обновления снимка матрицы прошлой недели
-      5 19 * * 5 psql -d expecto_db -U expecto_user  -c "SELECT snapshot_markov_prev_week()"
+   5 19 * * 5 psql -d expecto_db -U expecto_user  -c "SELECT snapshot_markov_prev_week()"
    
    # Ежедневная очистка forecast_log в 01:30
    30 1 * * * psql -d expecto_db -U expecto_user -c "SELECT clean_forecast_log()"

@@ -16,8 +16,8 @@
 ########################################################################################################
 # pg_expecto.sh
 # Корневой скрипт 
-# version 8.1.1
-# Updated 20.04.2026
+# version 10.0
+# updated 21/05/2026
 ########################################################################################################
 
  
@@ -116,14 +116,6 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : РАСЧЕТ СТАТИ
 # СБРОС СТАТИСТИКИ 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СБРОС СТАТИСТИКИ  '
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СБРОС СТАТИСТИКИ  ' >> $LOG_FILE
-###############################################
-# 8.1.1
-#for db in $(psql -t -c "SELECT datname FROM pg_database WHERE datallowconn AND datname != 'template0'"); do
-#    psql -d "$db" -c "SELECT pg_stat_reset();"
-#done
-# 8.1.1
-###############################################
-
 
 psql -d $expecto_db -Aqtc "SELECT pg_stat_statements_reset()" >> $LOG_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE
@@ -222,16 +214,169 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : РЕСТАРТ IOSTAT -
 
 fi	
 
-#################################################
-# Собрать статистику по автовакууму 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СБОР СТАТИСТИКИ ПО autovacuum - НАЧАТ'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СБОР СТАТИСТИКИ ПО autovacuum - НАЧАТ'>> $LOG_FILE
-$current_path'/'cron_autovacuum_import.sh /log/pg_log >> $LOG_FILE 2>$ERR_FILE
+########################################################################################################
+#
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - НАЧАТ '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - НАЧАТ '>> $LOG_FILE
+
+MARKOV_CHAIN_LOG=$current_path'/markov_chain.log'
+MARKOV_CHAIN_TRAINING=$current_path'/markov_chain_evaluate_training_sufficiency.txt'
+MARKOV_CHAIN_RESULT=$current_path'/markov_chain_result.txt'
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") >> $MARKOV_CHAIN_LOG
+psql -d expecto_db -U expecto_user  -c 'SELECT * FROM evaluate_training_sufficiency()' > $MARKOV_CHAIN_TRAINING
 exit_code $? $LOG_FILE $ERR_FILE
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СБОР СТАТИСТИКИ ПО autovacuum - ЗАКОНЧЕН'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : СБОР СТАТИСТИКИ ПО autovacuum - ЗАКОНЧЕН'>> $LOG_FILE
-# Собрать статистику по автовакууму 
-#################################################
+
+cat $MARKOV_CHAIN_TRAINING >> $MARKOV_CHAIN_LOG
+
+file=$MARKOV_CHAIN_TRAINING
+
+# Проверка существования файла
+if [[ ! -f "$file" ]]; then
+    echo "Ошибка: файл '$file' не найден."
+    exit 1
+fi
+
+# Ищем строки, где между двумя вертикальными чертами стоит 't' (с пробелами)
+# Исключаем строки с "criterion" и "---", чтобы не считать заголовок
+count=$(grep -E '\|\s*t\s*\|' "$file" | grep -vE 'criterion|---' | wc -l)
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ВЫПОЛНЕНО КРИТЕРИЕВ: '$count' ИЗ 4-х' >> $MARKOV_CHAIN_LOG
+
+##############################################
+#НАДЕЖНОСТЬ ПРОГНОЗА 
+if [[ $count -gt 0 ]]; 
+then 
+  ###############################################################################
+  # Расчет надежности прогнозов цепи Маркова по критериям C1..C4
+	# Нормализация файла: удаление BOM, замена CRLF на LF
+	TMP_FILE=$(mktemp)
+	sed '1s/^\xEF\xBB\xBF//' "$MARKOV_CHAIN_TRAINING" | tr -d '\r' > "$TMP_FILE"
+
+	# Подсчёт выполненных критериев:
+	#   - ищем строки, начинающиеся с C1..C4 (возможны пробелы в начале)
+	#   - проверяем, что после символа "|" идёт значение "t" (возможно с пробелами)
+	CRITERIA_COUNT=$(grep -E '^[[:space:]]*C[1-4]:' "$TMP_FILE" | \
+		grep -E '\|\s*t\s*\|' | wc -l)
+
+	rm -f "$TMP_FILE"
+
+	# Базовый балл по количеству выполненных критериев
+	case $CRITERIA_COUNT in
+		0) BASE=0 ;;
+		1) BASE=1 ;;
+		2) BASE=2 ;;
+		3) BASE=3 ;;
+		4) BASE=5 ;;
+		*) BASE=0 ;;
+	esac
+
+	# Типы прогнозов и коэффициенты γ(k)
+	PRED_TYPES=(
+		"Следующий шаг "
+		"5 шагов       "
+		"15 шагов      "
+		"30 шагов      "
+		"60 шагов      "
+	)
+
+	GAMMA=(1.0 1.0 0.9 0.8 0.7)
+
+	{
+		echo "Тип прогноза   | Балльная оценка (0-ненадежный прогноз , 5-надежный прогноз)"
+		for i in "${!PRED_TYPES[@]}"; do
+			raw=$(echo "$BASE * ${GAMMA[$i]}" | bc -l)
+			# Используем int() для отбрасывания дробной части
+			score=$(awk -v val="$raw" 'BEGIN {printf "%d", int(val)}')
+			# Ограничиваем диапазон [0,5]
+			if [[ $score -gt 5 ]]; then score=5; fi
+			if [[ $score -lt 0 ]]; then score=0; fi
+			echo "${PRED_TYPES[$i]} | $score"
+		done
+	} > "$MARKOV_CHAIN_RESULT"  
+  ###############################################################################
+  
+  cat $MARKOV_CHAIN_RESULT >> $MARKOV_CHAIN_LOG  
+  
+  echo ' ' >> $MARKOV_CHAIN_LOG	
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ТЕКУЩЕЕ СОСТОЯНИЕ' >> $MARKOV_CHAIN_LOG	
+  CURRENT_STATE=$current_path'/current_state.txt'
+  psql -d expecto_db -U expecto_user -c 'select * from get_current_os_waiting_correlation_for_markov_chain()' > $CURRENT_STATE
+  cat $CURRENT_STATE >> $MARKOV_CHAIN_LOG  
+
+  PREDICT_RISK=$current_path'/predict_risk.txt'
+  # Построчное чтение файла, начиная со 2-й строки
+  line_num=1
+  while IFS= read -r line; do
+    if [ $line_num -ge 2 ]; then
+        # Извлекаем второй столбец (разделитель '|') и убираем пробелы
+        value=$(echo "$line" | awk -F '|' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2}')
+echo 'line_num='$line_num  
+echo 'value='$value  
+
+		if [[ $value -gt 0 ]]; 
+		then 
+			if [ "$line_num" == "2"  ]
+			then 
+				echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : СЛЕДУЮЩИЙ ШАГ' >> $MARKOV_CHAIN_LOG	
+
+				psql -d expecto_db -U expecto_user  -c 'select * from predict_risk_1min()' > $PREDICT_RISK
+				exit_code $? $LOG_FILE $ERR_FILE
+				cat $PREDICT_RISK >> $MARKOV_CHAIN_LOG  			  
+			fi
+
+			if [ "$line_num" == "3"  ]
+			then 
+				echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ПРОГНОЗ НА 5 ШАГОВ' >> $MARKOV_CHAIN_LOG		  
+				
+				psql -d expecto_db -U expecto_user  -c 'select * from predict_risk_k_diag( 5 )' > $PREDICT_RISK
+				exit_code $? $MARKOV_CHAIN_LOG $ERR_FILE
+				cat $PREDICT_RISK >> $MARKOV_CHAIN_LOG  
+			fi
+			
+			if [ "$line_num" == "4"  ]
+			then 
+				echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ПРОГНОЗ НА 15 ШАГОВ' >> $MARKOV_CHAIN_LOG		  
+				
+				psql -d expecto_db -U expecto_user  -c 'select * from predict_risk_k_diag( 15 )' > $PREDICT_RISK
+				exit_code $? $LOG_FILE $ERR_FILE
+				cat $PREDICT_RISK >> $MARKOV_CHAIN_LOG  
+			fi
+
+			if [ "$line_num" == "5"  ]
+			then 
+				echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ПРОГНОЗ НА 30 ШАГОВ' >> $MARKOV_CHAIN_LOG		  
+				
+				psql -d expecto_db -U expecto_user  -c 'select * from predict_risk_k_diag( 30 )' > $PREDICT_RISK
+				exit_code $? $LOG_FILE $ERR_FILE
+				cat $PREDICT_RISK >> $MARKOV_CHAIN_LOG  
+			fi
+
+			if [ "$line_num" == "6"  ]
+			then 
+			    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ПРОГНОЗ НА 60 ШАГОВ' >> $MARKOV_CHAIN_LOG	
+
+				psql -d expecto_db -U expecto_user  -c 'select * from predict_risk_k_diag( 60 )' > $PREDICT_RISK
+				exit_code $? $LOG_FILE $ERR_FILE
+				cat $PREDICT_RISK >> $MARKOV_CHAIN_LOG  
+			fi
+		
+		fi 
+
+    fi
+    ((line_num++))
+  done < "$MARKOV_CHAIN_RESULT"
+else
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : WARNING : НЕДОСТАТОЧНО ДАННЫХ ДЛЯ ОБУЧЕНИЯ ЦЕПИ МАРКОВА' >> $MARKOV_CHAIN_LOG  
+fi 
+
+echo '**********************************************' > $MARKOV_CHAIN_LOG
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - ЗАКОНЧЕН '
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - ЗАКОНЧЕН '>> $LOG_FILE
+
+#
+########################################################################################################
+
 
 #################################################
 # Опустить флаг

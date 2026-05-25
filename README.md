@@ -16,6 +16,7 @@
 - **Версия 7** – статистическая обработка метрик, промпты для подготовки отчетов нейросетью.
 - **Версия 8** – философская инструкция, промпты для подготовки отчетов нейросетью.
 - **Версия 9** – объединенная инструкция, промпты для подготовки отчетов нейросетью.
+- **Версия 10** – реализация цепи Маркова для прогнозирования инцидентов производительности СУБД
 
 ## Системные требования
 
@@ -59,7 +60,36 @@ shared_preload_libraries = 'pg_stat_statements, pg_wait_sampling'
    `chmod 750 pg_expecto_install.sh`
 7. Запустить инсталлятор:  
    `./pg_expecto_install.sh`
-
+8. Добавить в cron задания для реализации цепи Маркова:
+``` 
+# Основная процедура check_and_forget
+*/15 * * * * psql -d expecto_db -U expecto_user  -c "SELECT check_and_forget()"
+   
+# Функция создания/обновления снимка матрицы прошлой недели
+5 19 * * 5 psql -d expecto_db -U expecto_user  -c "SELECT snapshot_markov_prev_week()"
+   
+# Ежедневная очистка forecast_log в 01:30
+30 1 * * * psql -d expecto_db -U expecto_user -c "SELECT clean_forecast_log()"
+   
+# Ежедневная очистка transition_log в 01:15
+15 1 * * * psql -d expecto_db -U expecto_user -c "SELECT clean_transition_log()"
+   
+# Ежедневное обновление эталонного распределения состояний (в 01:00)
+0 1 * * * psql -d expecto_db -U expecto_user -c "SELECT update_state_baseline()"
+   
+# Ежедневное обновление статистики операционной скорости (в 01:30)
+30 1 * * * psql -d expecto_db -U expecto_user -c "SELECT refresh_os_stats()"
+   
+# Очистка архивных снимков матрицы (раз в неделю, в воскресенье в 02:00)
+0 2 * * 0 psql -d expecto_db -U expecto_user -c "SELECT clean_markov_probabilities_archive()"
+   
+# Очистка check_state (ежедневно в 03:00)
+0 3 * * * psql -d expecto_db -U expecto_user -c "SELECT clean_check_state()"
+   
+# Очистка forget_log (раз в месяц, например, 1-го числа в 04:00)
+0 4 1 * * psql -d expecto_db -U expecto_user -c "SELECT clean_forget_log()"
+```   
+   
 ## Мониторинг работоспособности pg_expecto
 
 Для просмотра лога работы используйте команду:
@@ -82,7 +112,7 @@ tail -f /postgres/pg_expecto/sh/pg_expecto.log
 
 ## Статус проекта
 
-Текущая версия: 9.1
+Текущая версия: 10.0
 
 ## 📜 Лицензия
 
@@ -90,81 +120,3 @@ tail -f /postgres/pg_expecto/sh/pg_expecto.log
 Предыдущие версии (до 12.04.2026) доступны под лицензией MIT.  
 Полный текст лицензии находится в файле [LICENSE](LICENSE) в корне репозитория.
 
----
-
-# pg_expecto – Statistical Performance and Wait Event Analysis for PostgreSQL
-
-**pg_expecto** is a comprehensive toolkit for deep statistical analysis and performance testing of PostgreSQL. This release marks the arrival of a powerful, freely distributable solution for database administrators and developers.
-
-The main goal of pg_expecto is to provide administrators and developers with the tools to identify bottlenecks and optimize PostgreSQL performance. Unlike some modern solutions, pg_expecto deliberately focuses on reliable and proven statistical methods, ensuring full control and transparency of the analysis process.
-
-## Key Features
-
-- **Comprehensive statistical and correlation analysis** – deep analysis of PostgreSQL performance and wait events (`wait_event_type` / `wait_event`), establishing correlations between the internal state of the DBMS and overall system performance.
-- **Operating system monitoring** – collection and analysis of OS metrics using `vmstat` and `iostat`, directly linking disk, memory, and CPU load to database behavior.
-- **Built-in load testing** – the ability to run load tests to evaluate database behavior under pressure and determine performance limits.
-- **Excel reporting** – export analysis results to Microsoft Excel‑compatible formats for further processing, visualization, and presentation.
-- **Extensive knowledge base** – a wealth of materials from experiments with the [pg_hazel](https://dzen.ru/suite/009d4a06-f053-4377-8fdc-76721bf79c50) project, serving as a valuable source of knowledge and practical examples.
-- **Proactive monitoring** – creation of representative performance profiles for monitoring systems through standardized metric data files. Detection of DBMS performance degradation events triggers standard and priority incident response workflows.
-- **Neural network integration** – automatic generation of prompts for neural networks to analyze statistically processed DBMS and infrastructure performance metrics.
-- **Version 7** – statistical processing of metrics and prompts for generating neural‑network‑assisted reports.
-
-## System Requirements
-
-pg_expecto requires the **vmstat** and **iostat** utilities to be installed.
-
-### Important
-pg_expecto requires the **pg_stat_statements** and **pg_wait_sampling** extension libraries to be installed.
-
-The `shared_preload_libraries` parameter must be set as follows:
-
-```
-shared_preload_libraries = 'pg_stat_statements, pg_wait_sampling'
-```
-
-**The order of libraries is important.**
-
-## Installation
-
-1. Unpack the project zip archive (`pg_expecto-main.zip`). This will create the folder **pg_expecto-main**.
-2. Copy the contents to the target DBMS server into `/tmp/pg_expecto`.
-3. Using the *postgres* account, create a service directory on the target DBMS server:  
-   `mkdir /postgres/pg_expecto`
-4. Copy the installer:  
-   `cp /tmp/pg_expecto/pg_expecto_install.sh /postgres/pg_expecto/`
-5. Change to the installation directory:  
-   `cd /postgres/pg_expecto`
-6. Make the installer script executable:  
-   `chmod 750 pg_expecto_install.sh`
-7. Run the installer:  
-   `./pg_expecto_install.sh`
-
-## Monitoring pg_expecto
-
-To view the log, use:
-
-```bash
-tail -f /postgres/pg_expecto/sh/pg_expecto.log
-```
-
-## Usage
-
-A detailed exampleы of using pg_expecto:  
-[PG_EXPECTO : HOW TO](https://dzen.ru/suite/d271591a-d763-4191-9551-598bc5be9450?share_to=link)
-
-## Contacts
-
-- Rinat Sungatullin: **kznalp@yandex.ru**
-- [Dzen channel](https://dzen.ru/kznalp) : https://dzen.ru/kznalp
-- [Telegram channel](https://t.me/pg_expecto) : https://t.me/pg_expecto
-- [Max](https://max.ru/join/T8sCiETC85Tr4Dkh_nM362PVcCbGDLagF4RZKHf4Udg)
-
-## Project Status
-
-Current version: 9.1
-
-## 📜 License
-
-Starting from version 8.0, `pg_expecto` is distributed under the [Apache License 2.0](LICENSE).  
-Previous versions (prior to 2026-04-12) are available under the MIT License.  
-The full license text is available in the [LICENSE](LICENSE) file in the repository root.

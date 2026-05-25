@@ -571,6 +571,12 @@ BEGIN
 				;
 	
 	
+    --------------------------------------------------------------------------------------------------------
+	--	ОБУЧЕНИЕ ЦЕПИ МАРКОВА
+		PERFORM markov_chain_training();
+	--	ОБУЧЕНИЕ ЦЕПИ МАРКОВА
+	--------------------------------------------------------------------------------------------------------
+	
 	
 	return result_str;
 END
@@ -776,7 +782,7 @@ CREATE INDEX performance_incident_idx_priority ON performance_incident (id) WHER
 
 --------------------------------------------------------------------------------
 -- core_functions.sql
--- Updated 19.04.2026
+-- Updated 23.04.2026
 --------------------------------------------------------------------------------
 -- Корневые и сервисные функции
 --
@@ -853,9 +859,9 @@ BEGIN
 		DELETE FROM performance_incident WHERE start_timepoint < CURRENT_TIMESTAMP - ( interval '1 day' * current_day_for_store );	
 	--Удалить старые инциденты производительности 
 	
-	--Удалить старые данные по статистике autovacuum
-		DELETE FROM autovacuum_log_events WHERE curr_timestamp < CURRENT_TIMESTAMP - ( interval '1 day' * current_day_for_store );	
-	--Удалить старые данные по статистике autovacuum
+	--Удалить старые данные по статистике autovacuum актуальны 1 час
+		DELETE FROM autovacuum_log_events WHERE curr_timestamp  < CURRENT_TIMESTAMP - ( interval '1 hour'  );
+	--Удалить старые данные по статистике autovacuum актуальны 1 час
 	
 return 0 ;
 END
@@ -12404,3 +12410,2185 @@ COMMENT ON COLUMN autovacuum_log_events.index_scans IS 'Число сканир�
 COMMENT ON COLUMN autovacuum_log_events.pages_removed IS 'Количество освобождённых страниц (из "pages: X removed")';
 COMMENT ON COLUMN autovacuum_log_events.pages_remain IS 'Количество оставшихся страниц (из "pages: Y remain")';
 --------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- markov_chain_tables.sql
+--------------------------------------------------------------------------------
+-- Таблицы для расчета цепи Маркова 
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+--Основная таблица переходных частот
+/*
+from_state / to_state — закодированные идентификаторы состояний (например, от 0 до 188 при размерности 189). SMALLINT занимает 2 байта, диапазона ±32 767 достаточно.
+frequency — REAL (4 байта) . Для вероятностных расчётов REAL достаточно.
+Минимальная строка таблицы: 2+2+4 = 8 байт данных + ≈27 байт служебных полей PostgreSQL ≈ 35 байт. При 35 000 ячеек (189×189) размер таблицы ≈ 1,2 МБ, индексы ещё примерно столько же. 
+Это пренебрежимо мало для любой современной СУБД.
+
+Преимущества построчного хранения:
+Атомарное обновление одной ячейки: INSERT ... ON CONFLICT DO UPDATE SET frequency = frequency + 1.
+Простое применение «забывания»: UPDATE markov_frequencies SET frequency = frequency * (1 - alpha).
+Быстрое извлечение строки переходов из состояния: SELECT to_state, frequency FROM markov_frequencies WHERE from_state = $1.
+*/
+DROP TABLE IF EXISTS markov_frequencies;
+CREATE TABLE markov_frequencies (
+    from_state  SMALLINT NOT NULL,
+    to_state    SMALLINT NOT NULL,
+    frequency   REAL     NOT NULL DEFAULT 0.0
+);
+
+ALTER TABLE markov_frequencies ADD CONSTRAINT markov_frequencies_pk PRIMARY KEY (from_state, to_state);
+COMMENT ON TABLE markov_frequencies IS 'Основная таблица переходных частот Цепи Маркова';
+COMMENT ON COLUMN markov_frequencies.from_state IS 'Исходное состояние';
+COMMENT ON COLUMN markov_frequencies.to_state IS 'Целевое  состояние';
+COMMENT ON COLUMN markov_frequencies.frequency IS 'Частота переходов';
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Таблица журнала переходов
+DROP TABLE IF EXISTS transition_log;
+CREATE TABLE transition_log (
+    id          BIGSERIAL    ,
+    ts          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    from_state  SMALLINT     NOT NULL,
+    to_state    SMALLINT     NOT NULL
+);
+ALTER TABLE transition_log ADD CONSTRAINT transition_log_pk PRIMARY KEY (id);
+CREATE INDEX idx_transition_log_ts ON transition_log (ts);
+-- Индекс для быстрой выборки по исходному состоянию (при необходимости)
+CREATE INDEX idx_transition_log_from ON transition_log (from_state);
+
+COMMENT ON TABLE transition_log IS 'Таблица журнала переходов';
+COMMENT ON COLUMN transition_log.ts IS 'Точка наблюдения';
+COMMENT ON COLUMN transition_log.from_state IS 'Исходное состояние';
+COMMENT ON COLUMN transition_log.to_state IS 'Целевое  состояние';
+
+--------------------------------------------------------------------------------
+-- Вероятности для цепи Маркова
+DROP TABLE IF EXISTS markov_probabilities;
+CREATE TABLE markov_probabilities (
+    from_state  SMALLINT NOT NULL,
+    to_state    SMALLINT NOT NULL,
+    probability REAL NOT NULL
+);
+
+ALTER TABLE markov_probabilities ADD CONSTRAINT markov_probabilities_pk PRIMARY KEY (from_state, to_state);
+COMMENT ON TABLE markov_probabilities IS 'Основная таблица переходных частот Цепи Маркова';
+COMMENT ON COLUMN markov_probabilities.from_state IS 'Исходное состояние';
+COMMENT ON COLUMN markov_probabilities.to_state IS 'Целевое  состояние';
+COMMENT ON COLUMN markov_probabilities.probability IS 'Вероятность перехода';
+--
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Таблица для хранения снимка матрицы вероятностей
+-- за предыдущую неделю
+DROP TABLE IF EXISTS markov_probabilities_prev_week;
+CREATE TABLE markov_probabilities_prev_week (
+    from_state  SMALLINT NOT NULL,
+    to_state    SMALLINT NOT NULL,
+    probability REAL    NOT NULL
+);
+ALTER TABLE markov_probabilities_prev_week ADD CONSTRAINT markov_probabilities_prev_week_pk PRIMARY KEY (from_state, to_state);
+COMMENT ON TABLE markov_probabilities_prev_week IS 'Таблица для хранения снимка матрицы вероятностей';
+COMMENT ON COLUMN markov_probabilities_prev_week.from_state IS 'Исходное состояние';
+COMMENT ON COLUMN markov_probabilities_prev_week.to_state IS 'Целевое  состояние';
+COMMENT ON COLUMN markov_probabilities_prev_week.probability IS 'Вероятность перехода';
+
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Таблица поглощающей матрицы
+DROP TABLE IF EXISTS markov_absorbing;
+CREATE TABLE IF NOT EXISTS markov_absorbing (
+    from_state  SMALLINT NOT NULL,
+    to_state    SMALLINT NOT NULL,
+    probability REAL    NOT NULL
+);
+
+ALTER TABLE markov_absorbing ADD CONSTRAINT markov_absorbing_pk PRIMARY KEY (from_state, to_state);
+COMMENT ON TABLE markov_absorbing IS 'Таблица поглощающей матрицы';
+COMMENT ON COLUMN markov_absorbing.from_state IS 'Исходное состояние';
+COMMENT ON COLUMN markov_absorbing.to_state IS 'Целевое  состояние';
+COMMENT ON COLUMN markov_absorbing.probability IS 'Вероятность перехода';
+--------------------------------------------------------------------------------
+
+
+
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+-- Справочник состояний
+DROP TABLE IF EXISTS state_descriptions;
+CREATE TABLE state_descriptions (
+    state_id    SMALLINT ,
+    correlation REAL    NOT NULL,   
+    os_trend    SMALLINT NOT NULL,  
+    wait_trend  SMALLINT NOT NULL   
+);
+ALTER TABLE state_descriptions ADD CONSTRAINT state_descriptions_pk PRIMARY KEY (state_id);
+COMMENT ON TABLE state_descriptions IS 'Справочник состояний';
+COMMENT ON COLUMN state_descriptions.correlation IS 'Округлённое значение коэффициента корреляции';
+COMMENT ON COLUMN state_descriptions.os_trend IS 'Направление тренда операционной скорости -1, 0, 1';
+COMMENT ON COLUMN state_descriptions.wait_trend IS 'Направление тренда ожиданий  -1, 0, 1';
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Таблица для обучения цепи Маркова
+DROP TABLE IF EXISTS markov_chain;
+CREATE UNLOGGED TABLE markov_chain (
+    prev_correlation REAL    ,   
+    prev_os_trend    SMALLINT ,  
+    prev_wait_trend  SMALLINT , 
+    curr_correlation REAL  NOT NULL   ,   
+    curr_os_trend    SMALLINT  NOT NULL,  
+    curr_wait_trend  SMALLINT  NOT NULL 
+);
+COMMENT ON TABLE markov_chain IS 'Таблица для обучения цепи Маркова';
+COMMENT ON COLUMN markov_chain.prev_correlation IS 'Предыдущее значение :Округлённое значение коэффициента корреляции';
+COMMENT ON COLUMN markov_chain.prev_os_trend IS 'Предыдущее значение :Направление тренда операционной скорости -1, 0, 1';
+COMMENT ON COLUMN markov_chain.prev_wait_trend IS 'Предыдущее значение :Направление тренда ожиданий  -1, 0, 1';
+COMMENT ON COLUMN markov_chain.curr_correlation IS 'Новое значение:Округлённое значение коэффициента корреляции';
+COMMENT ON COLUMN markov_chain.curr_os_trend IS 'Новое значение: Направление тренда операционной скорости -1, 0, 1';
+COMMENT ON COLUMN markov_chain.curr_wait_trend IS 'Новое значение: Направление тренда ожиданий  -1, 0, 1';
+
+-- Таблица для обучения цепи Маркова
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Таблица журнала прогнозов для оценки точности модели
+DROP TABLE IF EXISTS forecast_log;
+CREATE TABLE forecast_log (
+    id              BIGSERIAL    ,
+    ts              TIMESTAMPTZ  NOT NULL DEFAULT now(),   
+    model_train_date DATE        NOT NULL,                
+    predicted_risk  REAL         NOT NULL,                
+    actual_risk     SMALLINT     NOT NULL CHECK (actual_risk IN (0, 1)),  
+    from_state      SMALLINT     ,                        
+    to_state        SMALLINT                              
+);
+ALTER TABLE forecast_log ADD CONSTRAINT forecast_log_pk PRIMARY KEY (id);
+
+-- Индексы для быстрой выборки по дате модели и времени
+CREATE INDEX idx_forecast_log_model_date ON forecast_log (model_train_date);
+CREATE INDEX idx_forecast_log_ts ON forecast_log (ts);
+
+COMMENT ON TABLE forecast_log IS 'Таблица журнала прогнозов для оценки точности модели';
+COMMENT ON COLUMN forecast_log.ts IS '-- момент, когда стал известен фактический исход';
+COMMENT ON COLUMN forecast_log.model_train_date IS '-- дата, до которой обучена модель (идентификатор версии)';
+COMMENT ON COLUMN forecast_log.predicted_risk IS '-- предсказанная вероятность аварии на 1 шаг';
+COMMENT ON COLUMN forecast_log.actual_risk IS '-- 1 если переход был в аварийное состояние';
+COMMENT ON COLUMN forecast_log.from_state IS '-- (опционально) исходное состояние для анализа';
+COMMENT ON COLUMN forecast_log.to_state IS '-- (опционально) фактическое состояние';
+
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+-- Создание таблицы конфигурации 
+/*
+Настройка параметров
+Параметры alpha и interval_hours можно менять вручную через UPDATE markov_config.
+Рекомендации:
+Для стабильной нагрузки: alpha = 0.01, интервал 1 час.
+Если нагрузка меняется медленно, можно уменьшить alpha до 0.005 и увеличить интервал до 2–4 часов.
+При обнаружении дрейфа (методика check_and_forget) можно форсированно увеличить alpha или уменьшить интервал на время, изменив значения в markov_config.
+*/
+/*
+Включить адаптивное забывание (по умолчанию):
+UPDATE markov_config SET adaptive_forgetting_enabled = true;
+
+Временно отключить (например, при отладке):
+UPDATE markov_config SET adaptive_forgetting_enabled = false;
+После отключения вызов SELECT check_and_forget(); будет немедленно возвращать сообщение:
+Adaptive forgetting is disabled by markov_config.adaptive_forgetting_enabled = false.
+При этом плановое забывание внутри markov_chain_training() продолжит работать с параметром alpha и interval_minute из той же таблицы.
+*/
+DROP TABLE IF EXISTS markov_config;
+CREATE TABLE IF NOT EXISTS markov_config (
+    last_forget_time  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    alpha             REAL       NOT NULL DEFAULT 0.01,
+    interval_minute   INT        NOT NULL DEFAULT 60 , 
+	forecast_log_retention_days  SMALLINT NOT NULL DEFAULT 21 ,
+	transition_log_retention_days SMALLINT DEFAULT 21, 
+	--CHECK_AND_FORGET
+	kl_threshold          REAL DEFAULT 0.4,
+    chi2_threshold        REAL DEFAULT 220.0,      -- для 188 степеней свободы при p=0.01
+    os_dev_threshold      REAL DEFAULT 0.3,
+    brier_threshold       REAL DEFAULT 0.25,
+    check_interval_minutes INT DEFAULT 15,         -- период вызова check_and_forget
+    forget_alpha_max      REAL DEFAULT 0.5,
+    confirmation_cycles   SMALLINT DEFAULT 2 , 
+	adaptive_forgetting_enabled BOOLEAN DEFAULT true , 
+	archive_retention_days SMALLINT DEFAULT 21 , -- archive_retention_days = 21 – удалять снимки старше 3 недель.
+    check_state_retention_days SMALLINT DEFAULT 7 , --check_state_retention_days = 7 – хранить историю проверок для механизма подтверждения, но не более недели.
+    forget_log_retention_days SMALLINT DEFAULT 90 --forget_log_retention_days = 90 – журнал забываний можно хранить дольше для аудита.
+	--CHECK_AND_FORGET
+);
+COMMENT ON TABLE markov_config IS 'таблица конфигурации, включая управление адаптивным забыванием';
+COMMENT ON COLUMN markov_config.last_forget_time IS 'Время последнего забывания';
+COMMENT ON COLUMN markov_config.alpha IS 'Скорость забывания';
+COMMENT ON COLUMN markov_config.interval_minute IS 'Интервал забывания в минутах';
+COMMENT ON COLUMN markov_config.forecast_log_retention_days IS 'Глубина хранения данных в таблице forecast_log ';
+COMMENT ON COLUMN markov_config.transition_log_retention_days IS 'Глубина хранения данных в таблице transition_log ';
+COMMENT ON COLUMN markov_config.kl_threshold IS 'Порог KL-дивергенции для форсированного забывания';
+COMMENT ON COLUMN markov_config.chi2_threshold IS 'Порог χ² для форсированного забывания';
+COMMENT ON COLUMN markov_config.os_dev_threshold IS 'Порог отклонения операционной скорости (30%)';
+COMMENT ON COLUMN markov_config.brier_threshold IS 'Порог Brier Score (0.25)';
+COMMENT ON COLUMN markov_config.check_interval_minutes IS 'Интервал плановой проверки (минуты)';
+COMMENT ON COLUMN markov_config.confirmation_cycles IS 'Сколько проверок подряд должен сохраняться признак для срабатывания';
+COMMENT ON COLUMN markov_config.adaptive_forgetting_enabled IS 'Если false, функция check_and_forget не выполняет забывание (но плановое забывание в markov_chain_training продолжает работать)';
+COMMENT ON COLUMN markov_config.archive_retention_days IS 'Глубина хранения архивных снимков матрицы (markov_probabilities_archive), дней';
+COMMENT ON COLUMN markov_config.check_state_retention_days IS 'Глубина хранения истории проверок check_and_forget (check_state), дней';
+COMMENT ON COLUMN markov_config.forget_log_retention_days IS 'Глубина хранения журнала форсированных забываний (forget_log), дней';
+
+/*
+Более частое применение забывания позволяет плавно уменьшать веса, 
+не дожидаясь накопления большого объёма «устаревших» переходов. 
+При медианном окне в 1 час полчаса – разумный компромисс между адаптивностью и вычислительной нагрузкой.
+скорость забывания: период полураспада ≈6.5 часов (при 0.10)
+*/
+INSERT INTO markov_config (last_forget_time, alpha, interval_minute , forecast_log_retention_days , transition_log_retention_days , adaptive_forgetting_enabled  )
+VALUES (now(), 0.1, 30 , 21 , 21 , TRUE )
+ON CONFLICT DO NOTHING;
+
+------------------------------------------------------------------
+-- Таблица для архивных снимков матрицы вероятностей
+/*
+train_date (DATE, NOT NULL)
+Дата, определяющая версию модели. Обычно соответствует последнему календарному дню, данные за который были включены в обучение матрицы на момент создания снимка.
+Позволяет впоследствии выбрать модель по состоянию «на дату» для ретроспективного анализа точности или сравнения моделей разных периодов.
+
+from_state (SMALLINT, NOT NULL)
+Кодированный идентификатор исходного состояния марковской цепи. Диапазон значений: 0 … 188 (всего 189 возможных состояний — комбинации коэффициента корреляции и трендов операционной скорости/ожиданий).
+Совместно с train_date и to_state формирует уникальный ключ записи.
+
+to_state (SMALLINT, NOT NULL)
+Идентификатор целевого состояния, в которое осуществляется переход. Принимает значения из того же диапазона, что и from_state.
+
+probability (REAL, NOT NULL)
+Оценка вероятности перехода P(from_state → to_state), вычисленная по частотам переходов на момент создания снимка. Гарантирует, что для каждого from_state сумма вероятностей по всем to_state равна 1 (в пределах точности REAL).
+Используется в функциях прогнозирования риска по историческим моделям (например, predict_risk_1min_archived).
+*/
+DROP TABLE IF EXISTS markov_probabilities_archive;
+CREATE TABLE markov_probabilities_archive (
+    train_date  DATE     NOT NULL,   
+    from_state  SMALLINT NOT NULL,   
+    to_state    SMALLINT NOT NULL,   
+    probability REAL     NOT NULL   
+    
+);
+ALTER TABLE markov_probabilities_archive ADD CONSTRAINT markov_probabilities_archive_pk PRIMARY KEY (train_date, from_state, to_state);
+-- Индексы для ускорения запросов прогноза по конкретной модели
+CREATE INDEX idx_archive_date_from ON markov_probabilities_archive (train_date, from_state);
+
+COMMENT ON TABLE markov_probabilities_archive IS 'Таблица для архивных снимков матрицы вероятностей';
+COMMENT ON COLUMN markov_probabilities_archive.train_date IS '-- дата, на которую зафиксирована модель (последний день обучающих данных)';
+COMMENT ON COLUMN markov_probabilities_archive.from_state IS '-- идентификатор исходного состояния (0..188)';
+COMMENT ON COLUMN markov_probabilities_archive.to_state IS '-- идентификатор целевого состояния (0..188)';
+COMMENT ON COLUMN markov_probabilities_archive.probability IS '-- оценённая вероятность перехода P(from_state → to_state)';
+
+------------------------------------------------------------------------------------------------------------------------------
+-- CHECK_AND_FORGET
+
+-- Эталонное распределение состояний для проверки дрейфа (методика 3.1)
+DROP TABLE IF EXISTS state_baseline;
+CREATE TABLE state_baseline (
+    hour_of_day   SMALLINT NOT NULL,   -- 0..23
+    dow           SMALLINT NOT NULL,   -- 1 = понедельник .. 7 = воскресенье
+    state_id      SMALLINT NOT NULL,
+    probability   REAL NOT NULL,
+    last_updated  TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE state_baseline ADD PRIMARY KEY (hour_of_day, dow, state_id);
+COMMENT ON TABLE state_baseline IS 'Эталонное распределение состояний для проверки дрейфа (методика 3.1)';
+
+-- Журнал форсированных забываний (методика 4.1)
+DROP TABLE IF EXISTS forget_log;
+CREATE TABLE forget_log (
+    id            BIGSERIAL PRIMARY KEY,
+    ts            TIMESTAMPTZ DEFAULT now(),
+    alpha         REAL NOT NULL,
+    triggered_by  TEXT[],                 -- массив сработавших признаков: {'KL','OS','Brier','Infra','Diurnal'}
+    kl_div        REAL,
+    chi2_val      REAL,
+    brier_score   REAL,
+    os_deviation  REAL,
+    details       TEXT
+);
+COMMENT ON TABLE forget_log IS 'Журнал форсированных забываний (методика 4.1)';
+
+--Статистика операционной скорости (для обнаружения аномалий)
+--Среднее и стандартное отклонение операционной скорости по часам (последние 20 дней)
+DROP TABLE IF EXISTS operational_speed_stats;
+CREATE TABLE operational_speed_stats (
+    hour_of_day   SMALLINT NOT NULL,
+    avg_speed     REAL NOT NULL,
+    stddev_speed  REAL NOT NULL,
+    last_updated  TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE operational_speed_stats ADD PRIMARY KEY (hour_of_day);
+COMMENT ON TABLE operational_speed_stats IS 'Среднее и стандартное отклонение операционной скорости по часам (последние 20 дней)';
+
+-- Таблица для регистрации внешних событий (заполняется через триггеры CI/CD или вручную)
+DROP TABLE IF EXISTS infrastructure_events;
+CREATE TABLE infrastructure_events (
+    id           BIGSERIAL PRIMARY KEY,
+    event_time   TIMESTAMPTZ DEFAULT now(),
+    event_type   TEXT NOT NULL,   -- 'deploy', 'config_change', 'failover', 'manual'
+    description  TEXT,
+    processed    BOOLEAN DEFAULT false
+);
+COMMENT ON TABLE infrastructure_events IS 'Таблица для регистрации внешних событий (заполняется через триггеры CI/CD или вручную)';
+
+-- Таблица для хранения состояния проверок (для механизма подтверждения)
+DROP TABLE IF EXISTS check_state;
+CREATE TABLE check_state (
+    check_time    TIMESTAMPTZ PRIMARY KEY,
+    kl_flag       BOOLEAN,
+    chi2_flag     BOOLEAN,
+    os_flag       BOOLEAN,
+    brier_flag    BOOLEAN,
+    infra_flag    BOOLEAN,
+    diurnal_flag  BOOLEAN
+);
+COMMENT ON TABLE check_state IS 'Состояние каждой проверки check_and_forget для подтверждения признаков';
+
+-- Состояние каждой проверки check_and_forget для подтверждения признаков
+DROP TABLE IF EXISTS cluster_stat_median;
+CREATE TABLE cluster_stat_median (
+    curr_timestamp TIMESTAMPTZ PRIMARY KEY,
+    curr_op_speed REAL,
+    curr_waitings REAL
+);
+CREATE INDEX ON cluster_stat_median (curr_timestamp);
+COMMENT ON TABLE cluster_stat_median IS 'Состояние каждой проверки check_and_forget для подтверждения признаков';
+
+-- CHECK_AND_FORGET
+------------------------------------------------------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+-- markov_chain_functions.sql
+--------------------------------------------------------------------------------
+-- ОБУЧЕНИЕ ЦЕПИ МАРКОВА
+/*
+Рекомендации по эксплуатации
+Параметр	Рекомендуемое значение	Примечание
+alpha (плановое)	0.01 – 0.02	Для медленной адаптации.
+interval_minute	30 – 60	Плановое забывание каждые 30–60 минут.
+Порог KL (в check_and_forget)	0.4	Форсированное забывание при превышении.
+Порог Brier Score	0.25	Если прогнозы ухудшились.
+confirmation_cycles	2	Чтобы избежать ложных срабатываний.
+*/
+
+/*
+---------------------------------------------------------------------
+РЕКОМЕНДАЦИИ ПЕРЕД НАГРУЗОЧНЫМ ТЕСТИРОВАНИЕМ
+
+Временно отключить адаптивное забывание для калибровки: 
+UPDATE markov_config SET adaptive_forgetting_enabled = false;
+
+Установить confirmation_cycles = 1 на период сбора статистики, чтобы видеть все срабатывания в check_state и forget_log, но без применения забывания (т.к. адаптивное отключено).
+UPDATE markov_config SET confirmation_cycles = 1;
+---------------------------------------------------------------------
+*/
+
+-- markov_chain_training - обучение цепи Маркова
+-- evaluate_training_sufficiency Основная функция проверки достаточности обучения 
+------------------------------------------------------------------------------------------
+-- Прогнозирование
+-- predict_risk_1min получить вероятность попасть в аварийную зону 
+-- predict_risk_k_diag получить вероятность попасть в аварийную зону за K шагов
+------------------------------------------------------------------------------------------
+-- Сервисные функции
+-- fill_state_descriptions - Функция заполнения справочника состояний
+-- get_state_id - Получить state_id для заданных r , OS_trend , wait_trend
+-- update_markov_frequency - Обновить основную таблицу переходных частот
+-- log_transition_and_update Функция логирования перехода и обновления матрицы частот
+-- get_current_os_waiting_correlation_for_markov_chain - получить текущее значение коэффициента корреляции для цепи маркова на окне 1 час 
+-- update_markov_probabilities Обновить матрицу вероятностей
+-- rebuild_markov_absorbing заполнить матрицу поглощения
+-- log_forecast Функция записи прогноза и его фактического исхода
+-- predict_risk_1min_archived Вспомогательная функция прогноза по архивной матрице:
+-- compare_brier_scores Расчёт и сравнение Brier Score
+-- get_stationary_distribution Вспомогательная функция: получение стационарного распределения
+-- check_kl_divergence KL-дивергенция стационарного и эмпирического (последняя неделя)
+-- apply_forgetting Функция забывания
+-- archive_markov_probabilities Архивация вероятностей цепи Маркова
+-- clean_markov_probabilities_archive Очистка архивных снимков матрицы вероятностей
+-- clean_check_state Очистка истории проверок check_state
+-- clean_forget_log Очистка журнала форсированных забываний
+-- 
+------------------------------------------------------------------------------------------
+-- Сервисные функции по cron
+--# Основная процедура check_and_forget
+--*/15 * * * * psql -d expecto_db -U expecto_user  -c "SELECT check_and_forget()"
+--# Функция создания/обновления снимка матрицы прошлой недели
+--5 19 * * 5 psql -d expecto_db -U expecto_user  -c "SELECT snapshot_markov_prev_week();"
+--# Ежедневная очистка forecast_log в 01:30
+--30 1 * * * psql -d expecto_db -U expecto_user -c "SELECT clean_forecast_log()"
+--# Ежедневная очистка transition_log в 01:15
+--15 1 * * * psql -d expecto_db -U expecto_user -c "SELECT clean_transition_log()"
+--# Ежедневное обновление эталонного распределения состояний (в 01:00)
+--0 1 * * * psql -d expecto_db -U expecto_user -c "SELECT update_state_baseline()"
+--# Ежедневное обновление статистики операционной скорости (в 01:30)
+--30 1 * * * psql -d expecto_db -U expecto_user -c "SELECT refresh_os_stats()"
+--# Очистка архивных снимков матрицы (раз в неделю, в воскресенье в 02:00)
+--0 2 * * 0 psql -d expecto_db -U expecto_user -c "SELECT clean_markov_probabilities_archive()"
+--# Очистка check_state (ежедневно в 03:00)
+--0 3 * * * psql -d expecto_db -U expecto_user -c "SELECT clean_check_state()"
+--# Очистка forget_log (раз в месяц, например, 1-го числа в 04:00)
+--0 4 1 * * psql -d expecto_db -U expecto_user -c "SELECT clean_forget_log()"
+--
+-- snapshot_markov_prev_week() Функция создания/обновления снимка матрицы прошлой недели
+-- clean_forecast_log Очистка журнала переходов
+-- clean_transition_log Функция очистки transition_log
+-- check_and_forget Основная процедура check_and_forget
+------------------------------------------------------------------------------------------
+-- CHECK_AND_FORGET
+-- update_state_baseline Обновление эталонных распределений (запускать ежедневно)
+-- calculate_kl_divergence Расчёт KL-дивергенции между текущим часом и эталоном
+-- calculate_chi_squared Расчёт χ² – критерия
+-- get_os_deviation Отклонение операционной скорости (SMA20 vs историческое среднее)
+-- refresh_os_stats Обновление статистики операционной скорости (запускать ежедневно)
+-- emergency_forget Функция экстренного забывания по событию
+
+
+
+
+
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+--Функция заполнения справочника состояний цепи Маркова
+CREATE OR REPLACE FUNCTION fill_state_descriptions() RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- Очистка таблицы перед заполнением
+    TRUNCATE state_descriptions;
+
+    -- Генерация всех комбинаций и вставка
+    INSERT INTO state_descriptions (state_id, correlation, os_trend, wait_trend)
+    SELECT
+        -- Формула: correlation_index * 9 + (os_trend_index) * 3 + wait_trend_index
+        -- где correlation_index = 0..20, os_trend_index = 0..2, wait_trend_index = 0..2
+        c_idx * 9 + (os + 1) * 3 + (wt + 1) AS state_id,
+        (-1.0 + 0.1 * c_idx)::REAL            AS correlation,
+        os::SMALLINT                           AS os_trend,
+        wt::SMALLINT                           AS wait_trend
+    FROM
+        generate_series(0, 20)   AS c_idx,   -- 0 => r=-1.0, 20 => r=+1.0
+        generate_series(-1, 1)   AS os,      -- -1,0,1
+        generate_series(-1, 1)   AS wt       -- -1,0,1
+    ORDER BY state_id;  -- для наглядности, не обязательно
+END;
+$$;
+COMMENT ON FUNCTION fill_state_descriptions IS 'Функция заполнения справочника состояний цепи Маркова.';
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+-- Получить state_id для заданных r , OS_trend , wait_trend
+CREATE OR REPLACE FUNCTION get_state_id(
+    r           REAL,
+    os_trend    SMALLINT,
+    wait_trend  SMALLINT
+)
+RETURNS SMALLINT
+LANGUAGE sql
+IMMUTABLE
+AS $$
+    SELECT (
+        (round((round(r::numeric, 1) + 1.0) / 0.1)::int * 9) +
+        ((os_trend + 1)::int * 3) +
+        (wait_trend + 1)::int
+    )::smallint
+$$;
+COMMENT ON FUNCTION get_state_id IS 'Получить state_id для заданнеых r , OS_trend , wait_trend';
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Обновить основную таблицу переходных частот
+CREATE OR REPLACE FUNCTION update_markov_frequency(
+    r_from        REAL,
+    os_trend_from SMALLINT,
+    wait_trend_from SMALLINT,
+    r_to          REAL,
+    os_trend_to   SMALLINT,
+    wait_trend_to SMALLINT
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    from_id SMALLINT;
+    to_id   SMALLINT;
+BEGIN
+    from_id := get_state_id(r_from, os_trend_from, wait_trend_from);
+    to_id   := get_state_id(r_to,   os_trend_to,   wait_trend_to);
+
+    INSERT INTO markov_frequencies (from_state, to_state, frequency)
+    VALUES (from_id, to_id, 1.0)
+    ON CONFLICT (from_state, to_state) DO UPDATE
+        SET frequency = markov_frequencies.frequency + 1.0;
+END;
+$$;
+COMMENT ON FUNCTION update_markov_frequency IS 'Обновить основную таблицу переходных частот';
+--------------------------------------------------------------------------------
+
+---------------------------------------------------------------------------------------------
+-- Функция логирования перехода и обновления матрицы частот
+CREATE OR REPLACE FUNCTION log_transition_and_update(
+    r_from          REAL,
+    os_trend_from   SMALLINT,
+    wait_trend_from SMALLINT,
+    r_to            REAL,
+    os_trend_to     SMALLINT,
+    wait_trend_to   SMALLINT
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    from_id SMALLINT;
+    to_id   SMALLINT;
+BEGIN
+    from_id := get_state_id(r_from, os_trend_from, wait_trend_from);
+    to_id   := get_state_id(r_to,   os_trend_to,   wait_trend_to);
+
+    -- Запись в журнал
+    INSERT INTO transition_log (ts, from_state, to_state)
+    VALUES (now(), from_id, to_id);
+
+    -- Обновление матрицы частот (функция создана ранее)
+    PERFORM update_markov_frequency(
+        r_from, os_trend_from, wait_trend_from,
+        r_to,   os_trend_to,   wait_trend_to
+    );
+END;
+$$;
+COMMENT ON FUNCTION log_transition_and_update IS 'Обновить основную таблицу переходных частот';
+---------------------------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------------------------
+/*
+Анализ изменений и механизм планового забывания
+таблица markov_config, в которой задаются:
+alpha (коэффициент забывания)
+interval_minute ,
+last_forget_time – время последнего применения.
+
+Проверка условия: перед основным циклом обучения функция сравнивает now() - last_forget_time с интервалом. Если порог превышен, вызывается apply_forgetting(alpha), которая:
+умножает все частоты в markov_frequencies на (1 - alpha),
+удаляет пренебрежимо малые значения,
+перестраивает markov_probabilities и markov_absorbing.
+После этого last_forget_time обновляется, чтобы следующее забывание произошло через час.
+
+Основной цикл без изменений: после блока забывания функция работает как прежде: получает метрики, сдвигает состояние, вычисляет состояния, логирует прогноз и обновляет матрицу частот.
+
+Настройка параметров
+Параметры alpha и interval_minute можно менять вручную через UPDATE markov_config.
+Рекомендации:
+
+Для стабильной нагрузки: alpha = 0.01, интервал 1 час.
+
+Если нагрузка меняется медленно, можно уменьшить alpha до 0.005 и увеличить интервал до 2–4 часов.
+
+При обнаружении дрейфа (методика check_and_forget) можно форсированно увеличить alpha или уменьшить интервал на время, изменив значения в markov_config.
+
+Зависимости
+Функция ожидает, что уже созданы:
+markov_chain (таблица с одной строкой, хранящая предыдущее и текущее состояния),
+get_current_os_waiting_correlation_for_markov_chain() – функция, возвращающая текущие r, тренды,
+get_state_id, log_transition_and_update, apply_forgetting,
+markov_probabilities, forecast_log, state_descriptions.
+
+*/
+-- markov_chain_training - обучение цепи Маркова
+-- ============================================================
+-- 2. Модифицированная функция обучения
+-- ============================================================
+CREATE OR REPLACE FUNCTION markov_chain_training()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    new_values_rec   RECORD;
+    markov_chain_rec RECORD;
+    new_correlation  REAL;
+    new_os_trend     SMALLINT;
+    new_wait_trend   SMALLINT;
+    prev_state       SMALLINT;
+    curr_state       SMALLINT;
+    risk_pred        REAL;
+    actual           SMALLINT;
+    last_forget      TIMESTAMPTZ;
+    forget_alpha     REAL;
+    forget_interval  INTERVAL;
+    is_state_descriptions_has_got_data BOOLEAN;
+BEGIN
+	----------------------------------------------------------------------------------------
+	--Временно отключено 
+/*	
+    -- Проверка рабочего времени: Пн-Пт 08:00-19:00
+    IF EXTRACT(DOW FROM now()) IN (0, 6) THEN
+        RAISE NOTICE 'Обучение пропущено: выходной день (%)', to_char(now(), 'Day');
+        RETURN;
+    END IF;
+    IF EXTRACT(HOUR FROM now()) < 8 OR EXTRACT(HOUR FROM now()) >= 19 THEN
+        RAISE NOTICE 'Обучение пропущено: нерабочее время (%)', to_char(now(), 'HH24:MI');
+        RETURN;
+    END IF;
+*/
+	----------------------------------------------------------------------------------------
+    
+    -- Инициализация справочника состояний
+    SELECT EXISTS (SELECT 1 FROM state_descriptions) INTO is_state_descriptions_has_got_data;
+    IF NOT is_state_descriptions_has_got_data THEN 
+        PERFORM fill_state_descriptions();
+    END IF;
+
+    -- ---------------------------------------------------------
+    -- Блок планового забывания (модифицирован)
+    -- ---------------------------------------------------------
+    SELECT last_forget_time, alpha, MAKE_INTERVAL(mins => interval_minute)
+        INTO last_forget, forget_alpha, forget_interval
+    FROM markov_config
+    LIMIT 1;
+
+    IF now() - last_forget >= forget_interval THEN
+        PERFORM apply_forgetting(forget_alpha);
+        -- MOD: время последнего забывания обновляется внутри apply_forgetting
+    END IF;
+    -- ---------------------------------------------------------
+
+    -- Сбор текущих метрик
+    SELECT * INTO new_values_rec
+    FROM get_current_os_waiting_correlation_for_markov_chain();
+
+    new_correlation := new_values_rec.current_correlation;
+    new_os_trend    := new_values_rec.current_os_trend;
+    new_wait_trend  := new_values_rec.current_wait_trend;
+
+    -- Чтение последнего сохранённого состояния
+    SELECT * INTO markov_chain_rec FROM markov_chain;
+
+    -- Первое измерение – только сохраняем
+    IF markov_chain_rec.prev_correlation IS NULL THEN
+        INSERT INTO markov_chain (
+            prev_correlation, prev_os_trend, prev_wait_trend,
+            curr_correlation, curr_os_trend, curr_wait_trend
+        ) VALUES (
+            new_correlation, new_os_trend, new_wait_trend,
+            new_correlation, new_os_trend, new_wait_trend
+        );
+        RETURN;
+    END IF;
+
+    -- Сдвиг состояния
+    UPDATE markov_chain
+    SET prev_correlation = markov_chain_rec.curr_correlation,
+        prev_os_trend    = markov_chain_rec.curr_os_trend,
+        prev_wait_trend  = markov_chain_rec.curr_wait_trend,
+        curr_correlation = new_correlation,
+        curr_os_trend    = new_os_trend,
+        curr_wait_trend  = new_wait_trend;
+
+    -- Перечитываем обновлённую запись
+    SELECT * INTO markov_chain_rec FROM markov_chain;
+
+    -- Идентификация состояний
+    prev_state := get_state_id(markov_chain_rec.prev_correlation,
+                               markov_chain_rec.prev_os_trend,
+                               markov_chain_rec.prev_wait_trend);
+    curr_state := get_state_id(markov_chain_rec.curr_correlation,
+                               markov_chain_rec.curr_os_trend,
+                               markov_chain_rec.curr_wait_trend);
+
+    -- Прогноз риска на 1 минуту вперёд
+    SELECT COALESCE(SUM(probability), 0.0) INTO risk_pred
+    FROM markov_probabilities
+    WHERE from_state = prev_state
+      AND to_state IN (
+          SELECT state_id FROM state_descriptions
+          WHERE correlation < 0 AND os_trend = -1
+      );
+
+    -- Фактический исход
+    SELECT CASE WHEN correlation < 0 AND os_trend = -1 THEN 1 ELSE 0 END INTO actual
+    FROM state_descriptions
+    WHERE state_id = curr_state;
+
+    -- Логирование прогноза
+    IF actual IS NOT NULL THEN 
+        INSERT INTO forecast_log (ts, model_train_date, predicted_risk, actual_risk, from_state, to_state)
+        VALUES (now(), current_date, risk_pred, actual, prev_state, curr_state);
+    END IF;
+
+    -- Обновление матрицы частот
+    PERFORM log_transition_and_update(
+        markov_chain_rec.prev_correlation,
+        markov_chain_rec.prev_os_trend,
+        markov_chain_rec.prev_wait_trend,
+        markov_chain_rec.curr_correlation,
+        markov_chain_rec.curr_os_trend,
+        markov_chain_rec.curr_wait_trend
+    );
+END;
+$$;
+COMMENT ON FUNCTION markov_chain_training IS 'Ежеминутное обучение цепи Маркова с плановым забыванием. Конфигурация забывания читается из таблицы markov_config.';
+--markov_chain_training - обучение цепи Маркова
+-----------------------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- get_current_os_waiting_correlation_for_markov_chain - получить текущее значение коэффициента корреляции для цепи маркова на окне 1 час 
+CREATE OR REPLACE FUNCTION get_current_os_waiting_correlation_for_markov_chain()
+RETURNS TABLE 
+(
+  current_correlation REAL  ,  
+  current_os_trend    SMALLINT  ,
+  current_wait_trend  SMALLINT
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+ 
+ timepoint timestamptz ;
+ speed_waitings_correlation DOUBLE PRECISION ;
+ regr_slope_value DOUBLE PRECISION;
+ speed_regr_slope_value DOUBLE PRECISION;
+ waitings_regr_slope_value DOUBLE PRECISION;
+
+ speed_regr_rec record;
+ waitings_regr_rec record;
+
+BEGIN
+	SELECT MAX(curr_timestamp)
+	INTO timepoint 
+	FROM cluster_stat_median ; 
+	
+	-------------------------------------------------------------------
+	--КОРРЕЛЯЦИЯ СКОРОСТЬ - ОЖИДАНИЯ
+	SELECT COALESCE( corr( curr_op_speed ,  curr_waitings ) , 0 ) AS correlation_value 
+	INTO speed_waitings_correlation
+	FROM
+		 cluster_stat_median
+	WHERE 
+		curr_timestamp BETWEEN timepoint - interval '1 hour' AND timepoint ; 
+	--КОРРЕЛЯЦИЯ АКТИВНЫЕ СЕССИИ - СКОРОСТЬ 
+	-------------------------------------------------------------------
+	CREATE TEMPORARY TABLE IF NOT EXISTS tmp_timepoints
+	(
+		curr_timestamp timestamptz  ,   
+		curr_timepoint integer 
+	);
+
+
+	INSERT INTO tmp_timepoints
+	(
+		curr_timestamp ,	
+		curr_timepoint 
+	)
+	SELECT 
+		curr_timestamp , 
+		row_number() over (order by curr_timestamp) AS x
+	FROM
+	cluster_stat_median
+	WHERE 
+		curr_timestamp BETWEEN timepoint - interval '1 hour' AND timepoint 
+	ORDER BY curr_timestamp	;
+	
+	----------------------------------------------------------------------------------------------------
+	-- ОПЕРАЦИОННАЯ СКОРОСТЬ
+    -- 	линия регрессии  скорости  : Y = a + bX
+	BEGIN
+		WITH stats AS 
+		(
+		  SELECT 
+			AVG(t.curr_timepoint::DOUBLE PRECISION) as avg1, 
+			STDDEV(t.curr_timepoint::DOUBLE PRECISION) as std1,
+			AVG(s.curr_op_speed::DOUBLE PRECISION) as avg2, 
+			STDDEV(s.curr_op_speed::DOUBLE PRECISION) as std2
+		  FROM
+			cluster_stat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp )
+		  WHERE 
+			t.curr_timestamp BETWEEN timepoint - interval '1 hour' AND timepoint 
+		),
+		standardized_data AS 
+		(
+			SELECT 
+				(t.curr_timepoint::DOUBLE PRECISION - avg1) / std1 as x_z,
+				(s.curr_op_speed::DOUBLE PRECISION - avg2) / std2 as y_z
+			FROM
+				cluster_stat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp ) , stats
+			WHERE 
+				t.curr_timestamp BETWEEN timepoint - interval '1 hour' AND timepoint  
+		)	
+		SELECT
+			REGR_SLOPE(y_z, x_z) as slope, --b
+			ATAN(REGR_SLOPE(y_z, x_z)) * 180 / PI() as slope_angle_degrees, --угол наклона
+			REGR_R2(y_z, x_z) as r_squared -- Коэффициент детерминации
+		INTO 
+			speed_regr_rec
+		FROM standardized_data;
+	EXCEPTION
+	  --STDDEV(s.curr_op_speed::DOUBLE PRECISION) = 0  
+	  WHEN division_by_zero THEN  -- Конкретное исключение для деления на ноль
+	    SELECT 
+			1.0 as slope, --b
+			0.0  as slope_angle_degrees, --угол наклона
+			0.0  as r_squared -- Коэффициент детерминации
+		INTO 
+		speed_regr_rec ;
+	END;
+	speed_regr_slope_value = SIGN( speed_regr_rec.slope_angle_degrees ); 	
+	-- 	линия регрессии  скорости  : Y = a + bX
+	-- ОПЕРАЦИОННАЯ СКОРОСТЬ
+	-------------------------------------------------------------------
+	
+	----------------------------------------------------------------------------------------------------
+	-- ОЖИДАНИЯ
+    -- 	линия регрессии  скорости  : Y = a + bX
+	BEGIN 
+		WITH stats AS 
+		(
+		  SELECT 
+			AVG(t.curr_timepoint::DOUBLE PRECISION) as avg1, 
+			STDDEV(t.curr_timepoint::DOUBLE PRECISION) as std1,
+			AVG(s.curr_waitings::DOUBLE PRECISION) as avg2, 
+			STDDEV(s.curr_waitings::DOUBLE PRECISION) as std2
+		  FROM
+			cluster_stat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp )
+		  WHERE 
+			t.curr_timestamp BETWEEN timepoint - interval '1 hour' AND timepoint  
+		),
+		standardized_data AS 
+		(
+			SELECT 
+				(t.curr_timepoint::DOUBLE PRECISION - avg1) / std1 as x_z,
+				(s.curr_waitings::DOUBLE PRECISION - avg2) / std2 as y_z
+			FROM
+				cluster_stat_median s JOIN tmp_timepoints t ON ( s.curr_timestamp  = t.curr_timestamp ) , stats
+			WHERE 
+				t.curr_timestamp BETWEEN timepoint - interval '1 hour' AND timepoint  
+		)	
+		SELECT
+			REGR_SLOPE(y_z, x_z) as slope, --b
+			ATAN(REGR_SLOPE(y_z, x_z)) * 180 / PI() as slope_angle_degrees, --угол наклона
+			REGR_R2(y_z, x_z) as r_squared -- Коэффициент детерминации
+		INTO 
+			waitings_regr_rec
+		FROM standardized_data;
+	EXCEPTION
+	  --STDDEV(s.curr_waitings::DOUBLE PRECISION) = 0  
+	  WHEN division_by_zero THEN  -- Конкретное исключение для деления на ноль
+	    SELECT 
+			1.0 as slope, --b
+			0.0  as slope_angle_degrees, --угол наклона
+			0.0  as r_squared -- Коэффициент детерминации
+		INTO 
+		waitings_regr_rec ;
+	END;
+	waitings_regr_slope_value = SIGN(  waitings_regr_rec.slope_angle_degrees ); 	
+	-- 	линия регрессии  скорости  : Y = a + bX
+	-- ОЖИДАНИЯ
+	-------------------------------------------------------------------	
+	
+	DROP TABLE tmp_timepoints;
+	
+	RETURN QUERY 
+	SELECT round(speed_waitings_correlation::numeric,1)::REAL , speed_regr_slope_value::SMALLINT , waitings_regr_slope_value::SMALLINT ; 
+		
+
+END;
+$$;
+COMMENT ON FUNCTION get_current_os_waiting_correlation_for_markov_chain IS 'получить текущее значение коэффициента корреляции для цепи маркова на окне 1 час ';
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+--------------------------------------------------------------------
+-- update_markov_probabilities Обновить матрицу вероятностей
+CREATE OR REPLACE FUNCTION update_markov_probabilities() RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+	-- Удаляем старые вероятности
+	TRUNCATE markov_probabilities;
+
+	-- Вставляем свежие, нормализуя построчно
+	INSERT INTO markov_probabilities (from_state, to_state, probability)
+	SELECT
+		from_state,
+		to_state,
+		frequency / SUM(frequency) OVER (PARTITION BY from_state) AS probability
+	FROM markov_frequencies
+	WHERE frequency > 0;
+	
+	--Заполнить матрицу поглощения
+	PERFORM rebuild_markov_absorbing();
+	
+ END;
+$$;
+COMMENT ON FUNCTION markov_chain_training IS 'Обновить матрицу вероятностей';
+--------------------------------------------------------------------
+
+--------------------------------------------------------------------
+-- predict_risk_1min получить вероятность попасть в аварийную зону на следующем шаге
+/*
+risk_1min (REAL) Вероятность перехода в аварийное состояние на следующей минуте. 
+Принимает значение:
+фактической вероятности (0.0 … 1.0), если состояние известно и есть исторические данные о переходах в аварию;
+0.0, если состояние известно, но переходов в аварию ранее не зафиксировано;
+0.05 (априорная оценка по умолчанию), если текущее состояние ранее не встречалось в обучении.
+
+situation (TEXT) Диагностическая метка, объясняющая, как получено значение risk_1min:
+'risk_calculated' — состояние известно, найден хотя бы один аварийный переход, риск вычислен по матрице вероятностей;
+'no_risk' — состояние известно, но ни одного перехода в аварийную зону не зарегистрировано (вероятность принята за 0);
+'unknown_state' — текущее состояние отсутствует в таблице markov_probabilities (модель с ним не сталкивалась), использована априорная оценка.
+
+transitions_to_risk (BIGINT) Количество зафиксированных в обучении уникальных аварийных состояний, в которые совершались переходы из текущего состояния.
+> 0 при situation = 'risk_calculated';
+0 при 'no_risk' или 'unknown_state'.
+
+total_transitions_known (BIGINT) Общее количество уникальных состояний, в которые когда-либо были совершены переходы из текущего состояния (вообще, не только аварийных).
+> 0, если состояние известно;
+0 при 'unknown_state', что и служит индикатором неизвестности.
+
+Пример использования в мониторинге
+Эти четыре поля позволяют не только получить вероятность инцидента, но и оценить надёжность прогноза:
+Если situation = 'unknown_state' и risk_1min = 0.05, оператор понимает, что модель «гадает», и стоит присмотреться внимательнее.
+Если situation = 'no_risk' с нулевым риском, можно доверять, но помнить, что отсутствие исторических инцидентов не гарантирует их невозможность.
+Сочетание высокого risk_1min и situation = 'risk_calculated' с большим transitions_to_risk — наиболее достоверный сигнал тревоги.
+*/
+CREATE OR REPLACE FUNCTION predict_risk_1min() RETURNS TABLE
+(
+    current_risk REAL,
+    current_situation TEXT,
+    current_transitions_to_risk BIGINT,
+    current_total_transitions_known BIGINT
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    result_risk real;
+    markov_chain_rec record;
+BEGIN
+    SELECT *
+    INTO markov_chain_rec
+    FROM get_current_os_waiting_correlation_for_markov_chain();
+
+RAISE NOTICE '%', markov_chain_rec;	
+
+    RETURN QUERY
+    WITH current_state AS (
+        SELECT get_state_id AS state_id
+        FROM get_state_id(
+                 markov_chain_rec.current_correlation,
+                 markov_chain_rec.current_os_trend,
+                 markov_chain_rec.current_wait_trend
+             )
+    ),
+    risk_calc AS (
+        SELECT
+            COALESCE(SUM(p.probability), 0.0) AS raw_risk,
+            COUNT(p.to_state) AS transitions_to_risk,
+            (SELECT COUNT(*) FROM markov_probabilities WHERE from_state = cs.state_id) AS total_transitions_known,
+            CASE
+                WHEN (SELECT COUNT(*) FROM markov_probabilities WHERE from_state = cs.state_id) = 0 THEN 'unknown_state'
+                WHEN COUNT(p.to_state) = 0 THEN 'no_risk'
+                ELSE 'risk_calculated'
+            END AS situation
+        FROM current_state cs
+        LEFT JOIN markov_probabilities p
+            ON p.from_state = cs.state_id
+            AND p.to_state IN (
+                SELECT state_id FROM state_descriptions
+                WHERE correlation < 0 AND os_trend = -1
+            )
+        GROUP BY cs.state_id   -- <-- исправление
+    )
+    SELECT
+        CASE
+            WHEN situation = 'unknown_state' THEN 0.05
+            WHEN situation = 'no_risk' THEN 0.0
+            ELSE raw_risk
+        END AS current_risk,
+		situation AS current_situation,
+		transitions_to_risk AS current_transitions_to_risk,
+		total_transitions_known AS current_total_transitions_known
+    FROM risk_calc;
+END;
+$$;
+COMMENT ON FUNCTION predict_risk_1min IS 'получить вероятность попасть в аварийную зону';
+--------------------------------------------------------------------
+
+--------------------------------------------------------------------
+/*
+Таблица markov_absorbing хранит строки поглощающей цепи, в которой аварийные состояния (отрицательная корреляция и падение операционной скорости) сделаны поглощающими:
+ единственный возможный переход из них — остаться в том же состоянии с вероятностью 1.
+
+Функция rebuild_markov_absorbing вызывается после каждого пересчёта markov_probabilities  и формирует матрицу заново.
+
+Логика заполнения:
+Для всех неаварийных исходных состояний (from_state) переносятся переходы из markov_probabilities, кроме переходов в аварийные состояния, отличные от себя (такие переходы в поглощающей цепи должны иметь вероятность 0 и исключаются).
+Для каждого аварийного состояния вставляется ровно одна строка (state_id, state_id, 1.0).
+Состояния, которые ни разу не встречались в обучении, просто не попадают в markov_absorbing; при прогнозе они корректно диагностируются как unknown_state в функции predict_risk_k_diag
+*/
+CREATE OR REPLACE FUNCTION rebuild_markov_absorbing()
+RETURNS void
+LANGUAGE sql
+AS $$
+    TRUNCATE markov_absorbing;
+
+    -- Переходы из неаварийных состояний (включая переходы в аварийные)
+    INSERT INTO markov_absorbing (from_state, to_state, probability)
+    SELECT p.from_state, p.to_state, p.probability
+    FROM markov_probabilities p
+    JOIN state_descriptions sd_from ON p.from_state = sd_from.state_id
+    WHERE NOT (sd_from.correlation < 0 AND sd_from.os_trend = -1);
+
+    -- Поглощающие петли для аварийных состояний
+    INSERT INTO markov_absorbing (from_state, to_state, probability)
+    SELECT state_id, state_id, 1.0
+    FROM state_descriptions
+    WHERE correlation < 0 AND os_trend = -1;
+$$;
+COMMENT ON FUNCTION rebuild_markov_absorbing IS 'Пересчет таблицы поглощения';
+--------------------------------------------------------------------
+
+--------------------------------------------------------------------
+--
+/*
+Возвращаемые параметры
+risk — вероятность попасть в любое аварийное состояние хотя бы раз за k минут.
+situation — диагностическая метка:
+ 'risk_calculated' — состояние знакомо, риск ненулевой (прямой или косвенный);
+ 'no_risk' — состояние знакомо, риск равен 0 (аварийные состояния недостижимы за k шагов);
+ 'unknown_state' — состояние отсутствует в обученной матрице, риск оценён априорно (5% за шаг).
+transitions_to_risk — количество прямых переходов из текущего состояния в аварийные (только для известных состояний).
+total_transitions_known — общее количество известных переходов из текущего состояния (0 для неизвестных).
+
+Функция использует предварительно созданную таблицу markov_absorbing, которая преобразует матрицу вероятностей в поглощающую цепь (аварийные состояния делаются поглощающими). 
+Её необходимо пересчитывать при каждом обновлении markov_probabilities.
+*/
+CREATE OR REPLACE FUNCTION predict_risk_k_diag( k INT )
+RETURNS TABLE (
+    risk REAL,
+    situation TEXT,
+    transitions_to_risk INT,
+    total_transitions_known INT
+)
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+    total_states CONSTANT INT := 189;
+    v REAL[];
+    v_new REAL[];
+    av_states INT[];
+    from_s SMALLINT;
+    to_s SMALLINT;
+    prob REAL;
+    step INT;
+    base_risk CONSTANT REAL := 0.05;
+    _transitions_to_risk INT;
+    _total_transitions_known INT;
+	markov_chain_rec record;
+    current_state_id SMALLINT;
+	
+BEGIN
+
+	SELECT *
+    INTO markov_chain_rec
+    FROM get_current_os_waiting_correlation_for_markov_chain();
+
+RAISE NOTICE '%', markov_chain_rec;
+
+    SELECT get_state_id AS state_id
+	INTO current_state_id
+	FROM get_state_id(
+						markov_chain_rec.current_correlation,
+						markov_chain_rec.current_os_trend,
+						markov_chain_rec.current_wait_trend
+					 );
+    
+
+    -- Список аварийных (поглощающих) состояний: correlation < 0 и os_trend = -1
+    SELECT array_agg(state_id) INTO av_states
+    FROM state_descriptions
+    WHERE correlation < 0 AND os_trend = -1;
+
+    -- Проверяем, известно ли текущее состояние модели
+    SELECT COUNT(*) INTO _total_transitions_known
+    FROM markov_probabilities
+    WHERE from_state = current_state_id;
+
+    IF _total_transitions_known = 0 THEN
+        -- Состояние незнакомо → априорная оценка риска (5% за шаг)
+        risk := 1.0 - POWER(1.0 - base_risk, k);
+        situation := 'unknown_state';
+        transitions_to_risk := 0;
+        total_transitions_known := 0;
+        RETURN NEXT;
+        RETURN;
+    END IF;
+
+    -- Число прямых аварийных переходов из текущего состояния
+    SELECT COUNT(*) INTO _transitions_to_risk
+    FROM markov_probabilities
+    WHERE from_state = current_state_id
+      AND to_state = ANY(av_states);
+
+    transitions_to_risk := _transitions_to_risk;
+    total_transitions_known := _total_transitions_known;
+
+    -- Инициализация вектора вероятностей
+    v := array_fill(0.0, ARRAY[total_states]);
+    v[current_state_id + 1] := 1.0;
+
+    -- Последовательное умножение вектора на поглощающую матрицу P_abs
+    FOR step IN 1..k LOOP
+        v_new := array_fill(0.0, ARRAY[total_states]);
+
+        FOR from_s IN 0..188 LOOP
+            IF v[from_s + 1] > 0.0 THEN
+                FOR to_s, prob IN
+                    SELECT m.to_state, m.probability
+                    FROM markov_absorbing m
+                    WHERE m.from_state = from_s
+                LOOP
+                    v_new[to_s + 1] := v_new[to_s + 1] + v[from_s + 1] * prob;
+                END LOOP;
+            END IF;
+        END LOOP;
+
+        v := v_new;
+    END LOOP;
+
+    -- Суммируем вероятности по всем аварийным состояниям
+    SELECT SUM(v[state_id + 1]) INTO risk
+    FROM unnest(av_states) AS state_id;
+
+    IF risk IS NULL THEN
+        risk := 0.0;
+    END IF;
+
+    -- Классификация ситуации
+    IF risk = 0.0 THEN
+        situation := 'no_risk';
+    ELSE
+        situation := 'risk_calculated';
+    END IF;
+
+    RETURN NEXT;
+END;
+$$;
+COMMENT ON FUNCTION predict_risk_k_diag IS 'получить вероятность попасть в аварийную зону за к шагов';
+
+---------------------------------------------------------------------------------------------
+
+---------------------------------------------------------------------------------------------
+-- Функция создания/обновления снимка матрицы прошлой недели
+-- 5 18 * * 5 psql -d expecto_db -U expecto_user  -c "SELECT snapshot_markov_prev_week();"
+CREATE OR REPLACE FUNCTION snapshot_markov_prev_week()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- Очищаем старый снимок
+    TRUNCATE markov_probabilities_prev_week;
+
+    -- Вставляем точную копию текущих вероятностей
+    INSERT INTO markov_probabilities_prev_week
+    SELECT from_state, to_state, probability
+    FROM markov_probabilities;
+
+    -- Архивируем текущую матрицу с пометкой текущей даты обучения
+    PERFORM archive_markov_probabilities(current_date);
+END;
+$$;
+COMMENT ON FUNCTION snapshot_markov_prev_week IS 'Функция создания/обновления снимка матрицы прошлой недели';
+---------------------------------------------------------------------------------------------
+
+---------------------------------------------------------------------------------------------
+-- Функция записи прогноза и его фактического исхода
+/*
+Функция log_forecast предназначена для регистрации каждого одношагового прогноза сразу после того, как стал известен фактический переход. 
+В зависимости от сценария использования, вызов может осуществляться двумя способами.
+
+Сценарий 1. Непрерывный мониторинг точности (признак 3.3 методики забывания)
+В этом режиме модель постоянно обновляется (с забыванием), и мы хотим отслеживать её текущую калибровку. 
+Вызов происходит каждую минуту в основном цикле сбора метрик:
+На шаге t-1:
+Определяется текущее состояние prev_state.
+По матрице markov_probabilities вычисляется predicted_risk — вероятность перехода из prev_state в любое аварийное состояние на следующем шаге (см. функцию predict_risk_1min).
+Значение predicted_risk и prev_state сохраняются в переменных агента.
+
+На шаге t (следующая минута):
+Получаются новые метрики, формируется состояние curr_state.
+Определяется actual_risk = 1, если curr_state принадлежит аварийной зоне (correlation < 0 AND os_trend = -1), иначе 0.
+Вызывается log_forecast:
+
+sql
+SELECT log_forecast(
+    p_predicted_risk := <сохранённый_predicted_risk>,
+    p_actual_risk    := actual_risk,
+    p_model_train_date := current_date,   -- или фиксированная дата версии модели
+    p_from_state     := prev_state,
+    p_to_state       := curr_state
+);
+Обновляются prev_state и predicted_risk для следующего цикла.
+
+Такой вызов гарантирует, что каждая запись содержит согласованную пару «прогноз–факт». 
+Параметр model_train_date может быть текущей датой (если модель обновляется ежедневно) или датой последнего снимка матрицы (если используются версионированные модели).
+
+Сценарий 2. Оценка моделей с разными периодами обучения (критерий 3 достаточности)
+Для проверки того, что добавление 5 дней обучения не улучшает Brier Score более чем на 0.01, необходимо сравнить несколько версий модели на общем тестовом периоде. Процедура:
+
+Создание снимков модели.
+В конце каждой недели (или чаще) создаётся копия матрицы markov_probabilities с пометкой даты, например, markov_probabilities_2025_01_15. 
+Эта матрица фиксирует состояние обучения на определённый момент.
+
+Прогон на тестовых данных.
+Для каждого такого снимка (модели) берутся данные за следующие, например, 2 дня, которые не использовались при обучении этой модели. 
+Для каждой минуты этого тестового периода:
+Вычисляется predicted_risk с использованием вероятностей из фиксированной матрицы.
+Фиксируется фактический исход.
+Вызывается log_forecast с параметром p_model_train_date = <дата снимка>.
+
+Расчёт Brier Score.
+После накопления логов можно выполнить:
+sql
+SELECT model_train_date,
+       AVG((predicted_risk - actual_risk)^2) AS brier_score
+FROM forecast_log
+WHERE model_train_date IN ('2025-01-08', '2025-01-15', ...)
+GROUP BY model_train_date;
+Такой подход позволяет «честно» сравнить модели, обученные на данных до разных дат.
+
+Рекомендации по использованию
+Внедряйте непрерывное логирование (сценарий 1) с первого дня работы модели — это даст данные для мониторинга дрейфа точности.
+Для периодической проверки достаточности обучения (сценарий 2) запланируйте еженедельный запуск оценки на фиксированных снимках и анализируйте Brier Score, как описано в критерии 3.
+*/
+CREATE OR REPLACE FUNCTION log_forecast(
+    p_predicted_risk    REAL,
+    p_actual_risk       SMALLINT,
+    p_model_train_date  DATE,
+    p_from_state        SMALLINT DEFAULT NULL,
+    p_to_state          SMALLINT DEFAULT NULL
+)
+RETURNS void
+LANGUAGE sql
+AS $$
+    INSERT INTO forecast_log (ts, model_train_date, predicted_risk, actual_risk, from_state, to_state)
+    VALUES (now(), p_model_train_date, p_predicted_risk, p_actual_risk, p_from_state, p_to_state);
+$$;
+COMMENT ON FUNCTION log_forecast IS 'Функция создания/обновления снимка матрицы прошлой недели';
+---------------------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Вспомогательная функция прогноза по архивной матрице
+CREATE OR REPLACE FUNCTION predict_risk_1min_archived(
+    p_train_date DATE,
+    p_from_state SMALLINT
+)
+RETURNS REAL
+LANGUAGE sql
+STABLE
+AS $$
+    SELECT COALESCE(
+        (SELECT SUM(probability)
+         FROM markov_probabilities_archive
+         WHERE train_date = p_train_date
+           AND from_state = p_from_state
+           AND to_state IN (
+               SELECT state_id FROM state_descriptions
+               WHERE correlation < 0 AND os_trend = -1
+           )),
+        0.05  -- априорная оценка для неизвестных состояний
+    );
+$$;
+COMMENT ON FUNCTION predict_risk_1min_archived IS 'Вспомогательная функция прогноза по архивной матрице';
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Расчёт и сравнение Brier Score
+/*
+Входные параметры:
+test_start, test_end — границы тестового периода (дни), за которые вычисляется Brier Score.
+model_date_old, model_date_new — даты обучения двух сравниваемых моделей (старой и более новой).
+
+Возвращаемые столбцы:
+older_model, newer_model — поданные даты моделей.
+older_bs, newer_bs — Brier Score для старой и новой модели.
+bs_improvement — разница older_bs - newer_bs (положительное значение означает, что новая модель точнее).
+
+sufficient — TRUE, если улучшение меньше 0.01 (критерий достаточности обучения выполнен).
+
+Логика:
+Фильтруем записи forecast_log по model_train_date и временному диапазону.
+Вычисляем среднеквадратичную ошибку прогноза (Brier Score).
+Сравниваем две модели.
+
+Пример вызова
+SELECT * FROM compare_brier_scores(
+    '2025-05-12', '2025-05-13',
+    '2025-05-09', '2025-05-14'
+);
+Функция предполагает, что таблица forecast_log уже заполнена прогнозами для обеих моделей на указанном тестовом периоде 
+*/
+-- Расчёт и сравнение Brier Score
+CREATE OR REPLACE FUNCTION compare_brier_scores(
+    test_start      DATE,
+    test_end        DATE,
+    model_date_old  DATE,
+    model_date_new  DATE
+)
+RETURNS TABLE (
+    older_model     DATE,
+    newer_model     DATE,
+    older_bs        REAL,
+    newer_bs        REAL,
+    bs_improvement  REAL,
+    sufficient      BOOLEAN
+)
+LANGUAGE sql
+STABLE
+AS $$
+    WITH old_preds AS (
+        SELECT predicted_risk, actual_risk
+        FROM forecast_log
+        WHERE model_train_date = model_date_old
+          AND ts >= test_start
+          AND ts <  test_end + 1  -- включаем весь последний день
+    ),
+    new_preds AS (
+        SELECT predicted_risk, actual_risk
+        FROM forecast_log
+        WHERE model_train_date = model_date_new
+          AND ts >= test_start
+          AND ts <  test_end + 1
+    ),
+    old_bs_val AS (
+        SELECT COALESCE(AVG((predicted_risk - actual_risk)^2), 0.0) AS bs
+        FROM old_preds
+    ),
+    new_bs_val AS (
+        SELECT COALESCE(AVG((predicted_risk - actual_risk)^2), 0.0) AS bs
+        FROM new_preds
+    )
+    SELECT
+        model_date_old,
+        model_date_new,
+        o.bs,
+        n.bs,
+        GREATEST(o.bs - n.bs, 0.0),  -- улучшение (старый BS - новый BS)
+        (o.bs - n.bs) < 0.01         -- достаточно, если улучшение меньше порога
+    FROM old_bs_val o, new_bs_val n;
+$$;
+COMMENT ON FUNCTION compare_brier_scores IS 'Расчёт и сравнение Brier Score';
+
+--------------------------------------------------------------------------------
+-- Вспомогательная функция: получение стационарного распределения
+CREATE OR REPLACE FUNCTION get_stationary_distribution(max_iter INT DEFAULT 1000, tol DOUBLE PRECISION DEFAULT 1e-6)
+RETURNS DOUBLE PRECISION[]
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    n CONSTANT INT := 189;
+    v DOUBLE PRECISION[] := array_fill(1.0 / n, ARRAY[n]);
+    v_new DOUBLE PRECISION[];
+    i INT;
+    diff DOUBLE PRECISION;
+    to_s RECORD;   -- объявление переменной-записи
+BEGIN
+    FOR i IN 1..max_iter LOOP
+        v_new := array_fill(0.0, ARRAY[n]);
+        FOR from_s IN 0..n-1 LOOP
+            FOR to_s IN (SELECT to_state, probability FROM markov_probabilities WHERE from_state = from_s) LOOP
+                v_new[to_s.to_state + 1] := v_new[to_s.to_state + 1] + v[from_s + 1] * to_s.probability;
+            END LOOP;
+        END LOOP;
+        diff := 0.0;
+        FOR j IN 1..n LOOP
+            diff := diff + abs(v_new[j] - v[j]);
+        END LOOP;
+        v := v_new;
+        IF diff < tol THEN EXIT; END IF;
+    END LOOP;
+    RETURN v;
+END;
+$$;
+COMMENT ON FUNCTION get_stationary_distribution IS 'Вспомогательная функция: получение стационарного распределения';--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+--KL-дивергенция стационарного и эмпирического (последняя неделя)
+/*
+Входные параметры: отсутствуют. Анализируется всегда последняя полная неделя.
+
+Возвращаемые столбцы:
+kl_value — фактическое значение KL-дивергенции (или NULL, если данных нет).
+threshold — пороговое значение (0.1).
+passed — TRUE, если критерий выполнен (kl_value < 0.1).
+
+Логика работы:
+Вызывается ранее созданная get_stationary_distribution(), которая итеративно вычисляет стационарный вектор на основе текущей матрицы markov_probabilities.
+По таблице transition_log подсчитывается, сколько раз система находилась в каждом состоянии за последние 7 дней. Формируется эмпирическое распределение emp_arr.
+KL-дивергенция вычисляется по формуле Σ π_i * ln(π_i / emp_i), только для состояний с ненулевыми вероятностями в обоих распределениях.
+Граничные случаи:
+
+Если за неделю в transition_log нет записей, passed = FALSE, kl_value = NULL — модель не может быть верифицирована.
+
+Если стационарное распределение содержит состояния, не встречавшиеся в эмпирике (или наоборот), они игнорируются в сумме.
+
+Пример вызова
+SELECT * FROM check_kl_divergence();
+-- Результат: (kl_value=0.087, threshold=0.1, passed=true)
+
+Этот вызов можно использовать как самостоятельную проверку или внутри составной функции оценки достаточности обучения evaluate_training_sufficiency.
+*/
+CREATE OR REPLACE FUNCTION check_kl_divergence()
+RETURNS TABLE (
+    kl_value  DOUBLE PRECISION,
+    threshold DOUBLE PRECISION,
+    passed    BOOLEAN
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    pi_arr    DOUBLE PRECISION[];
+    emp_arr   DOUBLE PRECISION[] := array_fill(0.0::DOUBLE PRECISION, ARRAY[189]);
+    total_obs BIGINT;
+    kl        DOUBLE PRECISION := 0.0;
+    i         INT;
+    emp_val   DOUBLE PRECISION;
+BEGIN
+    -- 1. Пытаемся получить стационарное распределение; ловим underflow
+    BEGIN
+        pi_arr := get_stationary_distribution()::DOUBLE PRECISION[];
+    EXCEPTION
+        WHEN numeric_value_out_of_range THEN
+            -- Если внутренняя функция упала с underflow, возвращаем NULL-результат
+            kl_value  := NULL;
+            threshold := 0.1;
+            passed    := FALSE;
+            RETURN NEXT;
+            RETURN;
+    END;
+
+    -- 2. Считаем общее количество наблюдений за последние 7 дней
+    SELECT COUNT(*) INTO total_obs
+    FROM transition_log
+    WHERE ts >= now() - INTERVAL '7 days';
+
+    IF total_obs = 0 THEN
+        kl_value  := NULL;
+        threshold := 0.1;
+        passed    := FALSE;
+        RETURN NEXT;
+        RETURN;
+    END IF;
+
+    -- 3. Эмпирические частоты состояний
+    FOR i IN 0..188 LOOP
+        SELECT COUNT(*)::DOUBLE PRECISION / total_obs
+        INTO emp_val
+        FROM transition_log
+        WHERE from_state = i
+          AND ts >= now() - INTERVAL '7 days';
+
+        emp_arr[i+1] := emp_val;
+    END LOOP;
+
+    -- 4. Расчёт KL-дивергенции: sum(pi_i * ln(pi_i / emp_i))
+    FOR i IN 1..189 LOOP
+        IF pi_arr[i] > 0.0 AND emp_arr[i] > 0.0 THEN
+            kl := kl + pi_arr[i] * ln(pi_arr[i] / emp_arr[i]);
+        END IF;
+    END LOOP;
+
+    kl_value  := kl;
+    threshold := 0.1;
+    passed    := (kl < 0.1);
+
+    RETURN NEXT;
+END;
+$$;
+COMMENT ON FUNCTION check_kl_divergence IS 'KL-дивергенция стационарного и эмпирического (последняя неделя)';
+
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Основная функция проверки достаточности обучения (скорректированная)
+/*
+Порядок вызова и анализ результатов
+1. Регулярный автоматический запуск
+Функцию следует выполнять еженедельно в пятницу вечером (после завершения сбора данных за день, после создания снимка markov_probabilities_prev_week и архивирования моделей).
+Для критерия 3 необходимо предварительно заполнить forecast_log прогнозами для двух сравниваемых моделей (см. сценарий 2). После этого вызов может быть таким:
+
+SELECT * FROM evaluate_training_sufficiency(
+    test_start      => '2025-05-19',   -- последние два рабочих дня до обучения новой модели
+    test_end        => '2025-05-20',
+    model_date_old  => '2025-05-12',   -- обучение до прошлой пятницы
+    model_date_new  => '2025-05-19'    -- обучение до текущей пятницы
+);
+Если параметры не переданы (все NULL), критерии 1,2,4 будут оценены, а критерий 3 вернёт passed = false с просьбой выполнить ручное сравнение.
+
+2. Интерпретация результатов
+Все четыре критерия возвращают passed = true → обучение достаточно. Можно снижать интенсивность планового забывания (уменьшить α), доверять прогнозам.
+Если хотя бы один критерий не выполнен:
+C1 – увеличить период обучения (меньше 50 переходов для частых состояний).
+C2 – вероятности ещё не стабилизировались (продолжить обучение).
+C3 – качество прогноза продолжает улучшаться более чем на 0.01 BS (добавить ещё неделю).
+C4 – стационарное распределение не соответствует недельной эмпирике (возможно, изменился профиль нагрузки; пересмотреть механизм забывания или обучить отдельные матрицы для разных часов).
+
+3. Автоматизация
+Настройте еженедельный джоб (pg_cron или внешний планировщик), который:
+Создаёт снимок markov_probabilities_prev_week (пятница 18:05).
+Заполняет forecast_log для пары моделей с тестовым периодом (например, среда–четверг текущей недели).
+Вызывает evaluate_training_sufficiency с этими датами.
+Логирует результат в специальную таблицу training_sufficiency_log для отслеживания динамики.
+Такой подход гарантирует объективную оценку зрелости модели без риска ложного оптимизма.
+*/
+CREATE OR REPLACE FUNCTION evaluate_training_sufficiency(
+    test_start      DATE DEFAULT NULL,
+    test_end        DATE DEFAULT NULL,
+    model_date_old  DATE DEFAULT NULL,
+    model_date_new  DATE DEFAULT NULL
+)
+RETURNS TABLE (
+    criterion TEXT,
+    value     REAL,
+    threshold TEXT,
+    passed    BOOLEAN,
+    details   TEXT
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    total_transitions BIGINT;
+    states_above_1pct INT[];
+    n_i_fail INT;
+    d_max REAL;
+    brier_change REAL;
+    kl_result RECORD;
+BEGIN
+    -- --------------------------------------------------------
+    -- Критерий 1: покрытие состояний с частотой >1%
+    -- --------------------------------------------------------
+    SELECT COUNT(*) INTO total_transitions FROM transition_log;
+    IF total_transitions = 0 THEN
+        criterion := 'C1: n_i >= 50';
+        value := 0;
+        threshold := 'n_i>=50 для частых';
+        passed := FALSE;
+        details := 'transition_log пуст';
+        RETURN NEXT;
+    ELSE
+        WITH state_counts AS (
+            SELECT from_state, COUNT(*) AS n_i,
+                   COUNT(*)::REAL / total_transitions AS freq
+            FROM transition_log
+            GROUP BY from_state
+        )
+        SELECT array_agg(from_state) INTO states_above_1pct
+        FROM state_counts
+        WHERE freq > 0.01;
+
+        SELECT COUNT(*) INTO n_i_fail
+        FROM (
+            SELECT from_state, COUNT(*) AS n_i
+            FROM transition_log
+            WHERE from_state = ANY(states_above_1pct)
+            GROUP BY from_state
+        ) sub
+        WHERE n_i < 50;
+
+        criterion := 'C1: n_i >= 50 (для частых >1%)';
+        value := n_i_fail;
+        threshold := '0';
+        passed := (n_i_fail = 0);
+        details := format('Состояний с частотой >1%%: %s, из них с n_i<50: %s',
+                          array_length(states_above_1pct,1), n_i_fail);
+    END IF;
+    RETURN NEXT;
+
+    -- --------------------------------------------------------
+    -- Критерий 2: максимальное изменение вероятностей за две недели
+    -- --------------------------------------------------------
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'markov_probabilities_prev_week') THEN
+        SELECT MAX(abs(COALESCE(p.probability,0) - COALESCE(pw.probability,0))) INTO d_max
+        FROM (SELECT DISTINCT from_state, to_state FROM markov_probabilities
+              UNION SELECT from_state, to_state FROM markov_probabilities_prev_week) all_trans
+        LEFT JOIN markov_probabilities p USING (from_state, to_state)
+        LEFT JOIN markov_probabilities_prev_week pw USING (from_state, to_state);
+    ELSE
+        d_max := NULL;
+    END IF;
+
+    criterion := 'C2: max |P_new - P_old|';
+    value := COALESCE(d_max, -1);
+    threshold := 'D < 0.05';
+    passed := (d_max IS NOT NULL AND d_max < 0.05);
+    details := CASE WHEN d_max IS NULL THEN 'Нет исторической матрицы за прошлую неделю'
+                   ELSE 'D_max = ' || round(d_max::numeric, 4)::text END;
+    RETURN NEXT;
+
+    -- --------------------------------------------------------
+    -- Критерий 3: Brier Score плато (используем compare_brier_scores)
+    -- --------------------------------------------------------
+    IF test_start IS NOT NULL AND test_end IS NOT NULL AND model_date_old IS NOT NULL AND model_date_new IS NOT NULL THEN
+        SELECT bs_improvement, sufficient INTO brier_change, passed
+        FROM compare_brier_scores(test_start, test_end, model_date_old, model_date_new);
+        criterion := 'C3: Brier Score изменение < 0.01';
+        value := COALESCE(brier_change, -1);
+        threshold := '< 0.01';
+        details := CASE WHEN brier_change IS NULL THEN 'Нет данных в forecast_log'
+                       ELSE 'Изменение BS = ' || round(brier_change::numeric, 4)::text END;
+    ELSE
+        criterion := 'C3: Brier Score изменение < 0.01';
+        value := -1;
+        threshold := '< 0.01';
+        passed := FALSE;
+        details := 'Не заданы параметры тестового периода/моделей. Выполните еженедельное сравнение вручную.';
+    END IF;
+    RETURN NEXT;
+
+    -- --------------------------------------------------------
+    -- Критерий 4: KL-дивергенция (используем готовую функцию)
+    -- --------------------------------------------------------
+    SELECT * INTO kl_result FROM check_kl_divergence();
+    criterion := 'C4: KL(pi || emp) < 0.1';
+    value := kl_result.kl_value;
+    threshold := '< 0.1';
+    passed := kl_result.passed;
+    details := CASE WHEN kl_result.kl_value IS NULL THEN 'Нет данных за последнюю неделю'
+                   ELSE 'KL = ' || round(kl_result.kl_value::numeric, 4)::text END;
+    RETURN NEXT;
+END;
+$$;
+COMMENT ON FUNCTION evaluate_training_sufficiency IS 'Основная функция проверки достаточности обучения (скорректированная)';COMMENT ON FUNCTION get_stationary_distribution IS 'Основная функция проверки достаточности обучения (скорректированная)';
+
+
+------------------------------------------------------
+-- Функция забывания
+CREATE OR REPLACE FUNCTION apply_forgetting(alpha REAL)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- Экспоненциальное затухание старых наблюдений
+    UPDATE markov_frequencies
+    SET frequency = frequency * (1.0 - alpha);
+
+    -- Удаление пренебрежимо малых частот
+    DELETE FROM markov_frequencies
+    WHERE frequency < 1e-6;
+
+    -- Полное обновление вероятностей и поглощающей матрицы
+    PERFORM update_markov_probabilities();
+    
+    -- Обновляем время последнего забывания (для синхронизации планового и форсированного режимов)
+    UPDATE markov_config SET last_forget_time = now();
+END;
+$$;
+COMMENT ON FUNCTION apply_forgetting IS 'Функция забывания';
+------------------------------------------------------
+
+------------------------------------------------------
+-- Архивация вероятностей цепи Маркова
+CREATE OR REPLACE FUNCTION archive_markov_probabilities(p_train_date DATE DEFAULT current_date)
+RETURNS void
+LANGUAGE sql
+AS $$
+    DELETE FROM markov_probabilities_archive WHERE train_date = p_train_date;
+    INSERT INTO markov_probabilities_archive (train_date, from_state, to_state, probability)
+    SELECT p_train_date, from_state, to_state, probability
+    FROM markov_probabilities;
+$$;
+COMMENT ON FUNCTION archive_markov_probabilities IS 'Архивация вероятностей цепи Маркова';
+
+------------------------------------------------------
+-- Очистка журнала переходов
+CREATE OR REPLACE FUNCTION clean_forecast_log()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    retention INT;
+BEGIN
+    SELECT forecast_log_retention_days INTO retention FROM markov_config;
+    DELETE FROM forecast_log
+    WHERE ts < now() - (retention || ' days')::INTERVAL;
+END;
+$$;
+COMMENT ON FUNCTION clean_forecast_log IS 'Очистка журнала переходов';
+
+------------------------------------------------------
+-- Функция очистки transition_log
+CREATE OR REPLACE FUNCTION clean_transition_log()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    retention INT;
+BEGIN
+    SELECT transition_log_retention_days INTO retention FROM markov_config;
+    DELETE FROM transition_log
+    WHERE ts < now() - (retention || ' days')::INTERVAL;
+END;
+$$;
+COMMENT ON FUNCTION clean_transition_log IS 'Функция очистки transition_log';
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- CHECK_AND_FORGET
+/*
+3.1 Периодичность и автоматизация
+Плановая проверка – запускать check_and_forget() каждые 15 минут через pg_cron 
+
+3.2 Калибровка порогов (первые 1–2 недели)
+Включить режим мониторинга без автоматического забывания – в check_and_forget() временно закомментировать вызов apply_forgetting, но логировать все метрики в отдельную таблицу forget_log_calibration.
+Анализировать распределение KL, χ², Brier Score, отклонения скорости. Настроить пороги так, чтобы ложные срабатывания были не чаще 1–2 раз в день.
+Для χ² использовать 99-й процентиль распределения с 188 степенями свободы (~220). Если ваша размерность состояний отличается, пересчитать.
+Для Brier Score: 0.25 – разумный порог для начала, но после калибровки можно изменить до 0.2 или 0.3.
+
+3.3 Борьба с ложными срабатываниями
+Внедрить подтверждение признака: например, хранить в отдельной таблице check_state последние значения KL, os_dev и количество последовательных превышений. Использовать колонку confirmation_cycles в markov_config.
+Условие: признак считается истинным, если он превышает порог в 2–3 циклах проверки подряд (30–45 минут). Это снижает чувствительность к кратковременным всплескам.
+Пример таблицы для состояния проверок:
+CREATE TABLE check_state (
+    check_time    TIMESTAMPTZ PRIMARY KEY,
+    kl_flag       BOOLEAN,
+    os_flag       BOOLEAN,
+    brier_flag    BOOLEAN
+);
+-- В check_and_forget анализировать последние N записей
+
+3.4 Обработка внутридневного дрейфа
+Если KL-дивергенция между текущим часом и утренним эталоном (например, 9:00–10:00) превышает 0.2, увеличивайте alpha аддитивно на 0.02 на следующий час.
+Альтернатива: перейти к множественным матрицам (разные слоты времени). В текущей реализации можно просто повышать частоту планового забывания в часы пик.
+
+3.5 Интеграция с существующими функциями
+apply_forgetting уже реализована и вызывает update_markov_probabilities(), которая перестраивает вероятности и поглощающую матрицу. Ничего дополнительно вызывать не нужно.
+forecast_log уже заполняется в markov_chain_training – для расчёта Brier Score используйте её.
+check_kl_divergence() из исходных файлов оценивает стационарное распределение за неделю – этот критерий используется в evaluate_training_sufficiency, а не в check_and_forget. Не путайте.
+
+3.6 Логирование и мониторинг
+После каждого забывания пишите в forget_log. Настройте алерт, если забывания происходят чаще 6 раз в сутки (можно менять порог).
+Еженедельно запускайте evaluate_training_sufficiency() для проверки, что модель стабильна и не требует полного переобучения.
+
+3.7 Ручное управление
+Предоставьте администратору функцию SELECT emergency_forget('manual', 0.3); для немедленного «сброса» модели.
+Также можно напрямую обновить markov_config.alpha, чтобы временно ускорить плановое забывание.
+
+3.8 Пример вызова для тестирования
+-- Ручная проверка (без применения забывания, только логирование)
+SELECT check_and_forget(); -- в боевой версии после калибровки раскомментируйте PERFORM apply_forgetting
+
+-- Принудительное забывание после деплоя
+SELECT emergency_forget('deploy', 0.4);
+
+4. Заключение
+Предложенные таблицы и функции полностью реализуют механизм форсированного забывания, описанный в методике. 
+Они интегрируются с существующей реализацией цепи Маркова, используют уже имеющиеся журналы переходов и прогнозов, и не нарушают логику планового забывания. 
+Рекомендуется начать с мониторинга метрик в течение 1–2 недель, откалибровать пороги, 
+и только затем включить автоматическое применение apply_forgetting внутри check_and_forget.
+*/
+------------------------------------------------------------------------------------------------------------------------
+-- Обновление эталонных распределений (запускать ежедневно)
+CREATE OR REPLACE FUNCTION update_state_baseline()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    dow_val SMALLINT;
+    hour_val SMALLINT;
+BEGIN
+    -- Для каждого часа и дня недели вычисляем распределение состояний за последние 7 рабочих дней
+    FOR dow_val IN 1..7 LOOP
+        FOR hour_val IN 0..23 LOOP
+            -- Вставляем / обновляем вероятности состояний для этого слота
+            INSERT INTO state_baseline (hour_of_day, dow, state_id, probability)
+            SELECT 
+                hour_val,
+                dow_val,
+                from_state,
+                COUNT(*)::REAL / SUM(COUNT(*)) OVER () AS prob
+            FROM transition_log
+            WHERE EXTRACT(DOW FROM ts) = dow_val
+              AND EXTRACT(HOUR FROM ts) = hour_val
+              AND ts >= now() - INTERVAL '7 days'
+            GROUP BY from_state
+            ON CONFLICT (hour_of_day, dow, state_id) DO UPDATE
+            SET probability = EXCLUDED.probability, last_updated = now();
+        END LOOP;
+    END LOOP;
+END;
+$$;
+COMMENT ON FUNCTION update_state_baseline IS 'Обновляет эталонные распределения состояний для каждого часа и дня недели';
+
+------------------------------------------------------------------------------------------------------------------------
+-- Расчёт KL-дивергенции между текущим часом и эталоном
+CREATE OR REPLACE FUNCTION calculate_kl_divergence(
+    recent_minutes INT DEFAULT 60,       -- окно последних N минут
+    baseline_hour  INT DEFAULT NULL ,                  -- час эталона (если NULL, берётся текущий час)
+    baseline_dow   INT DEFAULT NULL      -- день недели эталона (NULL = текущий день)
+)
+RETURNS REAL
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+    recent_dist   REAL[] := array_fill(0.0, ARRAY[189]);
+    baseline_dist REAL[] := array_fill(0.0, ARRAY[189]);
+    total_recent  INT := 0;
+    total_base    INT := 0;
+    kl_val        REAL := 0.0;
+    i             INT;
+    rec           RECORD;
+    base_hour     INT;
+    base_dow      INT;
+BEGIN
+    -- Определяем час и день эталона
+    base_hour := COALESCE(baseline_hour, EXTRACT(HOUR FROM now())::INT);
+    base_dow  := COALESCE(baseline_dow,  EXTRACT(DOW FROM now())::INT);
+    
+    -- 1. Распределение за последние recent_minutes минут
+    FOR rec IN
+        SELECT from_state, COUNT(*) AS cnt
+        FROM transition_log
+        WHERE ts >= now() - (recent_minutes || ' minutes')::INTERVAL
+        GROUP BY from_state
+    LOOP
+        recent_dist[rec.from_state+1] := rec.cnt;
+        total_recent := total_recent + rec.cnt;
+    END LOOP;
+    IF total_recent = 0 THEN RETURN NULL; END IF;
+    -- нормализуем
+    FOR i IN 1..189 LOOP
+        recent_dist[i] := recent_dist[i] / total_recent;
+    END LOOP;
+
+    -- 2. Эталонное распределение из state_baseline
+    SELECT array_agg(probability ORDER BY state_id) INTO baseline_dist
+    FROM state_baseline
+    WHERE hour_of_day = base_hour AND dow = base_dow
+    ORDER BY state_id;
+    IF baseline_dist IS NULL THEN RETURN NULL; END IF;
+
+    -- 3. KL = sum p_i * ln(p_i / q_i) с аддитивным сглаживанием для нулей
+    FOR i IN 1..189 LOOP
+        IF recent_dist[i] > 0 AND baseline_dist[i] > 0 THEN
+            kl_val := kl_val + recent_dist[i] * ln(recent_dist[i] / baseline_dist[i]);
+        ELSIF recent_dist[i] > 0 AND baseline_dist[i] = 0 THEN
+            -- применяем аддитивное сглаживание (small epsilon)
+            kl_val := kl_val + recent_dist[i] * ln(recent_dist[i] / 1e-6);
+        END IF;
+    END LOOP;
+    RETURN kl_val;
+END;
+$$;
+COMMENT ON FUNCTION calculate_kl_divergence IS 'Расчёт KL-дивергенции между текущим часом и эталоном';
+
+------------------------------------------------------------------------------------------------------------------------
+-- Расчёт χ² – критерия
+CREATE OR REPLACE FUNCTION calculate_chi_squared(
+    recent_minutes INT DEFAULT 60,
+    baseline_hour  INT DEFAULT NULL,
+    baseline_dow   INT DEFAULT NULL
+)
+RETURNS REAL
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+    obs_cnt   INT[];
+    exp_cnt   REAL[];
+    chi2_val  REAL := 0.0;
+    total_obs INT := 0;
+    total_exp REAL := 0.0;
+    i         INT;
+    rec       RECORD;
+    base_hour INT;
+    base_dow  INT;
+BEGIN
+    base_hour := COALESCE(baseline_hour, EXTRACT(HOUR FROM now())::INT);
+    base_dow  := COALESCE(baseline_dow,  EXTRACT(DOW FROM now())::INT);
+    
+    obs_cnt := array_fill(0, ARRAY[189]);
+    -- наблюдаемые частоты
+    FOR rec IN
+        SELECT from_state, COUNT(*) AS cnt
+        FROM transition_log
+        WHERE ts >= now() - (recent_minutes || ' minutes')::INTERVAL
+        GROUP BY from_state
+    LOOP
+        obs_cnt[rec.from_state+1] := rec.cnt;
+        total_obs := total_obs + rec.cnt;
+    END LOOP;
+    IF total_obs = 0 THEN RETURN NULL; END IF;
+
+    -- ожидаемые частоты (из эталона, умноженные на total_obs)
+    FOR rec IN
+        SELECT state_id, probability
+        FROM state_baseline
+        WHERE hour_of_day = base_hour AND dow = base_dow
+    LOOP
+        exp_cnt[rec.state_id+1] := rec.probability * total_obs;
+        total_exp := total_exp + exp_cnt[rec.state_id+1];
+    END LOOP;
+    IF total_exp = 0 THEN RETURN NULL; END IF;
+
+    -- χ² = Σ (O - E)² / E
+    FOR i IN 1..189 LOOP
+        IF exp_cnt[i] > 0 THEN
+            chi2_val := chi2_val + power(obs_cnt[i] - exp_cnt[i], 2) / exp_cnt[i];
+        END IF;
+    END LOOP;
+    RETURN chi2_val;
+END;
+$$;
+COMMENT ON FUNCTION calculate_chi_squared IS 'Расчёт χ² – критерия';
+
+------------------------------------------------------------------------------------------------------------------------
+-- Отклонение операционной скорости (SMA20 vs историческое среднее)
+CREATE OR REPLACE FUNCTION get_os_deviation()
+RETURNS REAL
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+    current_hour INT;
+    sma20        REAL;
+    hist_avg     REAL;
+    hist_std     REAL;
+    deviation    REAL;
+BEGIN
+    current_hour := EXTRACT(HOUR FROM now())::INT;
+    
+    -- SMA20 за последние 20 минут (предполагается таблица cluster_stat_median)
+    SELECT AVG(curr_op_speed) INTO sma20
+    FROM cluster_stat_median
+    WHERE curr_timestamp >= now() - INTERVAL '20 minutes';
+    
+    -- Исторические среднее и std для этого часа (последние 20 дней)
+    SELECT avg_speed, stddev_speed INTO hist_avg, hist_std
+    FROM operational_speed_stats
+    WHERE hour_of_day = current_hour;
+    
+    IF hist_avg IS NULL OR hist_std IS NULL OR sma20 IS NULL THEN
+        RETURN 0.0;
+    END IF;
+    
+    deviation := abs(sma20 - hist_avg) / NULLIF(hist_avg, 0);
+    RETURN deviation;
+END;
+$$;
+COMMENT ON FUNCTION get_os_deviation IS 'Отклонение операционной скорости (SMA20 vs историческое среднее)';
+
+------------------------------------------------------------------------------------------------------------------------
+-- Обновление статистики операционной скорости (запускать ежедневно)
+CREATE OR REPLACE FUNCTION refresh_os_stats()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    hr INT;
+BEGIN
+    FOR hr IN 0..23 LOOP
+        INSERT INTO operational_speed_stats (hour_of_day, avg_speed, stddev_speed)
+        SELECT 
+            hr,
+            AVG(curr_op_speed),
+            STDDEV(curr_op_speed)
+        FROM cluster_stat_median
+        WHERE EXTRACT(HOUR FROM curr_timestamp) = hr
+          AND curr_timestamp >= now() - INTERVAL '20 days'
+        ON CONFLICT (hour_of_day) DO UPDATE
+        SET avg_speed = EXCLUDED.avg_speed,
+            stddev_speed = EXCLUDED.stddev_speed,
+            last_updated = now();
+    END LOOP;
+END;
+$$;
+COMMENT ON FUNCTION refresh_os_stats IS 'Обновление статистики операционной скорости (запускать ежедневно)';
+
+------------------------------------------------------------------------------------------------------------------------
+-- Основная процедура check_and_forget
+CREATE OR REPLACE FUNCTION check_and_forget()
+RETURNS TEXT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    cfg RECORD;
+    kl_val REAL;
+    chi2_val REAL;
+    os_dev REAL;
+    brier_val REAL;
+    kl_flag BOOLEAN;
+    chi2_flag BOOLEAN;
+    os_flag BOOLEAN;
+    brier_flag BOOLEAN;
+    infra_flag BOOLEAN;
+    diurnal_flag BOOLEAN;
+    alpha_eff REAL := 0.0;
+    reason_list TEXT[] := '{}';
+    details_text TEXT := '';
+    consecutive_count INT;
+BEGIN
+    -- 1. Чтение конфигурации (включая новый флаг)
+    SELECT kl_threshold, chi2_threshold, os_dev_threshold, brier_threshold,
+           forget_alpha_max, confirmation_cycles,
+           adaptive_forgetting_enabled
+    INTO cfg
+    FROM markov_config LIMIT 1;
+
+    -- 2. Если адаптивное забывание отключено – выходим
+    IF NOT cfg.adaptive_forgetting_enabled THEN
+        RETURN 'Adaptive forgetting is disabled by markov_config.adaptive_forgetting_enabled = false.';
+    END IF;
+
+    -- 3. Очистка устаревших записей check_state (необязательно, но полезно)
+    DELETE FROM check_state WHERE check_time < now() - INTERVAL '7 days';
+
+    -- 4. Расчёт признаков
+    kl_val := calculate_kl_divergence(60, NULL, NULL);
+    chi2_val := calculate_chi_squared(60, NULL, NULL);
+    os_dev := get_os_deviation();
+    SELECT COALESCE(AVG((predicted_risk - actual_risk)^2), 0.0) INTO brier_val
+    FROM forecast_log WHERE ts >= now() - INTERVAL '2 hours';
+
+    -- 5. Определение флагов
+    kl_flag := (kl_val IS NOT NULL AND kl_val > cfg.kl_threshold);
+    chi2_flag := (chi2_val IS NOT NULL AND chi2_val > cfg.chi2_threshold);
+    os_flag := (os_dev > cfg.os_dev_threshold);
+    brier_flag := (brier_val > cfg.brier_threshold);
+    infra_flag := EXISTS (SELECT 1 FROM infrastructure_events
+                          WHERE event_time > now() - INTERVAL '1 hour' AND processed = false);
+    diurnal_flag := (calculate_kl_divergence(60, EXTRACT(HOUR FROM now())::INT, NULL) > 0.2);
+
+    -- 6. Сохранение результатов проверки
+    INSERT INTO check_state (check_time, kl_flag, chi2_flag, os_flag, brier_flag, infra_flag, diurnal_flag)
+    VALUES (now(), kl_flag, chi2_flag, os_flag, brier_flag, infra_flag, diurnal_flag);
+
+    -- 7. Подсчёт последовательных срабатываний
+    WITH consecutive AS (
+        SELECT check_time,
+               (kl_flag OR chi2_flag OR os_flag OR brier_flag OR infra_flag OR diurnal_flag) AS any_flag
+        FROM check_state
+        ORDER BY check_time DESC
+        LIMIT cfg.confirmation_cycles
+    )
+    SELECT COUNT(*) INTO consecutive_count
+    FROM consecutive
+    WHERE any_flag = true;
+
+    -- 8. Если достаточно последовательных срабатываний – вычисляем alpha_eff и применяем забывание
+    IF consecutive_count >= cfg.confirmation_cycles THEN
+        IF kl_flag THEN
+            alpha_eff := alpha_eff + 0.1;
+            reason_list := reason_list || 'KL';
+            details_text := details_text || format('KL=%.3f; ', kl_val);
+        END IF;
+        IF chi2_flag THEN
+            alpha_eff := alpha_eff + 0.1;
+            reason_list := reason_list || 'Chi2';
+            details_text := details_text || format('Chi2=%.1f; ', chi2_val);
+        END IF;
+        IF os_flag THEN
+            alpha_eff := alpha_eff + 0.1;
+            reason_list := reason_list || 'OS';
+            details_text := details_text || format('OS_dev=%.2f; ', os_dev);
+        END IF;
+        IF brier_flag THEN
+            alpha_eff := alpha_eff + 0.1;
+            reason_list := reason_list || 'Brier';
+            details_text := details_text || format('Brier=%.3f; ', brier_val);
+        END IF;
+        IF infra_flag THEN
+            alpha_eff := GREATEST(alpha_eff, 0.3);
+            reason_list := reason_list || 'Infra';
+            UPDATE infrastructure_events SET processed = true WHERE event_time > now() - INTERVAL '1 hour';
+        END IF;
+        IF diurnal_flag THEN
+            alpha_eff := alpha_eff + 0.02;
+            reason_list := reason_list || 'Diurnal';
+        END IF;
+
+        IF alpha_eff > 0.0 THEN
+            alpha_eff := LEAST(alpha_eff, cfg.forget_alpha_max);
+            PERFORM apply_forgetting(alpha_eff);
+            INSERT INTO forget_log (alpha, triggered_by, kl_div, chi2_val, brier_score, os_deviation, details)
+            VALUES (alpha_eff, reason_list, kl_val, chi2_val, brier_val, os_dev, details_text);
+            RETURN format('Forgetting applied with alpha=%.3f, reasons: %s', alpha_eff, array_to_string(reason_list, ','));
+        END IF;
+    END IF;
+
+    RETURN 'No forgetting needed.';
+END;
+$$;
+COMMENT ON FUNCTION check_and_forget IS 'Основная процедура check_and_forget';
+
+------------------------------------------------------------------------------------------------------------------------
+-- emergency_forget Функция экстренного забывания по событию
+CREATE OR REPLACE FUNCTION emergency_forget(event_type TEXT, alpha REAL DEFAULT 0.4)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    INSERT INTO infrastructure_events (event_type, description) VALUES (event_type, 'Manual or automated trigger');
+    PERFORM apply_forgetting(LEAST(alpha, 0.5));
+    INSERT INTO forget_log (alpha, triggered_by, details)
+    VALUES (LEAST(alpha, 0.5), ARRAY['Emergency_'||event_type], 'Forced by external event');
+END;
+$$;
+COMMENT ON FUNCTION emergency_forget IS 'emergency_forget Функция экстренного забывания по событию';
+
+------------------------------------------------------------------------------------------------------------------------
+-- Очистка архивных снимков матрицы вероятностей
+CREATE OR REPLACE FUNCTION clean_markov_probabilities_archive()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    retention INT;
+BEGIN
+    SELECT archive_retention_days INTO retention FROM markov_config;
+    DELETE FROM markov_probabilities_archive
+    WHERE train_date < current_date - retention;
+END;
+$$;
+COMMENT ON FUNCTION clean_markov_probabilities_archive() IS 'Удаляет архивные снимки матрицы старше заданного числа дней';
+
+------------------------------------------------------------------------------------------------------------------------
+-- Очистка истории проверок check_state
+CREATE OR REPLACE FUNCTION clean_check_state()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    retention INT;
+BEGIN
+    SELECT check_state_retention_days INTO retention FROM markov_config;
+    DELETE FROM check_state
+    WHERE check_time < now() - (retention || ' days')::INTERVAL;
+END;
+$$;
+COMMENT ON FUNCTION clean_check_state() IS 'Удаляет старые записи check_state (история проверок)';
+
+------------------------------------------------------------------------------------------------------------------------
+-- Очистка журнала форсированных забываний
+CREATE OR REPLACE FUNCTION clean_forget_log()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    retention INT;
+BEGIN
+    SELECT forget_log_retention_days INTO retention FROM markov_config;
+    DELETE FROM forget_log
+    WHERE ts < now() - (retention || ' days')::INTERVAL;
+END;
+$$;
+COMMENT ON FUNCTION clean_forget_log() IS 'Удаляет старые записи forget_log';

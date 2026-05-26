@@ -88,6 +88,9 @@ shared_preload_libraries = 'pg_stat_statements, pg_wait_sampling'
    
 # Очистка forget_log (раз в месяц, например, 1-го числа в 04:00)
 0 4 1 * * psql -d expecto_db -U expecto_user -c "SELECT clean_forget_log()"
+
+#  Очистка журнала apply_forgetting_log (каждый день в 02:00):
+0 2 * * * psql -d expecto_db -U expecto_user -c "SELECT clean_apply_forgetting_log();"
 ```   
    
 ## Мониторинг работоспособности pg_expecto

@@ -30,3 +30,6 @@ graph TD
   class markov_chain_training highlight
   classDef highlight fill:#ffcccb,stroke:#f00,stroke-width:4px,color:#a00,font-weight:bold
 ```
+## Корневая функция "markov_chain_training"
+
+Вызывается при расчете ежеминутных данных операционной скорости и ожиданий в функции **performance_metrics**

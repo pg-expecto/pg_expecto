@@ -27,26 +27,6 @@ graph TD
   markov_chain_training --> get_state_id
   markov_chain_training --> log_transition_and_update
 
-  style fill_state_descriptions fill:#f9f,stroke:#333
-  style get_state_id fill:#bbf,stroke:#333
-  style update_markov_frequency fill:#bbf,stroke:#333
-  style log_transition_and_update fill:#bbf,stroke:#333
-  style get_current_os_waiting_correlation_for_markov_chain fill:#bbf,stroke:#333
-  style update_markov_probabilities fill:#bbf,stroke:#333
-  style rebuild_markov_absorbing fill:#f9f,stroke:#333
-  style predict_risk_1min fill:#bbf,stroke:#333
-  style predict_risk_k_diag fill:#bbf,stroke:#333
-  style snapshot_markov_prev_week fill:#bbf,stroke:#333
-  style archive_markov_probabilities fill:#f9f,stroke:#333
-  style get_stationary_distribution fill:#bbf,stroke:#333
-  style check_kl_divergence fill:#bbf,stroke:#333
-  style compare_brier_scores fill:#f9f,stroke:#333
-  style evaluate_training_sufficiency fill:#bbf,stroke:#333
-  style apply_forgetting fill:#bbf,stroke:#333
-  style calculate_kl_divergence fill:#f9f,stroke:#333
-  style calculate_chi_squared fill:#f9f,stroke:#333
-  style get_os_deviation fill:#f9f,stroke:#333
-  style check_and_forget fill:#bbf,stroke:#333
-  style emergency_forget fill:#bbf,stroke:#333
-  style markov_chain_training fill:#bbf,stroke:#333
+  class markov_chain_training highlight
+  classDef highlight fill:#ffcccb,stroke:#f00,stroke-width:4px,color:#a00,font-weight:bold
 ```

@@ -16,8 +16,8 @@
 ########################################################################################################
 # pg_expecto.sh
 # Корневой скрипт 
-# version 10.0
-# updated 21/05/2026
+# version 10.0.1
+# updated 26/05/2026
 ########################################################################################################
 
  
@@ -223,10 +223,18 @@ MARKOV_CHAIN_LOG=$current_path'/markov_chain.log'
 MARKOV_CHAIN_TRAINING=$current_path'/markov_chain_evaluate_training_sufficiency.txt'
 MARKOV_CHAIN_RESULT=$current_path'/markov_chain_result.txt'
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") >> $MARKOV_CHAIN_LOG
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") > $MARKOV_CHAIN_LOG
+
+adaptive_forgetting_status=`psql -d expecto_db -U expecto_user  -Aqtc 'select get_adaptive_forgetting_status()'`
+exit_code $? $LOG_FILE $ERR_FILE
+echo 'INFO: ПАРАМЕТРЫ АДАПТИВНОГО ЗАБЫВАНИЯ	' >> $MARKOV_CHAIN_LOG
+echo $adaptive_forgetting_status >> $MARKOV_CHAIN_LOG
+
+
 psql -d expecto_db -U expecto_user  -c 'SELECT * FROM evaluate_training_sufficiency()' > $MARKOV_CHAIN_TRAINING
 exit_code $? $LOG_FILE $ERR_FILE
 
+echo 'INFO: КРИТЕРИИ ДОСТАТОЧНОСТИ ОБУЧЕНИЯ ЦЕПИ' >> $MARKOV_CHAIN_LOG
 cat $MARKOV_CHAIN_TRAINING >> $MARKOV_CHAIN_LOG
 
 file=$MARKOV_CHAIN_TRAINING
@@ -369,7 +377,7 @@ else
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : WARNING : НЕДОСТАТОЧНО ДАННЫХ ДЛЯ ОБУЧЕНИЯ ЦЕПИ МАРКОВА' >> $MARKOV_CHAIN_LOG  
 fi 
 
-echo '**********************************************' > $MARKOV_CHAIN_LOG
+echo '**********************************************' >> $MARKOV_CHAIN_LOG
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - ЗАКОНЧЕН '
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - ЗАКОНЧЕН '>> $LOG_FILE

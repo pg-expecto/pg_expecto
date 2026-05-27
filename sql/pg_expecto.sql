@@ -14767,9 +14767,13 @@ RETURNS TEXT[]
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    result_array TEXT[] := '{}';
+    result_array TEXT[];
+	line_count INT;
     rec RECORD;
 BEGIN
+	result_array[1] = 'TIMESTAMP | alpha | triggered_by | kl_div | chi2_val | brier_score | os_deviation | details';	
+	
+	line_count = 2 ;
     FOR rec IN
         SELECT id,
                ts,
@@ -14784,9 +14788,8 @@ BEGIN
         WHERE ts BETWEEN p_start AND p_end
         ORDER BY ts DESC
     LOOP
-        result_array := result_array || format(
-            'id=%s, ts=%s, alpha=%s, triggered_by={%s}, kl_div=%s, chi2_val=%s, brier_score=%s, os_deviation=%s, details=%s',
-            rec.id,
+        result_array[line_count] = format(
+            '%s | %s | {%s} | %s | %s | %s | %s | %s |',
             rec.ts,
             rec.alpha,
             array_to_string(rec.triggered_by, ','),
@@ -14796,6 +14799,7 @@ BEGIN
             rec.os_deviation,
             rec.details
         );
+		line_count = line_count + 1 ;
     END LOOP;
 
     RETURN result_array;
@@ -14839,9 +14843,12 @@ RETURNS TEXT[]
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    result_array TEXT[] := '{}';
+    result_array TEXT[];
+	line_count INT;
     rec RECORD;
 BEGIN
+	result_array[0] = 'TIMESTAMP | effective_alpha | adaptive_used | days_since_incident | alpha_override | details  ';
+	line_count = 1 ; 
     FOR rec IN
         SELECT id, ts, effective_alpha, adaptive_used, days_since_incident,
                alpha_override, details
@@ -14849,11 +14856,12 @@ BEGIN
         WHERE ts BETWEEN p_start AND p_end
         ORDER BY ts DESC
     LOOP
-        result_array := result_array || format(
-            'id=%s, ts=%s, effective_alpha=%s, adaptive_used=%s, days_since_incident=%s, alpha_override=%s, details=%s',
-            rec.id, rec.ts, rec.effective_alpha, rec.adaptive_used,
+        result_array[line_count] = format(
+            '%s | %s | %s | %s | %s | %s |',
+            TO_CHAR( rec.ts , 'YYYY.MM.DD HH24:MI'), rec.effective_alpha, rec.adaptive_used,
             rec.days_since_incident, rec.alpha_override, rec.details
         );
+		line_count = line_count + 1 ; 
     END LOOP;
     RETURN result_array;
 END;

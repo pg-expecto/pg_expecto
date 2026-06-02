@@ -16,8 +16,8 @@
 ########################################################################################################
 # pg_expecto.sh
 # Корневой скрипт 
-# version 10.0.1
-# updated 26/05/2026
+# version 10.0.3
+# updated 02/06/2026
 ########################################################################################################
 
  
@@ -231,7 +231,7 @@ echo 'INFO: ПАРАМЕТРЫ АДАПТИВНОГО ЗАБЫВАНИЯ	' >> $M
 echo $adaptive_forgetting_status >> $MARKOV_CHAIN_LOG
 
 
-psql -d expecto_db -U expecto_user  -c 'SELECT * FROM evaluate_training_sufficiency()' > $MARKOV_CHAIN_TRAINING
+psql -d expecto_db -U expecto_user  -c 'SELECT * FROM evaluate_training_sufficiency( test_start => current_date - 2, test_end => current_date - 1, model_date_old => current_date - 7, model_date_new => current_date )' > $MARKOV_CHAIN_TRAINING
 exit_code $? $LOG_FILE $ERR_FILE
 
 echo 'INFO: КРИТЕРИИ ДОСТАТОЧНОСТИ ОБУЧЕНИЯ ЦЕПИ' >> $MARKOV_CHAIN_LOG

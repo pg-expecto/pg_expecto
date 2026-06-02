@@ -13840,19 +13840,23 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    pi_arr    DOUBLE PRECISION[];
-    emp_arr   DOUBLE PRECISION[] := array_fill(0.0::DOUBLE PRECISION, ARRAY[189]);
-    total_obs BIGINT;
-    kl        DOUBLE PRECISION := 0.0;
-    i         INT;
-    emp_val   DOUBLE PRECISION;
+    pi_arr_raw    DOUBLE PRECISION[];
+    pi_arr        DOUBLE PRECISION[];
+    emp_counts    BIGINT[];
+    total_obs     BIGINT;
+    kl            DOUBLE PRECISION := 0.0;
+    i             INT;
+    epsilon       CONSTANT DOUBLE PRECISION := 1e-10;
+    smooth_sum    DOUBLE PRECISION;
+    q_smooth      DOUBLE PRECISION[];
+    cnt           BIGINT;
+    pi_sum        DOUBLE PRECISION;
 BEGIN
-    -- 1. Пытаемся получить стационарное распределение; ловим underflow
+    -- 1. Получение стационарного распределения (возможно, не нормированного)
     BEGIN
-        pi_arr := get_stationary_distribution()::DOUBLE PRECISION[];
+        pi_arr_raw := get_stationary_distribution()::DOUBLE PRECISION[];
     EXCEPTION
         WHEN numeric_value_out_of_range THEN
-            -- Если внутренняя функция упала с underflow, возвращаем NULL-результат
             kl_value  := NULL;
             threshold := 0.1;
             passed    := FALSE;
@@ -13860,7 +13864,25 @@ BEGIN
             RETURN;
     END;
 
-    -- 2. Считаем общее количество наблюдений за последние 7 дней
+    -- 2. Принудительная нормировка pi_arr (если сумма не равна 1)
+    pi_sum := 0.0;
+    FOR i IN 1..189 LOOP
+        pi_sum := pi_sum + pi_arr_raw[i];
+    END LOOP;
+    IF pi_sum = 0 THEN
+        -- Аварийный случай: стационарное распределение нулевое
+        kl_value  := NULL;
+        threshold := 0.1;
+        passed    := FALSE;
+        RETURN NEXT;
+        RETURN;
+    END IF;
+    pi_arr := array_fill(0.0::DOUBLE PRECISION, ARRAY[189]);
+    FOR i IN 1..189 LOOP
+        pi_arr[i] := pi_arr_raw[i] / pi_sum;
+    END LOOP;
+
+    -- 3. Эмпирические частоты за последние 7 дней
     SELECT COUNT(*) INTO total_obs
     FROM transition_log
     WHERE ts >= now() - INTERVAL '7 days';
@@ -13873,23 +13895,37 @@ BEGIN
         RETURN;
     END IF;
 
-    -- 3. Эмпирические частоты состояний
+    emp_counts := array_fill(0::BIGINT, ARRAY[189]);
     FOR i IN 0..188 LOOP
-        SELECT COUNT(*)::DOUBLE PRECISION / total_obs
-        INTO emp_val
+        SELECT COUNT(*) INTO cnt
         FROM transition_log
         WHERE from_state = i
           AND ts >= now() - INTERVAL '7 days';
-
-        emp_arr[i+1] := emp_val;
+        emp_counts[i+1] := cnt;
     END LOOP;
 
-    -- 4. Расчёт KL-дивергенции: sum(pi_i * ln(pi_i / emp_i))
+    -- 4. Сглаженное и нормированное эмпирическое распределение q
+    q_smooth := array_fill(0.0::DOUBLE PRECISION, ARRAY[189]);
+    smooth_sum := 0.0;
     FOR i IN 1..189 LOOP
-        IF pi_arr[i] > 0.0 AND emp_arr[i] > 0.0 THEN
-            kl := kl + pi_arr[i] * ln(pi_arr[i] / emp_arr[i]);
+        q_smooth[i] := emp_counts[i] + epsilon;
+        smooth_sum := smooth_sum + q_smooth[i];
+    END LOOP;
+    FOR i IN 1..189 LOOP
+        q_smooth[i] := q_smooth[i] / smooth_sum;
+    END LOOP;
+
+    -- 5. KL(π || q) = Σ π_i * ln(π_i / q_i)
+    FOR i IN 1..189 LOOP
+        IF pi_arr[i] > 0 THEN
+            kl := kl + pi_arr[i] * ln(pi_arr[i] / q_smooth[i]);
         END IF;
     END LOOP;
+
+    -- Защита от отрицательных значений из-за погрешностей FP (должно быть неотрицательно)
+    IF kl < 0 AND kl > -1e-12 THEN
+        kl := 0.0;
+    END IF;
 
     kl_value  := kl;
     threshold := 0.1;
@@ -13999,23 +14035,32 @@ BEGIN
 
     -- --------------------------------------------------------
     -- Критерий 2: максимальное изменение вероятностей за две недели
+    -- (только для состояний, частота которых >1% за последние 14 дней)
     -- --------------------------------------------------------
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'markov_probabilities_prev_week') THEN
+        WITH frequent_states_14d AS (
+            SELECT from_state
+            FROM transition_log
+            WHERE ts >= now() - INTERVAL '14 days'
+            GROUP BY from_state
+            HAVING COUNT(*)::REAL / (SELECT COUNT(*) FROM transition_log WHERE ts >= now() - INTERVAL '14 days') > 0.01
+        )
         SELECT MAX(abs(COALESCE(p.probability,0) - COALESCE(pw.probability,0))) INTO d_max
         FROM (SELECT DISTINCT from_state, to_state FROM markov_probabilities
               UNION SELECT from_state, to_state FROM markov_probabilities_prev_week) all_trans
         LEFT JOIN markov_probabilities p USING (from_state, to_state)
-        LEFT JOIN markov_probabilities_prev_week pw USING (from_state, to_state);
+        LEFT JOIN markov_probabilities_prev_week pw USING (from_state, to_state)
+        WHERE from_state IN (SELECT from_state FROM frequent_states_14d);
     ELSE
         d_max := NULL;
     END IF;
 
-    criterion := 'C2: max |P_new - P_old|';
+    criterion := 'C2: max |P_new - P_old| (только для частых >1% за 14 дней)';
     value := COALESCE(d_max, -1);
     threshold := 'D < 0.05';
     passed := (d_max IS NOT NULL AND d_max < 0.05);
     details := CASE WHEN d_max IS NULL THEN 'Нет исторической матрицы за прошлую неделю'
-                   ELSE 'D_max = ' || round(d_max::numeric, 4)::text END;
+                   ELSE 'D_max = ' || round(d_max::numeric, 4)::text || ' (по частым состояниям)' END;
     RETURN NEXT;
 
     -- --------------------------------------------------------

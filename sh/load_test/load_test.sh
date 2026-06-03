@@ -1,21 +1,8 @@
 #!/bin/sh
-# Copyright 2026 Ринат (pg_expecto)
-# 
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-# 
-# http://www.apache.org/licenses/LICENSE-2.0
-# 
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
 #####################################################################################
 # load_test.sh
-# version 4.0
+# version 10.1
+# 03.06.2026
 #####################################################################################
 # Нагрузочное тестирование
 # 
@@ -40,8 +27,10 @@ then
 fi
 }
 
-script=$(readlink -f $0)
-current_path=`dirname $script`
+#script=$(readlink -f $0)
+#current_path=`dirname $script`
+current_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#echo "Скрипт находится в: $current_path"
 
 expecto_db='expecto_db'
 pgbench_db='pgbench_db'
@@ -56,6 +45,7 @@ TIMESTAMP_LOG_FILE=$current_path'/timestamp.log'
 #Если тест не начат - выход
 if [ ! -f $current_path'/LOAD_TEST_STARTED' ]; 
 then
+
   exit 0
 fi
 #################################################
@@ -66,10 +56,21 @@ fi
 if [ -f $current_path'/LOAD_TEST_IN_PROGRESS' ]; 
 then
   current_pass=`psql -d $expecto_db -U $expecto_user -Aqtc 'select load_test_current_pass()' 2>$ERR_FILE`
-  pgbench_clients=`psql -d $expecto_db -U $expecto_user -Aqtc 'select load_test_get_load()'` 2>$ERR_FILE
-
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ИТЕРАЦИЯ : '$current_pass' СЕССИЙ pgbench : '$pgbench_clients >> $LOG_FILE
   
+  period_hours=`$current_path'/'get_conf_param.sh $current_path period_hours 2>$ERR_FILE`
+  exit_code $? $LOG_FILE $ERR_FILE
+
+  lambda_per_hour=`$current_path'/'get_conf_param.sh $current_path lambda_per_hour 2>$ERR_FILE`
+  exit_code $? $LOG_FILE $ERR_FILE
+
+if [ "$period_hours" != "0" ] && [ "$lambda_per_hour" != "0" ]
+then
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ИТЕРАЦИЯ : '$current_pass' (ПУАССОНОВСКАЯ НАГРУЗКА)'>> $LOG_FILE
+else
+  pgbench_clients=`psql -d $expecto_db -U $expecto_user -Aqtc 'select load_test_get_load()'` 2>$ERR_FILE  
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ИТЕРАЦИЯ : '$current_pass' СЕССИЙ pgbench : '$pgbench_clients ' (ЭКСПОНЕНЦИАЛЬНАЯ НАГРУЗКА)'>> $LOG_FILE
+fi  
+
   psql -d $expecto_db -U $expecto_user -Aqtc 'select load_test_set_scenario_queryid()' 2>$ERR_FILE
   exit_code $? $LOG_FILE $ERR_FILE	
   

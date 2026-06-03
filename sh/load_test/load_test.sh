@@ -60,10 +60,10 @@ then
   period_hours=`$current_path'/'get_conf_param.sh $current_path period_hours 2>$ERR_FILE`
   exit_code $? $LOG_FILE $ERR_FILE
 
-  lambda_per_hour=`$current_path'/'get_conf_param.sh $current_path lambda_per_hour 2>$ERR_FILE`
+  average_load=`$current_path'/'get_conf_param.sh $current_path average_load 2>$ERR_FILE`
   exit_code $? $LOG_FILE $ERR_FILE
 
-if [ "$period_hours" != "0" ] && [ "$lambda_per_hour" != "0" ]
+if [ "$period_hours" != "0" ] && [ "$average_load" != "0" ]
 then
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ИТЕРАЦИЯ : '$current_pass' (ПУАССОНОВСКАЯ НАГРУЗКА)'>> $LOG_FILE
 else

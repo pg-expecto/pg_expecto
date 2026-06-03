@@ -1,35 +1,133 @@
 # Реализация цепи Маркова для прогнозирования инцидентов производительности СУБД PostgreSQL 
+# Граф вызовов функций системы марковской цепи
 
-## Граф вызовов функций
+Ниже представлен граф вызовов основных функций. Стрелка `A --> B` означает, что функция `A` вызывает функцию `B`.
+
 ```mermaid
-graph TD
-  update_markov_frequency --> get_state_id
-  log_transition_and_update --> get_state_id
-  log_transition_and_update --> update_markov_frequency
-  update_markov_probabilities --> rebuild_markov_absorbing
-  predict_risk_1min --> get_current_os_waiting_correlation_for_markov_chain
-  predict_risk_1min --> get_state_id
-  predict_risk_k_diag --> get_current_os_waiting_correlation_for_markov_chain
-  predict_risk_k_diag --> get_state_id
-  snapshot_markov_prev_week --> archive_markov_probabilities
-  check_kl_divergence --> get_stationary_distribution
-  evaluate_training_sufficiency --> compare_brier_scores
-  evaluate_training_sufficiency --> check_kl_divergence
-  apply_forgetting --> update_markov_probabilities
-  check_and_forget --> calculate_kl_divergence
-  check_and_forget --> calculate_chi_squared
-  check_and_forget --> get_os_deviation
-  check_and_forget --> apply_forgetting
-  emergency_forget --> apply_forgetting
-  markov_chain_training --> fill_state_descriptions
-  markov_chain_training --> apply_forgetting
-  markov_chain_training --> get_current_os_waiting_correlation_for_markov_chain
-  markov_chain_training --> get_state_id
-  markov_chain_training --> log_transition_and_update
+flowchart TD
+    subgraph "Внешние запуски (cron / сборщик метрик)"
+        Cron1["cron: */15 * * * *"] --> check_and_forget
+        Cron2["cron: 5 19 * * 5"] --> snapshot_markov_prev_week
+        Cron3["cron: 30 1 * * *"] --> clean_forecast_log
+        Cron4["cron: 15 1 * * *"] --> clean_transition_log
+        Cron5["cron: 0 1 * * *"] --> update_state_baseline
+        Cron6["cron: 30 1 * * *"] --> refresh_os_stats
+        Cron7["cron: 0 2 * * 0"] --> clean_markov_probabilities_archive
+        Cron8["cron: 0 3 * * *"] --> clean_check_state
+        Cron9["cron: 0 4 1 * *"] --> clean_forget_log
+        Cron10["cron: 0 2 * * *"] --> clean_apply_forgetting_log
+        External["Ежеминутный вызов (сборщик метрик)"] --> markov_chain_training
+    end
 
-  class markov_chain_training highlight
-  classDef highlight fill:#ffcccb,stroke:#f00,stroke-width:4px,color:#a00,font-weight:bold
+    subgraph "Основное обучение (markov_chain_training)"
+        markov_chain_training --> fill_state_descriptions
+        markov_chain_training --> get_current_os_waiting_correlation_for_markov_chain
+        markov_chain_training --> get_state_id
+        markov_chain_training --> apply_forgetting
+        markov_chain_training --> log_transition_and_update
+        markov_chain_training --> log_forecast
+        markov_chain_training --> predict_risk_1min
+    end
+
+    subgraph "Журналирование перехода"
+        log_transition_and_update --> update_markov_frequency
+        log_transition_and_update --> transition_log_insert["INSERT INTO transition_log (непосредственно)"]
+    end
+
+    subgraph "Обновление вероятностей"
+        update_markov_frequency --> markov_frequencies_update["UPDATE markov_frequencies"]
+        apply_forgetting --> update_markov_probabilities
+        update_markov_probabilities --> rebuild_markov_absorbing
+        snapshot_markov_prev_week --> archive_markov_probabilities
+    end
+
+    subgraph "Функции прогнозирования"
+        predict_risk_1min --> get_current_os_waiting_correlation_for_markov_chain
+        predict_risk_1min --> get_state_id
+        predict_risk_k_diag --> get_current_os_waiting_correlation_for_markov_chain
+        predict_risk_k_diag --> get_state_id
+        predict_risk_1min_archived --> markov_probabilities_archive
+    end
+
+    subgraph "Плановое и форсированное забывание"
+        apply_forgetting --> update_markov_probabilities
+        apply_forgetting --> apply_forgetting_log_insert["INSERT INTO apply_forgetting_log"]
+        emergency_forget --> apply_forgetting
+        emergency_forget --> infrastructure_events_insert["INSERT INTO infrastructure_events"]
+        check_and_forget --> calculate_kl_divergence
+        check_and_forget --> calculate_chi_squared
+        check_and_forget --> get_os_deviation
+        check_and_forget --> apply_forgetting
+        check_and_forget --> forget_log_insert["INSERT INTO forget_log"]
+    end
+
+    subgraph "Мониторинг дрейфа (вспомогательные)"
+        calculate_kl_divergence --> state_baseline
+        calculate_chi_squared --> state_baseline
+        get_os_deviation --> operational_speed_stats
+        get_os_deviation --> cluster_stat_median
+    end
+
+    subgraph "Оценка достаточности обучения"
+        evaluate_training_sufficiency --> compare_brier_scores
+        evaluate_training_sufficiency --> check_kl_divergence
+        compare_brier_scores --> forecast_log
+        check_kl_divergence --> get_stationary_distribution
+        check_kl_divergence --> transition_log
+    end
+
+    subgraph "Обновление эталонов и статистики"
+        update_state_baseline --> transition_log
+        refresh_os_stats --> cluster_stat_median
+    end
+
+    subgraph "Триггер"
+        trigger["AFTER INSERT ON transition_log"] --> update_last_incident_time
+        update_last_incident_time --> markov_config_update["UPDATE markov_config.last_incident_time"]
+    end
+
+    subgraph "Управление адаптивным забыванием"
+        enable_adaptive_forgetting --> markov_config_update1["UPDATE markov_config"]
+        disable_adaptive_forgetting --> markov_config_update2["UPDATE markov_config"]
+        get_adaptive_forgetting_status --> markov_config
+        set_last_incident_time --> markov_config_update3["UPDATE markov_config"]
+    end
+
+    subgraph "Сервисные / утилиты"
+        reset_markov_chain --> fill_state_descriptions
+        reset_markov_chain --> truncate_tables["TRUNCATE markov_frequencies, markov_probabilities, ..."]
+        sync_model_date_from_archive --> markov_probabilities_archive
+        get_forget_log --> forget_log
+        get_apply_forgetting_log --> apply_forgetting_log
+    end
+
+    subgraph "Функции очистки (cron)"
+        clean_forecast_log --> forecast_log
+        clean_transition_log --> transition_log
+        clean_markov_probabilities_archive --> markov_probabilities_archive
+        clean_check_state --> check_state
+        clean_forget_log --> forget_log
+        clean_apply_forgetting_log --> apply_forgetting_log
+    end
 ```
+
+## Пояснения к графу
+
+- **Внешние входы** (прямоугольники без входящих стрелок) – это точки входа в систему:
+  - `markov_chain_training` – вызывается ежеминутно внешним сборщиком метрик.
+  - `check_and_forget` и другие функции, помеченные `cron`, запускаются планировщиком по расписанию.
+- **Основной поток обучения**:
+  - `markov_chain_training` получает метрики, обновляет состояние, прогнозирует риск (через `predict_risk_1min`), логирует прогноз и переход, а также при необходимости вызывает `apply_forgetting` для планового забывания.
+- **Забывание**:
+  - `apply_forgetting` обновляет частоты и перестраивает вероятности.
+  - `check_and_forget` (вызывается каждые 15 минут) анализирует дрейф и может инициировать форсированное забывание через `apply_forgetting`.
+- **Прогнозирование**:
+  - `predict_risk_1min` и `predict_risk_k_diag` зависят только от текущих метрик и матриц вероятностей; они не модифицируют данные.
+- **Триггер**:
+  - При вставке в `transition_log` автоматически вызывается `update_last_incident_time` для обновления времени последнего аварийного события.
+- **Вспомогательные и сервисные функции** вызываются по необходимости (инициализация, сброс модели, получение журналов).
+
+Граф отражает **прямые вызовы** (функция → функция) без учёта косвенных вызовов через SQL-запросы к таблицам (кроме случаев, когда таблицы напрямую читаются/пишутся внутри функции).
 ## Корневая функция "markov_chain_training"
 
 Вызывается при расчете ежеминутных данных операционной скорости и ожиданий в функции **performance_metrics**

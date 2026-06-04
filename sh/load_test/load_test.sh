@@ -1,8 +1,8 @@
 #!/bin/sh
 #####################################################################################
 # load_test.sh
-# version 10.1
-# 03.06.2026
+# version 10.1.1
+# 04.06.2026
 #####################################################################################
 # Нагрузочное тестирование
 # 
@@ -56,6 +56,7 @@ fi
 if [ -f $current_path'/LOAD_TEST_IN_PROGRESS' ]; 
 then
   current_pass=`psql -d $expecto_db -U $expecto_user -Aqtc 'select load_test_current_pass()' 2>$ERR_FILE`
+  pgbench_clients=`psql -d $expecto_db -U $expecto_user -Aqtc 'select load_test_get_load()'` 2>$ERR_FILE  
   
   period_hours=`$current_path'/'get_conf_param.sh $current_path period_hours 2>$ERR_FILE`
   exit_code $? $LOG_FILE $ERR_FILE
@@ -65,10 +66,14 @@ then
 
 if [ "$period_hours" != "0" ] && [ "$average_load" != "0" ]
 then
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ИТЕРАЦИЯ : '$current_pass' (ПУАССОНОВСКАЯ НАГРУЗКА)'>> $LOG_FILE
+ let total_intervals=6+period_hours*6
+
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ИТЕРАЦИЯ :'$current_pass' : ПУАССОНОВСКАЯ НАГРУЗКА: total_intervals='$total_intervals' period_hours='$period_hours' pgbench_clients='$pgbench_clients' average_load='$average_load >> $LOG_FILE
 else
-  pgbench_clients=`psql -d $expecto_db -U $expecto_user -Aqtc 'select load_test_get_load()'` 2>$ERR_FILE  
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ИТЕРАЦИЯ : '$current_pass' СЕССИЙ pgbench : '$pgbench_clients ' (ЭКСПОНЕНЦИАЛЬНАЯ НАГРУЗКА)'>> $LOG_FILE
+  finish_load=`$current_path'/'get_conf_param.sh $current_path finish_load 2>$ERR_FILE`
+  exit_code $? $LOG_FILE $ERR_FILE
+
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ИТЕРАЦИЯ : '$current_pass' ЭКСПОНЕНЦИАЛЬНАЯ НАГРУЗКА: pgbench_clients='$pgbench_clients ' finish_load='$finish_load >> $LOG_FILE
 fi  
 
   psql -d $expecto_db -U $expecto_user -Aqtc 'select load_test_set_scenario_queryid()' 2>$ERR_FILE

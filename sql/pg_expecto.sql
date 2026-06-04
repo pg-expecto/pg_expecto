@@ -3042,27 +3042,7 @@ BEGIN
   SELECT load_test_get_current_test_pass_id() INTO current_test_pass_id ; 
   SELECT * INTO load_test_pass_rec FROM load_test_pass WHERE id = current_test_pass_id ; 
 	
-  -----------------------------------------------------------------------
-  -- ЭКСПОНЕНЦИАЛЬНЫЙ РОСТ НАГРУЗКИ  
-  IF load_test_rec.period_hours = 0 AND load_test_rec.average_load = 0 
-  THEN   
-	return load_test_pass_rec.load_connections ; 
-  -- ЭКСПОНЕНЦИАЛЬНЫЙ РОСТ НАГРУЗКИ  
-  -----------------------------------------------------------------------  
-  -- РАСПРЕДЕЛЕНИЕ ПУАССОНА  
-  ELSE 	
-    SELECT load_test_poisson_session_count(
-			load_test_rec.period_hours::INTEGER,
-			load_test_rec.average_load::INTEGER,
-			load_test_pass_rec.pass_counter::INTEGER )
-	INTO poisson_session_count ; 
-	
-	return poisson_session_count ; 
-  END IF ; 
-  -- РАСПРЕДЕЛЕНИЕ ПУАССОНА  
-  -----------------------------------------------------------------------  
-
-  
+ return load_test_pass_rec.load_connections ; 
 END
 $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION load_test_get_load IS 'Текущее количество подключений для pgbench';

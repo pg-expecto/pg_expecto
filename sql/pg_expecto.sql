@@ -3130,8 +3130,8 @@ BEGIN
     SET load_connections = result_load_connections
     WHERE test_id = current_test_id AND pass_counter = load_test_rec.pass_counter;
 
-    RAISE NOTICE 'load_test_rec.pass_counter=%', load_test_rec.pass_counter;
-    RAISE NOTICE 'Final load_connections set to %', result_load_connections;
+    --RAISE NOTICE 'load_test_rec.pass_counter=%', load_test_rec.pass_counter;
+    --RAISE NOTICE 'Final load_connections set to %', result_load_connections;
 
     RETURN result_load_connections;
   --  ЭКСПОНЕНЦИАЛЬНЫЙ РОСТ	
@@ -3143,6 +3143,12 @@ BEGIN
 			load_test_rec.average_load::INTEGER,
 			load_test_pass_rec.pass_counter::INTEGER )
 	INTO poisson_session_count ; 
+
+    -- Сохраняем вычисленное значение в таблице проходов
+    UPDATE load_test_pass
+    SET load_connections = poisson_session_count
+    WHERE test_id = current_test_id AND pass_counter = load_test_rec.pass_counter;
+
 
 	return poisson_session_count ; 
   END IF ; 

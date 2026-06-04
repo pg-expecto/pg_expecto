@@ -3413,12 +3413,22 @@ BEGIN
   -- ПУАССОНОВСКОЕ РАСПРЕДЕЛЕНИЕ
   ELSE 
 	-- ЗАВЕРШЕНИЕ ПО ВРЕМЕНИ
-    IF now() - load_test_rec.test_started >= load_test_rec.period_hours * interval '1 hour' + interval '1 hour'
+    IF load_test_rec.period_hours > 0 
 	THEN 
-		return 1 ;
+		IF now() - load_test_rec.test_started >= load_test_rec.period_hours * interval '1 hour' + interval '1 hour'
+		THEN 
+			return 1 ;
+		ELSE
+			return 0 ; 	
+		END IF ;		
+	-- ЗАВЕРШЕНИЕ ПО ВРЕМЕНИ
+	-- БЕСКОНЕЧНЫЙ ТЕСТ. 
+    -- ДЛЯ ОСТАНОВКИ 
+	-- /postgres/pg_expecto/sh/load_test/load_test_stop.sh
 	ELSE
 		return 0 ; 	
-	END IF ;
+	END IF ;		
+	-- БЕСКОНЕЧНЫЙ ТЕСТ. 
   END IF;
   -- ПУАССОНОВСКОЕ РАСПРЕДЕЛЕНИЕ
   -------------------------------------------------------------------------
@@ -3879,14 +3889,22 @@ AS $$
 DECLARE
     total_intervals integer;
 BEGIN
-    -- Полное число 10-минутных интервалов: 1 час "разогрева" + period_hours
-    total_intervals := 6 + (period_hours * 6);
+	------------------------------------------------------------------------
+	-- ЕСЛИ ТЕСТ ОГРАНИЧЕН ПО ВРЕМЕНИ
+	IF period_hours > 0 
+	THEN 
+		-- Полное число 10-минутных интервалов: 1 час "разогрева" + period_hours
+		total_intervals := 6 + (period_hours * 6);
 
-    -- Если итерация вышла за пределы теста, возвращаем 0 (без нагрузки)
-    IF current_pass > total_intervals THEN
-        RETURN 0;
-    END IF;
+		-- Если итерация вышла за пределы теста, возвращаем 0 (без нагрузки)
+		IF current_pass > total_intervals THEN
+			RETURN 0;
+		END IF;
+	END IF;
+	-- ЕСЛИ ТЕСТ ОГРАНИЧЕН ПО ВРЕМЕНИ
+	------------------------------------------------------------------------
 
+	
     -- Первый час (первые 6 итераций) – всегда 5 сессий
     IF current_pass <= 6 THEN
         RETURN 5;

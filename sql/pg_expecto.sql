@@ -3043,18 +3043,15 @@ BEGIN
   SELECT * INTO load_test_pass_rec FROM load_test_pass WHERE id = current_test_pass_id ; 
 	
   -----------------------------------------------------------------------
-  -- ЭКСПОНЕНЦИАЛЬНОЕ РАСПРЕДЕЛЕНИЕ  
+  -- ЭКСПОНЕНЦИАЛЬНЫЙ РОСТ НАГРУЗКИ  
   IF load_test_rec.period_hours = 0 AND load_test_rec.average_load = 0 
   THEN   
-    
 	return load_test_pass_rec.load_connections ; 
-  -- ЭКСПОНЕНЦИАЛЬНОЕ РАСПРЕДЕЛЕНИЕ  
+  -- ЭКСПОНЕНЦИАЛЬНЫЙ РОСТ НАГРУЗКИ  
   -----------------------------------------------------------------------  
   -- РАСПРЕДЕЛЕНИЕ ПУАССОНА  
   ELSE 	
     SELECT load_test_poisson_session_count(
-			load_test_rec.base_load_connections::INTEGER,
-			load_test_rec.max_load::INTEGER ,
 			load_test_rec.period_hours::INTEGER,
 			load_test_rec.average_load::INTEGER,
 			load_test_pass_rec.pass_counter::INTEGER )
@@ -3162,14 +3159,11 @@ BEGIN
   -- ПУАССОНОВСКОЕ РАСПРЕДЕЛЕНИЕ
   ELSE 	
     SELECT load_test_poisson_session_count(
-			load_test_rec.base_load_connections::INTEGER,
-			load_test_rec.max_load::INTEGER ,
 			load_test_rec.period_hours::INTEGER,
 			load_test_rec.average_load::INTEGER,
 			load_test_pass_rec.pass_counter::INTEGER )
 	INTO poisson_session_count ; 
- 
-	
+
 	return poisson_session_count ; 
   END IF ; 
   -- ПУАССОНОВСКОЕ РАСПРЕДЕЛЕНИЕ
@@ -3204,59 +3198,57 @@ BEGIN
   SELECT load_test_get_current_test_pass_id() INTO current_test_pass_id ; 
   SELECT * INTO load_test_pass_rec FROM load_test_pass WHERE id = current_test_pass_id ; 
   
+  SELECT 
+	weight  
+  INTO 
+	current_weight
+  FROM 
+	testing_scenarios
+  WHERE 
+	test_id = current_test_id AND 
+	id = current_scenario ;
+		
+  IF current_weight IS NULL 
+  THEN 
+	RAISE EXCEPTION 'Несуществующий сценарий --> %', current_scenario USING HINT = 'Проверьте ID сценария тестирования';
+	return 10;
+  END IF;
+
+  --ЕСЛИ нагрузка для сценария не меняется 
+  IF current_weight < 0 
+  THEN 
+	result_load = ABS( current_weight );
+	RETURN result_load; 
+  END IF ;
+  --ЕСЛИ нагрузка для сценария не меняется 
 
   -----------------------------------------------------------------------
-  -- ЭКСПОНЕНЦИАЛЬНОЕ РАСПРЕДЕЛЕНИЕ  
+  -- ЭКСПОНЕНЦИАЛЬНЫЙ РОСТ НАГРУЗКИ  
   IF load_test_rec.period_hours = 0 AND load_test_rec.average_load = 0 
   THEN   
-	  SELECT 
-		weight  
-	  INTO 
-		current_weight
-	  FROM 
-		testing_scenarios
-	  WHERE 
-		test_id = current_test_id AND 
-		id = current_scenario ;
-		
-	  IF current_weight IS NULL 
-	  THEN 
-		RAISE EXCEPTION 'Несуществующий сценарий --> %', current_scenario USING HINT = 'Проверьте ID сценария тестирования';
-		return 10;
-	  END IF;
-	 
-
 	 SELECT load_test_get_load()
 	 INTO total_load ; 
-	 
-	 --ЕСЛИ нагрузка для сценария не меняется 
-	 IF current_weight < 0 
-	 THEN 
-		result_load = ABS( current_weight );
-		RETURN result_load; 
-	 END IF ;
-	 --ЕСЛИ нагрузка для сценария не меняется 
-	 
+
 	 current_load_connections = total_load::DOUBLE PRECISION * current_weight ;
 	 
 	 SELECT CEIL( current_load_connections )
 	 INTO result_load ;
 	  
-	  RETURN result_load; 
-  -- ЭКСПОНЕНЦИАЛЬНОЕ РАСПРЕДЕЛЕНИЕ  
+    RETURN result_load; 
+  -- ЭКСПОНЕНЦИАЛЬНЫЙ РОСТ НАГРУЗКИ  
   -----------------------------------------------------------------------  
   -- РАСПРЕДЕЛЕНИЕ ПУАССОНА  
   ELSE 	
     SELECT load_test_poisson_session_count(
-			load_test_rec.base_load_connections::INTEGER,
-			load_test_rec.max_load::INTEGER ,
 			load_test_rec.period_hours::INTEGER,
 			load_test_rec.average_load::INTEGER,
 			load_test_pass_rec.pass_counter::INTEGER )
 	INTO poisson_session_count ; 
  
-	
-	return poisson_session_count ; 
+    SELECT CEIL( poisson_session_count::DOUBLE PRECISION * current_weight )
+	INTO result_load ;
+	 	
+	return  result_load ; 
   END IF ; 
   -- РАСПРЕДЕЛЕНИЕ ПУАССОНА  
   -----------------------------------------------------------------------  
@@ -3435,7 +3427,7 @@ BEGIN
   -- ПУАССОНОВСКОЕ РАСПРЕДЕЛЕНИЕ
   ELSE 
 	-- ЗАВЕРШЕНИЕ ПО ВРЕМЕНИ
-    IF now() - load_test_rec.test_started >= load_test_rec.period_hours * interval '1 hour'
+    IF now() - load_test_rec.test_started >= load_test_rec.period_hours * interval '1 hour' + interval '1 hour'
 	THEN 
 		return 1 ;
 	ELSE
@@ -3473,11 +3465,12 @@ BEGIN
 	
 	current_pass_counter = current_pass_counter + 1 ;
 	PERFORM load_test_increment_pass_counter();
-
+	
+/*	
 	UPDATE load_test
 	SET test_started = CURRENT_TIMESTAMP
 	WHERE test_id = current_test_id ; 
-
+*/
 
 	INSERT INTO load_test_pass 
 	( 
@@ -3847,82 +3840,75 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION get_vm_params_list IS 'получить список текущих параметров управления RAM ';	
 
 ------------------------------------------------------------------------------------------------
--- Получить текущее количество сессий для pgbench удовлетворяющих пуассоновскому распределению.
-CREATE OR REPLACE FUNCTION load_test_poisson_session_count(
-    min_val INTEGER,
-    max_val INTEGER,
-    period_hours INTEGER ,
-    average_load INTEGER ,
-    current_pass INTEGER
-)
-RETURNS INTEGER
+-- Вспомогательная функция: генерация случайного числа по Пуассону с параметром lambda
+CREATE OR REPLACE FUNCTION poisson_random(lambda double precision)
+RETURNS integer
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    total_intervals INTEGER;
-    lambda NUMERIC;          -- параметр Пуассона для 10-минутного интервала
-    poisson_val INTEGER;
+    L double precision;
+    k integer;
+    p double precision;
+    u double precision;
+    normal_approx double precision;
 BEGIN
-    -- Первый час = 6 интервалов по 10 минут
-    IF current_pass <= 6 THEN
-        RETURN min_val;
-    END IF;
-
-    -- Количество 10-минутных интервалов в основном периоде
-    total_intervals := ROUND(period_hours * 6);
-
-    -- Если основной период закончился, возвращаем 0
-    IF current_pass > 6 + total_intervals THEN
-        --RETURN 0;
-		RETURN max_val;
-    END IF;
-
-    -- Параметр lambda: среднее число сессий за 10 минут при интенсивности average_load (сессий/час)
-    lambda := average_load / 6.0;
-
-    -- Генерация случайного числа по распределению Пуассона
     IF lambda <= 0 THEN
-        poisson_val := 0;
-    ELSIF lambda < 100 THEN
-        -- Метод Кнута (экспоненциальное суммирование)
-        DECLARE
-            l NUMERIC := EXP(-lambda);
-            p NUMERIC := 1.0;
-            k INTEGER := 0;
-        BEGIN
-            LOOP
-                p := p * RANDOM();
-                IF p <= l THEN
-                    poisson_val := k;
-                    EXIT;
-                END IF;
-                k := k + 1;
-            END LOOP;
-        END;
-    ELSE
-        -- Аппроксимация нормальным распределением для больших lambda (метод Бокса-Мюллера)
-        DECLARE
-            u1 DOUBLE PRECISION;
-            u2 DOUBLE PRECISION;
-            z DOUBLE PRECISION;
-            x DOUBLE PRECISION;
-        BEGIN
-            u1 := RANDOM();
-            u2 := RANDOM();
-            z := SQRT(-2.0 * LN(u1)) * COS(2.0 * PI() * u2);
-            x := lambda + SQRT(lambda) * z;
-            poisson_val := ROUND(x);
-            IF poisson_val < 0 THEN
-                poisson_val := 0;
-            END IF;
-        END;
+        RETURN 0;
     END IF;
 
-    -- Ограничение полученного значения диапазоном [min_val, max_val]
-    poisson_val := GREATEST(poisson_val, min_val);
-    poisson_val := LEAST(poisson_val, max_val);
+    -- Для небольших lambda используем точный алгоритм Кнута
+    IF lambda < 30.0 THEN
+        L := exp(-lambda);
+        k := 0;
+        p := 1.0;
+        LOOP
+            k := k + 1;
+            p := p * random();
+            EXIT WHEN p <= L;
+        END LOOP;
+        RETURN k - 1;
+    ELSE
+        -- Нормальная аппроксимация для больших lambda (CLT, 12 равномерных)
+        normal_approx := random() + random() + random() + random()
+                       + random() + random() + random() + random()
+                       + random() + random() + random() + random()
+                       - 6.0;
+        RETURN greatest(0, floor(lambda + sqrt(lambda) * normal_approx + 0.5)::int);
+    END IF;
+END;
+$$;
+COMMENT ON FUNCTION poisson_random IS 'Вспомогательная функция: генерация случайного числа по Пуассону с параметром lambda ';	
 
-    RETURN poisson_val;
+------------------------------------------------------------------------------------------------
+-- Основная функция расчёта количества сессий pgbench
+-- Получить текущее количество сессий для pgbench удовлетворяющих пуассоновскому распределению.
+CREATE OR REPLACE FUNCTION load_test_poisson_session_count(
+    period_hours  integer,          -- продолжительность основного теста (часы)
+    average_load  double precision, -- среднее число сессий за 10-минутный интервал
+    current_pass  integer           -- номер текущей итерации (1,2,3,...)
+)
+RETURNS integer
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    total_intervals integer;
+BEGIN
+    -- Полное число 10-минутных интервалов: 1 час "разогрева" + period_hours
+    total_intervals := 6 + (period_hours * 6);
+
+    -- Если итерация вышла за пределы теста, возвращаем 0 (без нагрузки)
+    IF current_pass > total_intervals THEN
+        RETURN 0;
+    END IF;
+
+    -- Первый час (первые 6 итераций) – всегда 5 сессий
+    IF current_pass <= 6 THEN
+        RETURN 5;
+    END IF;
+
+    -- Со второго часа – случайное число сессий, распределённое по Пуассону
+    -- с интенсивностью average_load (сессий за 10 минут)
+    RETURN poisson_random(average_load);
 END;
 $$;
 COMMENT ON FUNCTION load_test_poisson_session_count IS 'Получить текущее количество сессий для pgbench удовлетворяющих пуассоновскому распределению.';	

@@ -1,8 +1,8 @@
 #!/bin/sh
 #####################################################################################
 # load_test.sh
-# version 10.1.1
-# 04.06.2026
+# version 10.1.2
+# 05.06.2026
 #####################################################################################
 # Нагрузочное тестирование
 # 
@@ -63,6 +63,14 @@ then
 
   average_load=`$current_path'/'get_conf_param.sh $current_path average_load 2>$ERR_FILE`
   exit_code $? $LOG_FILE $ERR_FILE
+  
+  vacuum_incident=`$current_path'/'get_conf_param.sh $current_path vacuum_incident 2>$ERR_FILE`
+  exit_code $? $LOG_FILE $ERR_FILE
+  if [ "$vacuum_incident" == "1" ]
+  then 
+    echo '*** INFO : ИМИТАЦИЯ ИНЦИДЕНТА VACUUM/FREEZE' >> $LOG_FILE
+	/postgres/pg_expecto/sh/load_test/run_vacuum.sh >> /postgres/pg_expecto/sh/load_test/vacuum.log 2>&1
+  fi
 
 if [ "$period_hours" != "0" ] && [ "$average_load" != "0" ]
 then

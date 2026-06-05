@@ -5063,6 +5063,7 @@ COMMENT ON FUNCTION report_postgresql_cluster_performance IS 'Данные дл�
 
 --------------------------------------------------------------------------------
 -- report_postgresql_wait_event_type.sql
+-- updated 05/06/2026
 --------------------------------------------------------------------------------
 -- report_postgresql_wait_event_type КОРРЕЛЯЦИЯ ОЖИДАНИЙ СУБД и vmstat
 --------------------------------------------------------------------------------
@@ -5490,6 +5491,8 @@ BEGIN
 							((min_max_rec.max_curr_waitings + min_max_rec.min_curr_waitings)/2.0)*100.0; 
 	score_wait_event_type = ROUND((correlation_rec.correvation_value::numeric * pct_wait_event_type::numeric / 100.0)::numeric , 2) ;
 	
+-- RAISE NOTICE 'pct_wait_event_type =%',pct_wait_event_type;	
+-- RAISE NOTICE 'score_wait_event_type =%',score_wait_event_type;	
 	SELECT fill_in_comprehensive_analysis_wait_event_type( '3.3 IO' , 'IO' , score_wait_event_type )
 	INTO report_str ; 
 	
@@ -5499,6 +5502,7 @@ BEGIN
 	INTO result_str ;
     SELECT array_length( result_str , 1 )
 	INTO line_count;	
+	
 	--3.3 IO
 	----------------------------------------------------------------------------------------------------		
 
@@ -5651,6 +5655,11 @@ BEGIN
 		INTO wait_event_type_criteria_matrix_rec
 		FROM wait_event_type_criteria_matrix
 		WHERE wait_event_type = wait_event_type_array[i];
+
+-- RAISE NOTICE 'wait_event_type_criteria_weight_rec.curr_value[1] = % wait_event_type_criteria_matrix_rec.calculated_r_norm = %', wait_event_type_criteria_weight_rec.curr_value[1], wait_event_type_criteria_matrix_rec.calculated_r_norm ;
+-- RAISE NOTICE 'wait_event_type_criteria_weight_rec.curr_value[2] = % wait_event_type_criteria_matrix_rec.calculated_p_norm = %', wait_event_type_criteria_weight_rec.curr_value[2], wait_event_type_criteria_matrix_rec.calculated_p_norm ;
+-- RAISE NOTICE 'wait_event_type_criteria_weight_rec.curr_value[3] = % wait_event_type_criteria_matrix_rec.calculated_w_norm = %', wait_event_type_criteria_weight_rec.curr_value[3] , wait_event_type_criteria_matrix_rec.calculated_w_norm ;
+-- RAISE NOTICE 'wait_event_type_criteria_weight_rec.curr_value[4] = % wait_event_type_criteria_matrix_rec.calculated_r2_norm = %',wait_event_type_criteria_weight_rec.curr_value[4] , wait_event_type_criteria_matrix_rec.calculated_r2_norm; 
 		
 		curr_integral_priority = wait_event_type_criteria_weight_rec.curr_value[1] * wait_event_type_criteria_matrix_rec.calculated_r_norm --r Корреляция
 									+
@@ -5663,7 +5672,8 @@ BEGIN
 		INSERT INTO wait_event_type_Pi
 		( wait_event_type , integral_priority ) 
 		VALUES 
-		( wait_event_type_criteria_matrix_rec.wait_event_type , curr_integral_priority );		
+		( wait_event_type_criteria_matrix_rec.wait_event_type , curr_integral_priority );
+-- RAISE NOTICE 'wait_event_type = % , integral_priority = % ', wait_event_type_criteria_matrix_rec.wait_event_type , curr_integral_priority;		
 	END LOOP ;
 	
 	line_count=line_count+1;	
@@ -10631,7 +10641,7 @@ COMMENT ON FUNCTION report_wait_event_type_vmstat IS 'КОРРЕЛЯЦИЯОЖИ
 
 --------------------------------------------------------------------------------
 -- stats_proсessing_functions.sql
--- updated 26/03/2026
+-- updated 05/06/2026
 --------------------------------------------------------------------------------
 -- Функции для статистической обработки  данных
 --------------------------------------------------------------------------------
@@ -11735,11 +11745,20 @@ BEGIN
 	
 	-- Матрица критериев
 	-- Заполнить Коэффициент корреляции
+	/*
 	UPDATE wait_event_type_criteria_matrix SET r_value = correlation_rec.correvation_value::DOUBLE PRECISION WHERE wait_event_type = current_wait_type ; 
 	IF correlation_rec.correvation_value > 0 
 	THEN 		
 		UPDATE wait_event_type_criteria_matrix SET p_value = correlation_rec.p_value::DOUBLE PRECISION WHERE wait_event_type = current_wait_type ;
 	END IF ;
+	*/
+	UPDATE wait_event_type_criteria_matrix SET r_value = correlation_rec.correvation_value::DOUBLE PRECISION WHERE wait_event_type = current_wait_type ; 
+    --Округление значения перед приведением
+	UPDATE wait_event_type_criteria_matrix 
+    SET p_value = round(correlation_rec.p_value, 20)::DOUBLE PRECISION 
+    WHERE wait_event_type = current_wait_type;
+	--Округление значения перед приведением
+	
 	-- Заполнить Коэффициент корреляции
 	-- Матрица критериев
 	
@@ -12160,29 +12179,29 @@ BEGIN
 	LOOP 
 		lines[i] = current_criteria_value[i][1] * current_criteria_value[i][2] * current_criteria_value[i][3] * current_criteria_value[i][4] ;
 		square_root[i] = power( lines[i], 1.0 / 4.0);
-----RAISE NOTICE 'lines[i] = %', lines[i];		
-----RAISE NOTICE 'square_root[i] = %', square_root[i];		
+------ RAISE NOTICE 'lines[i] = %', lines[i];		
+------ RAISE NOTICE 'square_root[i] = %', square_root[i];		
 	END LOOP ;
 	
 	--Сумма корней
 	square_root_sum = square_root[1] + square_root[2] + square_root[3] + square_root[4] ;
-----RAISE NOTICE 'square_root_sum = %', square_root_sum;			
+------ RAISE NOTICE 'square_root_sum = %', square_root_sum;			
 	
 	--Нормировка – веса
 	--r корреляция
 	weigth[1] = square_root[1] / square_root_sum ; 
-----RAISE NOTICE 'weigth[1] = %', weigth[1];				
+------ RAISE NOTICE 'weigth[1] = %', weigth[1];				
 	-- p-value
 	weigth[2] = square_root[2] / square_root_sum ; 
-----RAISE NOTICE 'weigth[2] = %', weigth[2];					
+------ RAISE NOTICE 'weigth[2] = %', weigth[2];					
 	 -- ВКО (w)
 	weigth[3] = square_root[3] / square_root_sum ; 
-----RAISE NOTICE 'weigth[3] = %', weigth[3];					
+------ RAISE NOTICE 'weigth[3] = %', weigth[3];					
 	-- R2
 	weigth[4] = square_root[4] / square_root_sum ; 
-----RAISE NOTICE 'weigth[4] = %', weigth[4];	
+------ RAISE NOTICE 'weigth[4] = %', weigth[4];	
 
-----RAISE NOTICE 'sum = %', weigth[1]+weigth[2]+weigth[3]+weigth[4];	
+------ RAISE NOTICE 'sum = %', weigth[1]+weigth[2]+weigth[3]+weigth[4];	
 	
 	INSERT INTO wait_event_type_criteria_weight(curr_value) VALUES ( weigth );
 	
@@ -12231,7 +12250,7 @@ BEGIN
         FROM wait_event_type_criteria_matrix
         ORDER BY wait_event_type
     LOOP
-        --RAISE NOTICE '%', rec;
+        ---- RAISE NOTICE '%', rec;
 
         IF rec.r_value > 0 THEN
             -- Нормализация абсолютного значения корреляции
@@ -12281,11 +12300,11 @@ BEGIN
             r2_norm := 0;
         END IF;
 
-        --RAISE NOTICE 'wait_event_type_criteria_matrix_rec.wait_event_type = %', rec.wait_event_type;
-        --RAISE NOTICE 'r_norm = %', r_norm;
-        --RAISE NOTICE 'p_norm = %', p_norm;
-        --RAISE NOTICE 'w_norm = %', w_norm;
-        --RAISE NOTICE 'r2_norm = %', r2_norm;
+        ---- RAISE NOTICE 'wait_event_type_criteria_matrix_rec.wait_event_type = %', rec.wait_event_type;
+        ---- RAISE NOTICE 'r_norm = %', r_norm;
+        ---- RAISE NOTICE 'p_norm = %', p_norm;
+        ---- RAISE NOTICE 'w_norm = %', w_norm;
+        ---- RAISE NOTICE 'r2_norm = %', r2_norm;
 
         -- Сохраняем вычисленные значения в таблице
         UPDATE wait_event_type_criteria_matrix

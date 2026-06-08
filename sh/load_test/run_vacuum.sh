@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # run_vacuum.sh – запуск VACUUM FREEZE для таблиц pgbench не чаще 1 раза в час
 # в случайную минуту текущего часа.
-
+# Предназначен для запуска по cron каждую минуту:
+#   * * * * * /path/to/run_vacuum.sh >> /var/log/vacuum.log 2>&1
 #
 # Условия:
 #   1) Не запускать, если VACUUM FREEZE уже выполняется.

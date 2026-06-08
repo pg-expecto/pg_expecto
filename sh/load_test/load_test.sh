@@ -66,6 +66,15 @@ then
 
 if [ "$period_hours" != "0" ] && [ "$average_load" != "0" ]
 then
+ vacuum_incident=`$current_path'/'get_conf_param.sh $current_path vacuum_incident 2>$ERR_FILE`
+ exit_code $? $LOG_FILE $ERR_FILE
+
+ if [ "$vacuum_incident" == "1" ]
+ then 
+   echo 'INFO : ВКЛЮЧЕНА ДОПОЛНИТЕЛЬНАЯ НАГРУЗКА VACUUM/FREEZE ДЛЯ ИММИТАЦИИ ИНЦИДЕНТА' >> $LOG_FILE
+   /postgres/pg_expecto/sh/load_test/run_vacuum.sh >> /postgres/pg_expecto/sh/load_test/vacuum.log 2>&1
+ fi
+
  let total_intervals=6+period_hours*6
 
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ИТЕРАЦИЯ :'$current_pass' : ПУАССОНОВСКАЯ НАГРУЗКА: total_intervals='$total_intervals' period_hours='$period_hours' pgbench_clients='$pgbench_clients' average_load='$average_load >> $LOG_FILE
@@ -94,15 +103,6 @@ start_collect_data_result=`psql -d $expecto_db -U $expecto_user -Aqtc 'select lo
 exit_code $? $LOG_FILE $ERR_FILE
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СБОР ДАННЫХ ПО НАГРУЗОЧНОМУ ТЕСТУ'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СБОР ДАННЫХ ПО НАГРУЗОЧНОМУ ТЕСТУ' > $LOG_FILE
-
-vacuum_incident=`$current_path'/'get_conf_param.sh $current_path vacuum_incident 2>$ERR_FILE`
-exit_code $? $LOG_FILE $ERR_FILE
-
-if [ "$vacuum_incident" == "1" ]
-then 
-  echo 'INFO : ВКЛЮЧЕНА ДОПОЛНИТЕЛЬНАЯ НАГРУЗКА VACUUM/FREEZE ДЛЯ ИММИТАЦИИ ИНЦИДЕНТА' >> $LOG_FILE
-  /postgres/pg_expecto/sh/load_test/run_vacuum.sh >> /postgres/pg_expecto/sh/load_test/vacuum.log 2>&1
-fi
 # НАЧАТЬ СБОР ДАННЫХ 	
 ###########################################################################################################
 

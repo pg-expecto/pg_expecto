@@ -71,6 +71,7 @@ fi
 # --- 3) Проверяем, наступила ли целевая минута ---
 if [[ "$CURRENT_MINUTE" -ne "$TARGET_MINUTE" ]]; then
     # Не наступила – выходим
+	echo "$(date): Целевая минута ${TARGET_MINUTE} не наступила"
     exit 0
 fi
 

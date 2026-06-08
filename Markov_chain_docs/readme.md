@@ -1,314 +1,290 @@
-# Реализация цепи Маркова для прогнозирования инцидентов производительности СУБД PostgreSQL 
-# Граф вызовов функций системы марковской цепи
+# Граф вызовов хранимых функций цепи Маркова
 
-Ниже представлен граф вызовов основных функций. Стрелка `A --> B` означает, что функция `A` вызывает функцию `B`.
+Ниже представлен граф вызовов для корневой функции `mchain_train_step()` и всех функций, участвующих в обучении цепи Маркова. Граф показывает иерархию вызовов (стрелки означают «вызывает»). Функции, вызываемые через `PERFORM` или внутри SQL-выражений, также включены.
 
 ```mermaid
 flowchart TD
-    subgraph "Внешние запуски (cron / сборщик метрик)"
-        Cron1["cron: */15 * * * *"] --> check_and_forget
-        Cron2["cron: 5 19 * * 5"] --> snapshot_markov_prev_week
-        Cron3["cron: 30 1 * * *"] --> clean_forecast_log
-        Cron4["cron: 15 1 * * *"] --> clean_transition_log
-        Cron5["cron: 0 1 * * *"] --> update_state_baseline
-        Cron6["cron: 30 1 * * *"] --> refresh_os_stats
-        Cron7["cron: 0 2 * * 0"] --> clean_markov_probabilities_archive
-        Cron8["cron: 0 3 * * *"] --> clean_check_state
-        Cron9["cron: 0 4 1 * *"] --> clean_forget_log
-        Cron10["cron: 0 2 * * *"] --> clean_apply_forgetting_log
-        External["Ежеминутный вызов (сборщик метрик)"] --> markov_chain_training
-    end
-
-    subgraph "Основное обучение (markov_chain_training)"
-        markov_chain_training --> fill_state_descriptions
-        markov_chain_training --> get_current_os_waiting_correlation_for_markov_chain
-        markov_chain_training --> get_state_id
-        markov_chain_training --> apply_forgetting
-        markov_chain_training --> log_transition_and_update
-        markov_chain_training --> log_forecast
-        markov_chain_training --> predict_risk_1min
-    end
-
-    subgraph "Журналирование перехода"
-        log_transition_and_update --> update_markov_frequency
-        log_transition_and_update --> transition_log_insert["INSERT INTO transition_log (непосредственно)"]
-    end
-
-    subgraph "Обновление вероятностей"
-        update_markov_frequency --> markov_frequencies_update["UPDATE markov_frequencies"]
-        apply_forgetting --> update_markov_probabilities
-        update_markov_probabilities --> rebuild_markov_absorbing
-        snapshot_markov_prev_week --> archive_markov_probabilities
-    end
-
-    subgraph "Функции прогнозирования"
-        predict_risk_1min --> get_current_os_waiting_correlation_for_markov_chain
-        predict_risk_1min --> get_state_id
-        predict_risk_k_diag --> get_current_os_waiting_correlation_for_markov_chain
-        predict_risk_k_diag --> get_state_id
-        predict_risk_1min_archived --> markov_probabilities_archive
-    end
-
-    subgraph "Плановое и форсированное забывание"
-        apply_forgetting --> update_markov_probabilities
-        apply_forgetting --> apply_forgetting_log_insert["INSERT INTO apply_forgetting_log"]
-        emergency_forget --> apply_forgetting
-        emergency_forget --> infrastructure_events_insert["INSERT INTO infrastructure_events"]
-        check_and_forget --> calculate_kl_divergence
-        check_and_forget --> calculate_chi_squared
-        check_and_forget --> get_os_deviation
-        check_and_forget --> apply_forgetting
-        check_and_forget --> forget_log_insert["INSERT INTO forget_log"]
-    end
-
-    subgraph "Мониторинг дрейфа (вспомогательные)"
-        calculate_kl_divergence --> state_baseline
-        calculate_chi_squared --> state_baseline
-        get_os_deviation --> operational_speed_stats
-        get_os_deviation --> cluster_stat_median
-    end
-
-    subgraph "Оценка достаточности обучения"
-        evaluate_training_sufficiency --> compare_brier_scores
-        evaluate_training_sufficiency --> check_kl_divergence
-        compare_brier_scores --> forecast_log
-        check_kl_divergence --> get_stationary_distribution
-        check_kl_divergence --> transition_log
-    end
-
-    subgraph "Обновление эталонов и статистики"
-        update_state_baseline --> transition_log
-        refresh_os_stats --> cluster_stat_median
-    end
-
-    subgraph "Триггер"
-        trigger["AFTER INSERT ON transition_log"] --> update_last_incident_time
-        update_last_incident_time --> markov_config_update["UPDATE markov_config.last_incident_time"]
-    end
-
-    subgraph "Управление адаптивным забыванием"
-        enable_adaptive_forgetting --> markov_config_update1["UPDATE markov_config"]
-        disable_adaptive_forgetting --> markov_config_update2["UPDATE markov_config"]
-        get_adaptive_forgetting_status --> markov_config
-        set_last_incident_time --> markov_config_update3["UPDATE markov_config"]
-    end
-
-    subgraph "Сервисные / утилиты"
-        reset_markov_chain --> fill_state_descriptions
-        reset_markov_chain --> truncate_tables["TRUNCATE markov_frequencies, markov_probabilities, ..."]
-        sync_model_date_from_archive --> markov_probabilities_archive
-        get_forget_log --> forget_log
-        get_apply_forgetting_log --> apply_forgetting_log
-    end
-
-    subgraph "Функции очистки (cron)"
-        clean_forecast_log --> forecast_log
-        clean_transition_log --> transition_log
-        clean_markov_probabilities_archive --> markov_probabilities_archive
-        clean_check_state --> check_state
-        clean_forget_log --> forget_log
-        clean_apply_forgetting_log --> apply_forgetting_log
-    end
+    A[mchain_train_step] --> B[fill_state_descriptions]
+    A --> C[get_current_os_waiting_correlation_for_markov_chain]
+    A --> D[get_state_id]
+    A --> E[mchain_log_transition]
+    A --> F[mchain_apply_forgetting]
+    
+    E --> G[INSERT transition_log]
+    E --> H[INSERT/UPDATE markov_frequencies]
+    
+    F --> I[mchain_check_sufficiency]
+    F --> J[update_markov_probabilities]
+    F --> K[UPDATE markov_config SET last_forget_time]
+    
+    J --> L[rebuild_markov_absorbing]
+    L --> M[TRUNCATE/INSERT markov_absorbing]
+    
+    I --> N[SELECT from transition_log]
+    I --> O[SELECT from markov_config]
+    
+    C --> P[SELECT from pgh_stat_cluster_analysis]
+    C --> Q[CREATE TEMP TABLE tmp_timepoints]
+    
+    D --> R[Вычисление state_id по формуле]
+    
+    %% Внешние зависимости (не функции)
+    G --> S[(transition_log)]
+    H --> T[(markov_frequencies)]
+    M --> U[(markov_absorbing)]
+    K --> V[(markov_config)]
+    P --> W[(pgh_stat_cluster_analysis)]
+    
+    %% Триггер, срабатывающий при вставке в transition_log (отдельно)
+    G -.-> X[триггер trigger_update_incident_time]
+    X --> Y[update_last_incident_time]
+    Y --> V
 ```
 
-## Пояснения к графу
-
-- **Внешние входы** (прямоугольники без входящих стрелок) – это точки входа в систему:
-  - `markov_chain_training` – вызывается ежеминутно внешним сборщиком метрик.
-  - `check_and_forget` и другие функции, помеченные `cron`, запускаются планировщиком по расписанию.
-- **Основной поток обучения**:
-  - `markov_chain_training` получает метрики, обновляет состояние, прогнозирует риск (через `predict_risk_1min`), логирует прогноз и переход, а также при необходимости вызывает `apply_forgetting` для планового забывания.
-- **Забывание**:
-  - `apply_forgetting` обновляет частоты и перестраивает вероятности.
-  - `check_and_forget` (вызывается каждые 15 минут) анализирует дрейф и может инициировать форсированное забывание через `apply_forgetting`.
-- **Прогнозирование**:
-  - `predict_risk_1min` и `predict_risk_k_diag` зависят только от текущих метрик и матриц вероятностей; они не модифицируют данные.
-- **Триггер**:
-  - При вставке в `transition_log` автоматически вызывается `update_last_incident_time` для обновления времени последнего аварийного события.
-- **Вспомогательные и сервисные функции** вызываются по необходимости (инициализация, сброс модели, получение журналов).
-
-Граф отражает **прямые вызовы** (функция → функция) без учёта косвенных вызовов через SQL-запросы к таблицам (кроме случаев, когда таблицы напрямую читаются/пишутся внутри функции).
-## Корневая функция "markov_chain_training"
-
-Вызывается при расчете ежеминутных данных операционной скорости и ожиданий в функции **performance_metrics**
-
-# Функция `markov_chain_training()`
-
-## 📌 Назначение
-
-**Ядро непрерывного обучения цепи Маркова.**  
-Функция вызывается **каждую минуту** (в функции **performance_metrics**) и выполняет:
-
-- Плановое забывание устаревших данных (адаптация к изменению нагрузки)
-- Сбор актуальных метрик системы (корреляция, тренды)
-- Сдвиг и сохранение состояний (`prev` → `curr`)
-- Вычисление прогноза риска аварии на следующую минуту
-- Логирование прогноза и фактического исхода
-- Обновление матрицы частот переходов
-
-Функция не принимает параметров и не возвращает значений (всё состояние хранится в таблицах).
+**Примечания к графу**
+- Пунктирная стрелка от `G` к `X` показывает, что триггер срабатывает автоматически при вставке в `transition_log`, а не вызывается явно.
+- Функция `mchain_log_error` вызывается внутри блоков `EXCEPTION` в `mchain_train_step`, `mchain_apply_forgetting` и других, но для упрощения графа она не показана (вызывается при ошибках).
+- Функции `archive_markov_probabilities`, `mchain_snapshot_prev_week` и сервисные (`mchain_clean_*`, `mchain_update_baseline`, `mchain_refresh_os_stats`) не входят в основной поток обучения и вызываются отдельно по cron, поэтому на графе не отражены.
 
 ---
 
-## ⚙️ Алгоритм работы (по шагам)
+# Подробное описание корневой функции `mchain_train_step()`
 
-### 1. Инициализация справочника состояний
+## Назначение
+
+`mchain_train_step()` – главная функция выполняет один шаг обучения цепи Маркова:
+
+1. Получает текущие метрики производительности (корреляцию, тренды) из системы мониторинга.
+2. Отображает эти метрики в дискретное состояние цепи (`state_id`).
+3. Фиксирует переход из предыдущего состояния в текущее, обновляя частоты и журнал.
+4. Сдвигает состояние в таблице `markov_chain` для следующего шага.
+5. При необходимости (по истечении интервала) запускает процедуру адаптивного забывания.
+
+Функция обеспечивает непрерывное обучение модели в реальном времени.
+
+---
+
+## Сигнатура
+
 ```sql
-SELECT EXISTS (SELECT 1 FROM state_descriptions) INTO ...
-IF NOT ... THEN PERFORM fill_state_descriptions();
+mchain_train_step() RETURNS TEXT
 ```
-При первом вызове (или если таблица `state_descriptions` пуста) автоматически заполняется справочник из **189 состояний** (комбинации корреляции, тренда операционной скорости и тренда ожиданий).
 
-### 2. Плановое забывание (адаптация)
+**Возвращаемое значение** – текстовая строка с диагностикой:
+- `'Initial state saved'` – при первом запуске (цепь была пуста).
+- `'Step completed'` – нормальное завершение шага.
+- `'Error: cannot get metrics'` – ошибка получения метрик.
+- `'Error: transition logging failed'` – ошибка при логировании перехода.
+- `'Step completed but forgetting failed'` – забывание не удалось, но шаг выполнен.
+
+---
+
+## Пошаговая логика
+
+### 1. Инициализация справочника состояний (однократно)
+
 ```sql
-SELECT last_forget_time, alpha, MAKE_INTERVAL(mins => interval_minute)
-INTO last_forget, forget_alpha, forget_interval FROM markov_config;
+IF NOT EXISTS (SELECT 1 FROM state_descriptions) THEN
+    PERFORM fill_state_descriptions();
+END IF;
 ```
-Читает настройки из `markov_config`. Если с момента последнего забывания прошло больше `interval_minute` минут, вызывает `apply_forgetting()`, которая:
-- уменьшает все частоты в `markov_frequencies` на коэффициент `alpha`
-- удаляет пренебрежимо малые частоты
-- перестраивает матрицы вероятностей и поглощения
 
-### 3. Сбор текущих метрик
+Если таблица `state_descriptions` пуста, заполняет её 189 комбинациями корреляции и трендов. Это делается один раз при первом вызове.
+
+### 2. Получение текущих метрик производительности
+
 ```sql
-SELECT * INTO new_values_rec
-FROM get_current_os_waiting_correlation_for_markov_chain();
+SELECT * INTO curr_vals FROM get_current_os_waiting_correlation_for_markov_chain();
 ```
-Вызывает функцию, которая за последний час вычисляет:
-- `current_correlation` (корреляция между операционной скоростью и ожиданиями)
-- `current_os_trend`  (направление тренда скорости: -1, 0, +1)
-- `current_wait_trend` (направление тренда ожиданий)
 
-### 4. Работа с таблицей `markov_chain` (однострочное состояние)
-Таблица `markov_chain` хранит одно состояние системы:
-- `prev_correlation`, `prev_os_trend`, `prev_wait_trend` – состояние на прошлой минуте
-- `curr_correlation`, `curr_os_trend`, `curr_wait_trend` – состояние на текущей минуте
+Функция `get_current_os_waiting_correlation_for_markov_chain()` обращается к таблице `pgh_stat_cluster_analysis` (аналитические данные производительности) и возвращает:
+- `current_correlation` (REAL) – коэффициент корреляции Пирсона между операционной скоростью и временем ожидания за последний час.
+- `current_os_trend` (SMALLINT) – тренд операционной скорости (-1, 0, +1) на основе линейной регрессии.
+- `current_wait_trend` (SMALLINT) – тренд времени ожидания.
 
-**Первое измерение (инициализация):**  
-Если запись пуста (`prev_correlation IS NULL`), то вставляется только текущее состояние (и `prev` = `curr`), функция завершается.
+Вся логика получения метрик защищена блоком `BEGIN ... EXCEPTION`. При любой ошибке (например, отсутствие данных) вызывается `mchain_log_error()` и функция возвращает `'Error: cannot get metrics'`.
 
-**Обычный цикл:**  
-Старое `curr` становится `prev`, а новые метрики записываются в `curr`.
+### 3. Проверка валидности метрик
 
-### 5. Идентификация состояний через `get_state_id()`
 ```sql
-prev_state := get_state_id(...);
-curr_state := get_state_id(...);
+IF new_correlation IS NULL OR new_os_trend IS NULL OR new_wait_trend IS NULL THEN 
+    RETURN 'No metrics available';
+END IF;
 ```
-Преобразует тройки `(correlation, os_trend, wait_trend)` в целочисленный `state_id` от 0 до 188.
 
-### 6. Прогноз риска на 1 минуту вперёд
-```sql
-SELECT COALESCE(SUM(probability), 0.0) INTO risk_pred
-FROM markov_probabilities
-WHERE from_state = prev_state
-  AND to_state IN (SELECT state_id FROM state_descriptions
-                   WHERE correlation < 0 AND os_trend = -1);
-```
-Суммирует вероятности перехода из `prev_state` во все **аварийные состояния** (отрицательная корреляция и падающая операционная скорость).  
-Если в матрице нет записей – `risk_pred = 0`.
+Если хотя бы одна метрика `NULL` (нет данных), шаг прерывается – модель не обновляется.
 
-### 7. Определение фактического исхода (`actual_risk`)
-```sql
-SELECT CASE WHEN correlation < 0 AND os_trend = -1 THEN 1 ELSE 0 END INTO actual
-FROM state_descriptions WHERE state_id = curr_state;
-```
-`actual = 1`, если текущее состояние аварийное, иначе 0.
+### 4. Преобразование метрик в `state_id`
 
-### 8. Логирование прогноза в `forecast_log`
 ```sql
-INSERT INTO forecast_log (ts, model_train_date, predicted_risk, actual_risk, from_state, to_state)
-VALUES (now(), current_date, risk_pred, actual, prev_state, curr_state);
-```
-Сохраняется:
-- метка времени
-- дата обучения (текущая дата)
-- предсказанный риск
-- фактический исход
-- идентификаторы состояний
-
-### 9. Обновление матрицы частот переходов
-```sql
-PERFORM log_transition_and_update(
-    prev_correlation, prev_os_trend, prev_wait_trend,
-    curr_correlation, curr_os_trend, curr_wait_trend
+curr_state := get_state_id(
+    curr_vals.current_correlation,
+    curr_vals.current_os_trend,
+    curr_vals.current_wait_trend
 );
 ```
-Эта функция:
-- записывает переход в `transition_log`
-- увеличивает счётчик `frequency` в `markov_frequencies` для пары `(from_state, to_state)`
 
----
+Функция `get_state_id()` вычисляет идентификатор состояния по формуле:
 
-## 📂 Используемые таблицы и представления
+```
+state_id = round((round(r,1) + 1.0) / 0.1)::int * 9 + (os_trend + 1)*3 + (wait_trend + 1)
+```
 
-| Таблица / функция | Роль |
-|------------------|------|
-| `state_descriptions` | Справочник 189 состояний (корреляция, тренды) |
-| `markov_config` | Конфигурация: `alpha`, `interval_minute`, `last_forget_time` |
-| `markov_chain` | Хранит предыдущее и текущее состояние системы (одна строка) |
-| `markov_probabilities` | Матрица вероятностей переходов (нормализованные частоты) |
-| `forecast_log` | Журнал прогнозов и фактических исходов |
-| `markov_frequencies` | Сырые частоты переходов |
-| `get_current_os_waiting_correlation_for_markov_chain()` | Функция получения метрик за последний час |
-| `fill_state_descriptions()` | Заполнение справочника (вызывается один раз) |
-| `apply_forgetting()` | Плановое забывание (по таймеру) |
-| `log_transition_and_update()` | Логирование перехода и обновление частот |
+Результат – число от 0 до 188.
 
----
+### 5. Получение предыдущего состояния из таблицы `markov_chain`
 
-## 🔁 Зависимости (вызываемые функции)
+```sql
+SELECT prev_correlation, prev_os_trend, prev_wait_trend,
+       curr_correlation, curr_os_trend, curr_wait_trend
+INTO chain_rec
+FROM markov_chain LIMIT 1;
+```
 
-```mermaid
-graph TD
-  markov_chain_training --> fill_state_descriptions
-  markov_chain_training --> apply_forgetting
-  markov_chain_training --> get_current_os_waiting_correlation_for_markov_chain
-  markov_chain_training --> get_state_id
-  markov_chain_training --> log_transition_and_update
+Таблица `markov_chain` всегда содержит одну строку – последнее зафиксированное состояние (текущее) и предыдущее.
+
+**Случай первого запуска** (ещё нет данных):
+
+```sql
+IF chain_rec.curr_correlation IS NULL THEN
+    DELETE FROM markov_chain;
+    INSERT INTO markov_chain (curr_correlation, curr_os_trend, curr_wait_trend)
+    VALUES (curr_vals.current_correlation, curr_vals.current_os_trend, curr_vals.current_wait_trend);
+    RETURN 'Initial state saved';
+END IF;
+```
+
+Просто сохраняем текущее состояние без перехода.
+
+### 6. Определение предыдущего состояния (`prev_state`)
+
+```sql
+prev_state := get_state_id(
+    chain_rec.curr_correlation,
+    chain_rec.curr_os_trend,
+    chain_rec.curr_wait_trend
+);
+```
+
+Здесь `chain_rec.curr_*` – это состояние, которое **было текущим** на прошлой минуте. Теперь оно становится предыдущим для нового перехода.
+
+### 7. Логирование перехода и обновление частот
+
+```sql
+PERFORM mchain_log_transition(prev_state, curr_state);
+```
+
+`mchain_log_transition()` выполняет:
+- `INSERT INTO transition_log (ts, from_state, to_state) VALUES (now(), ...)`
+- `INSERT INTO markov_frequencies ... ON CONFLICT DO UPDATE SET frequency = frequency + 1`
+
+Вставка в `transition_log` вызывает триггер `trigger_update_incident_time`, который при попадании в аварийное состояние обновляет `markov_config.last_incident_time` (используется для адаптивного забывания).
+
+При ошибке логирования вызывается `mchain_log_error()` и функция возвращает `'Error: transition logging failed'`.
+
+### 8. Обновление текущей цепи Маркова
+
+```sql
+UPDATE markov_chain SET
+    prev_correlation = curr_correlation,
+    prev_os_trend    = curr_os_trend,
+    prev_wait_trend  = curr_wait_trend,
+    curr_correlation = curr_vals.current_correlation,
+    curr_os_trend    = curr_vals.current_os_trend,
+    curr_wait_trend  = curr_vals.current_wait_trend;
+```
+
+Предыдущее состояние заменяется старым текущим, а текущее обновляется новыми метриками.
+
+### 9. Плановое забывание (по интервалу)
+
+```sql
+SELECT last_forget_time, interval_minute INTO cfg FROM markov_config LIMIT 1;
+
+IF now() - cfg.last_forget_time >= MAKE_INTERVAL(mins => cfg.interval_minute) THEN
+    PERFORM mchain_apply_forgetting();
+END IF;
+```
+
+`mchain_apply_forgetting()` применяет забывание (уменьшение всех частот на `(1 - alpha)`, где `alpha` может быть адаптивным или фиксированным). После успешного забывания обновляется `markov_config.last_forget_time`.
+
+Если забывание вызвало ошибку, она логируется, но шаг обучения считается завершённым (возвращается `'Step completed but forgetting failed'`).
+
+### 10. Завершение
+
+```sql
+RETURN 'Step completed';
 ```
 
 ---
 
-## ⚠️ Важные замечания
+## Взаимодействие с таблицами
 
-- **Первое выполнение** – только инициализирует `markov_chain` и `state_descriptions`, не обновляет частоты.
-- **Плановое забывание** – управляется параметрами `alpha` и `interval_minute` в `markov_config`.  
-  Если `use_adaptive_alpha = true`, то `alpha` динамически уменьшается после инцидентов.
-- **Прогноз** – основывается на матрице `markov_probabilities`, которая автоматически обновляется через `apply_forgetting()`.
-- **Аварийные состояния** – задаются жёстко: `correlation < 0 AND os_trend = -1`.
-- **Логирование** – `forecast_log` растёт быстро, рекомендуется настроить очистку (см. `clean_forecast_log()`).
-
----
-
-## 🛠️ Сопровождение
-
-- **Очистка** – для `forecast_log` и `transition_log` предусмотрены фоновые процедуры (по cron).
-- **Мониторинг** – используйте `evaluate_training_sufficiency()` для проверки зрелости модели.
-- **Ручное забывание** – вызов `emergency_forget('manual', 0.3)` для немедленного сброса.
+| Таблица | Действие |
+|---------|----------|
+| `state_descriptions` | Чтение (при проверке существования) |
+| `markov_chain` | Чтение и обновление одной строки |
+| `transition_log` | Вставка нового перехода |
+| `markov_frequencies` | Увеличение частоты перехода на 1 |
+| `markov_config` | Чтение `last_forget_time`, `interval_minute`; обновляется только через `mchain_apply_forgetting()` |
+| `pgh_stat_cluster_analysis` | Чтение (через `get_current_os_waiting_correlation_for_markov_chain`) |
+| `mchain_error_log` | Вставка при ошибках |
 
 ---
 
-## 📈 Поток данных (кратко)
+## Обработка ошибок и устойчивость
 
-1. **Системные метрики** → `get_current_os_waiting_correlation_for_markov_chain()`
-2. **Состояние** → `markov_chain` (сдвиг prev/curr)
-3. **Прогноз** → `markov_probabilities` (сумма вероятностей в аварийные состояния)
-4. **Факт** → определение аварийности текущего состояния
-5. **Лог** → `forecast_log`
-6. **Обучение** → `markov_frequencies` (инкремент частоты перехода)
+- Все вызовы, которые могут завершиться ошибкой (получение метрик, логирование перехода, забывание), обёрнуты в отдельные блоки `BEGIN ... EXCEPTION`.
+- Каждая ошибка записывается в `mchain_error_log` с полным контекстом (название функции, SQLSTATE, SQLERRM, параметры вызова).
+- Ошибка в одном из этапов не прерывает выполнение всей функции полностью, кроме критической (например, отсутствие метрик). В большинстве случаев функция возвращает информативное сообщение, а модель продолжает работу на следующих шагах.
 
 ---
 
-## 📄 Связанные функции
+## Рекомендации по вызову
 
-- `predict_risk_1min()` – получить текущий прогноз риска (без обучения)
-- `predict_risk_k_diag(int k)` – риск за K шагов с поглощающей цепью
-- `update_markov_probabilities()` – пересчёт вероятностей из частот
-- `check_and_forget()` – форсированное забывание при обнаружении дрейфа
+- **Частота вызова**: ровно раз в минуту. Если вызывать реже, модель будет пропускать переходы; если чаще – будут дублироваться переходы за одну минуту.
+- **Настройка cron** (пример):
+  ```cron
+  * * * * * psql -d expecto_db -U expecto_user -c "SELECT mchain_train_step();"
+  ```
+- **Мониторинг**: полезно отслеживать возвращаемое значение функции (например, через отдельный лог), чтобы своевременно обнаружить проблемы с получением метрик.
 
 ---
 
-*Документация актуальна для версии 10.0 `markov_chain_functions.sql`.*
+## Пример вызова и результата
 
+```sql
+SELECT mchain_train_step();
+```
 
+Результат:
+```
+Step completed
+```
+
+При первом запуске:
+```
+Initial state saved
+```
+
+При отсутствии данных в `pgh_stat_cluster_analysis`:
+```
+No metrics available
+```
+
+---
+
+## Влияние на производительность
+
+`mchain_train_step()` выполняет:
+- 1 запрос к `pgh_stat_cluster_analysis` (с временным окном 1 час, агрегации).
+- Несколько простых INSERT/UPDATE в небольшие таблицы.
+- Один раз в `interval_minute` минут (по умолчанию 30) – дополнительную процедуру забывания, которая обходит все строки `markov_frequencies` (максимум 189×189 = 35721 запись). Это допустимо даже на больших нагрузках.
+
+Таким образом, функция лёгкая и не создаёт значительной нагрузки на СУБД.
+
+---
+
+## Заключение
+
+`mchain_train_step()` – центральный элемент автоматического обучения модели. Она **не требует ручного вмешательства** после настройки, работает в фоне и постепенно выстраивает вероятностную картину переходов между состояниями производительности. Интеграция с адаптивным забыванием и логгированием ошибок делает систему самовосстанавливающейся и пригодной для длительной эксплуатации без присмотра.

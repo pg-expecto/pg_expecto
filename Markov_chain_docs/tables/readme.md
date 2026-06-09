@@ -227,4 +227,4 @@ mchain_error_log <--- mchain_log_error()
 
 ## Лицензия
 
-MIT License. Подробности в файле [LICENSE](LICENSE).
+Apache License Version 2.0. Подробности в файле [LICENSE](https://github.com/pg-expecto/pg_expecto/blob/main/LICENSE).

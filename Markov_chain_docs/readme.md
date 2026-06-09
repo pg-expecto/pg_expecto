@@ -2,7 +2,7 @@
 
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-316192?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Версия](https://img.shields.io/badge/версия-10.1.4-blue)](https://github.com/your-repo/markov-chain)
-[![Лицензия](https://img.shields.io/badge/лицензия-MIT-green)](LICENSE)
+[![Лицензия](https://img.shields.io/badge/лицензия-Apache%202.0-blue)](https://www.apache.org/licenses/LICENSE-2.0)
 
 **Реализация цепи Маркова с онлайн-обучением** для прогнозирования инцидентов (аварий) на основе трёх потоковых метрик производительности:  
 `корреляция`, `тренд операционной скорости`, `тренд времени ожидания`.

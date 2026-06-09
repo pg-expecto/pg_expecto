@@ -216,4 +216,4 @@ SELECT mchain_reliability_report();
 
 ## Лицензия
 
-MIT License. Подробности в файле [LICENSE](LICENSE).
+Apache License Version 2.0. Подробности в файле [LICENSE](https://github.com/pg-expecto/pg_expecto/blob/main/LICENSE).

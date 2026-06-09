@@ -1,490 +1,248 @@
-# Функции цепи Маркова для прогнозирования инцидентов производительности PostgreSQL
+# Хранимые функции цепи Маркова
 
-## Обзор
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-316192?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Версия](https://img.shields.io/badge/версия-10.1.4-blue)](https://github.com/your-repo/markov-chain)
+[![Лицензия](https://img.shields.io/badge/лицензия-MIT-green)](LICENSE)
 
-В данном разделе представлено полное описание функций, реализующих **дискретную цепь Маркова** для мониторинга и прогнозирования аварийных состояний СУБД PostgreSQL. Функции обеспечивают:
+## Общее описание
 
-- Пошаговое обучение модели на основе реальных переходов между состояниями производительности.
-- Адаптивное забывание устаревших наблюдений с динамическим коэффициентом `alpha`.
-- Прогнозирование риска аварии на горизонтах от 1 минуты до 1 часа.
-- Оценку достоверности прогнозов и диагностику модели.
-- Автоматическую очистку журналов и архивирование матриц вероятностей.
+Данный набор PL/pgSQL функций реализует **онлайн‑обучение цепи Маркова** на потоке метрик производительности (`корреляция`, `тренд операционной скорости`, `тренд ожидания`). Модель автоматически обновляется каждую минуту, адаптивно забывает устаревшие данные и выдаёт краткосрочные прогнозы риска аварий (инцидентов). Основная функция `mchain_train_step()` должна вызываться **каждую минуту** (например, из процедуры `performance_metrics`). Средняя частота реальных инцидентов — **≈1 раз в день**, что используется для динамической настройки забывания.
 
-Все функции имеют префикс `mchain_` (Markov chain) и используют таблицы, описанные в `markov_chain_tables.sql`.
+Все функции имеют префикс `mchain_` и могут быть установлены выполнением скрипта `markov_chain_functions.sql`. Для работы требуются таблицы, созданные скриптом `markov_chain_tables.sql`.
 
 ---
 
-## 1. Функции получения текущих метрик и идентификации состояний
+## Содержание
 
-### `get_current_os_waiting_correlation_for_markov_chain()`
-
-**Назначение** – получение текущих значений производительности из аналитической таблицы `pgh_stat_cluster_analysis` (окно 1 час).
-
-**Сигнатура**
-```sql
-get_current_os_waiting_correlation_for_markov_chain()
-RETURNS TABLE (
-    current_correlation REAL,
-    current_os_trend    SMALLINT,
-    current_wait_trend  SMALLINT
-)
-```
-
-**Логика работы**
-- Проверяет существование таблицы `pgh_stat_cluster_analysis`.
-- Вычисляет коэффициент корреляции Пирсона между операционной скоростью (`op_speed_long`) и временем ожидания (`waitings_long`) за последний час.
-- Строит линейную регрессию для скорости и для ожиданий по времени; угол наклона преобразуется в тренд (`-1`, `0`, `+1`).
-- При отсутствии данных или ошибках возвращает `(0.0, 0, 0)`.
-
-**Используется в** – `mchain_train_step()`, `mchain_predict_risk_*`, `mchain_get_current_state_id()`.
+- [Основные функции обучения](#основные-функции-обучения)
+- [Функции адаптивного забывания](#функции-адаптивного-забывания)
+- [Функции прогнозирования риска](#функции-прогнозирования-риска)
+- [Функции очистки и обслуживания](#функции-очистки-и-обслуживания)
+- [Функции обновления статистик и эталонов](#функции-обновления-статистик-и-эталонов)
+- [Вспомогательные функции](#вспомогательные-функции)
+- [Функции оценки достоверности](#функции-оценки-достоверности)
+- [Триггерная функция](#триггерная-функция)
+- [Примеры вызовов](#примеры-вызовов)
 
 ---
 
-### `fill_state_descriptions()`
-
-**Назначение** – заполнение справочника `state_descriptions` всеми 189 комбинациями корреляции (от -1.0 до +1.0 с шагом 0.1) и трендов (`-1,0,1` для OS и wait).
-
-**Сигнатура**
-```sql
-fill_state_descriptions() RETURNS void
-```
-
-**Логика**
-- `TRUNCATE state_descriptions`.
-- `INSERT` из `generate_series(0,20) AS c_idx`, перекрёстного с `generate_series(-1,1)` для OS и wait.
-- `state_id = c_idx * 9 + (os+1)*3 + (wt+1)`.
-
-**Вызов** – один раз при первом запуске `mchain_train_step()`.
-
----
-
-### `get_state_id(r REAL, os_trend SMALLINT, wait_trend SMALLINT)`
-
-**Назначение** – преобразование тройки параметров в числовой идентификатор состояния (0…188).
-
-**Сигнатура**
-```sql
-get_state_id(r REAL, os_trend SMALLINT, wait_trend SMALLINT) RETURNS SMALLINT
-```
-**Атрибуты** – `IMMUTABLE`, `LANGUAGE sql`.
-
-**Формула**
-```sql
-(round((round(r,1) + 1.0) / 0.1)::int * 9) + ((os_trend + 1) * 3) + (wait_trend + 1)
-```
-
----
-
-### `mchain_get_current_state_id()`
-
-**Назначение** – вспомогательная функция для отладки; возвращает `state_id` текущего состояния системы.
-
-**Сигнатура**
-```sql
-mchain_get_current_state_id() RETURNS SMALLINT
-```
-
-**Логика** – вызывает `get_current_os_waiting_correlation_for_markov_chain()` и `get_state_id()`. При отсутствии данных возвращает `NULL`.
-
----
-
-## 2. Основной цикл обучения
+## Основные функции обучения
 
 ### `mchain_train_step()`
-
-**Назначение** – главный шаг обучения, который должен вызываться **каждую минуту** (например, через cron или pgAgent).
-
-**Сигнатура**
-```sql
-mchain_train_step() RETURNS TEXT
-```
-
-**Логика**
-1. Проверяет и при необходимости инициализирует `state_descriptions`.
-2. Получает текущие метрики через `get_current_os_waiting_correlation_for_markov_chain()`.
-3. Вычисляет `curr_state` через `get_state_id()`.
-4. Читает последнее состояние из таблицы `markov_chain`.
-   - Если цепь пуста – сохраняет только текущее состояние и возвращает `'Initial state saved'`.
-5. Определяет `prev_state` как предыдущее `curr_correlation/trends`.
-6. Логирует переход через `mchain_log_transition(prev_state, curr_state)`.
-7. Обновляет `markov_chain` (сдвигает предыдущее состояние).
-8. Проверяет, не пора ли применить забывание:  
-   `now() - last_forget_time >= interval_minute`. Если да – вызывает `mchain_apply_forgetting()`.
-
-**Возвращаемое значение** – текстовая диагностика: `'Step completed'` или сообщение об ошибке.
-
-**Обработка ошибок** – все исключения логируются в `mchain_error_log`.
-
----
+**Назначение:** основной шаг онлайн-обучения. Вызывается **каждую минуту**.
+**Возвращает:** `TEXT` — статус выполнения (`'Step completed'`, `'Initial state saved'`, `'No metrics available'` и т.д.).
+**Алгоритм:**
+1. Получает текущие метрики через `get_current_os_waiting_correlation_for_markov_chain()`.
+2. Вычисляет `state_id` текущего состояния.
+3. Читает предыдущее состояние из таблицы `markov_chain`.
+4. Логирует переход в `transition_log` и обновляет `markov_frequencies` (вызов `mchain_log_transition`).
+5. Обновляет строку в `markov_chain` (сдвиг состояний).
+6. Если с момента последнего забывания прошло `interval_minute` минут (из `markov_config`), вызывает `mchain_apply_forgetting()`.
 
 ### `mchain_log_transition(p_from_state SMALLINT, p_to_state SMALLINT)`
-
-**Назначение** – запись перехода в журнал и обновление накопленных частот.
-
-**Сигнатура**
-```sql
-mchain_log_transition(p_from_state SMALLINT, p_to_state SMALLINT) RETURNS void
-```
-
-**Логика**
-- `INSERT INTO transition_log (ts, from_state, to_state) VALUES (now(), ...)`.
-- `INSERT INTO markov_frequencies ... ON CONFLICT DO UPDATE SET frequency = frequency + 1`.
-
----
-
-## 3. Управление забыванием (Forgetting)
-
-### `mchain_apply_forgetting(alpha_override REAL DEFAULT NULL)`
-
-**Назначение** – применение забывания: уменьшение всех частот, удаление шумов, пересчёт вероятностей и поглощающей матрицы.
-
-**Сигнатура**
-```sql
-mchain_apply_forgetting(alpha_override REAL DEFAULT NULL) RETURNS void
-```
-
-**Логика**
-1. Читает параметры из `markov_config`:
-   - `adaptive_forgetting_enabled` – если `false`, выход.
-   - `use_adaptive_alpha`, `base_alpha`, `min_alpha`, `incident_half_life_days`, `last_incident_time`.
-2. Проверяет достаточность обучения через `mchain_check_sufficiency()`.
-3. Вычисляет `effective_alpha`:
-   - Если `alpha_override` задан – использует его.
-   - Иначе если `use_adaptive_alpha`:
-     - Если `last_incident_time IS NULL` → `effective_alpha = min_alpha`.
-     - Иначе `days_since = (now() - last_incident_time)/86400`  
-       `alpha = base_alpha * exp(-days_since / half_life)`, затем `GREATEST(alpha, min_alpha)`.
-   - Иначе – фиксированный `alpha` из конфигурации.
-4. Если `effective_alpha <= 0` – выход без изменений.
-5. Выполняет:
-   ```sql
-   UPDATE markov_frequencies SET frequency = frequency * (1.0 - effective_alpha);
-   DELETE FROM markov_frequencies WHERE frequency < 1e-6;
-   PERFORM update_markov_probabilities();   -- пересчёт вероятностей
-   UPDATE markov_config SET last_forget_time = now();
-   ```
-6. Логирует вызов в `apply_forgetting_log`.
-
-**Комментарий** – используется механизм адаптивного забывания: чем дольше не было аварий, тем медленнее забывание.
-
----
-
-### `mchain_check_sufficiency(min_transitions INT DEFAULT NULL, max_prob_change REAL DEFAULT 0.05, weeks_history INT DEFAULT 2)`
-
-**Назначение** – проверка, достаточно ли накоплено данных для применения забывания и получения достоверных прогнозов.
-
-**Сигнатура**
-```sql
-mchain_check_sufficiency(...) RETURNS BOOLEAN
-```
-
-**Логика**
-- Проверяет общее число переходов в `transition_log` ≥ `min_transitions` (из `markov_config.min_transitions_for_forgetting` или переданного).
-- Если данных достаточно (≥ 2× минимума), вычисляет максимальное изменение вероятностей между двумя периодами (последние `weeks_history/2` недель и предшествующие `weeks_history/2` недель). Если изменение > `max_prob_change` – возвращает `FALSE`.
-- Возвращает `TRUE`, если оба условия выполнены.
-
----
-
-### `update_last_incident_time()`
-
-**Назначение** – триггерная функция, обновляющая `markov_config.last_incident_time` при каждом переходе в **аварийное состояние** (корреляция < 0 и OS trend = -1).
-
-**Сигнатура**
-```sql
-update_last_incident_time() RETURNS TRIGGER
-```
-
-**Привязка** – триггер `trigger_update_incident_time` на `transition_log` (AFTER INSERT).
-
----
-
-### `mchain_enable_forgetting_when_sufficient()`
-
-**Назначение** – ручное включение адаптивного забывания только если модель достаточно обучена.
-
-**Сигнатура**
-```sql
-mchain_enable_forgetting_when_sufficient() RETURNS TEXT
-```
-
-**Логика** – вызывает `mchain_check_sufficiency()`; при `TRUE` устанавливает `adaptive_forgetting_enabled = true`.
-
----
-
-### `mchain_force_enable_forgetting()`
-
-**Назначение** – принудительное включение забывания (без проверки).
-
-**Сигнатура**
-```sql
-mchain_force_enable_forgetting() RETURNS TEXT
-```
-
----
-
-## 4. Расчёт вероятностей и поглощающей матрицы
+**Назначение:** записывает переход в журнал и увеличивает частоту в `markov_frequencies`. Вызывается из `mchain_train_step`.
+**Возвращает:** `VOID`.
 
 ### `update_markov_probabilities()`
-
-**Назначение** – пересчёт матрицы условных вероятностей из `markov_frequencies`.
-
-**Сигнатура**
-```sql
-update_markov_probabilities() RETURNS void
-```
-
-**Логика**
-- `TRUNCATE markov_probabilities`.
-- `INSERT INTO markov_probabilities (from_state, to_state, probability)`  
-  `SELECT from_state, to_state, frequency / SUM(frequency) OVER (PARTITION BY from_state) FROM markov_frequencies WHERE frequency > 0`.
-- Вызывает `rebuild_markov_absorbing()`.
-
----
+**Назначение:** пересчитывает матрицу вероятностей `markov_probabilities` из сырых частот `markov_frequencies` (нормировка по строкам). Также вызывает `rebuild_markov_absorbing()`.
+**Возвращает:** `VOID`.
 
 ### `rebuild_markov_absorbing()`
-
-**Назначение** – построение поглощающей матрицы: аварийные состояния становятся «чёрными дырами» (вероятность остаться = 1).
-
-**Сигнатура**
-```sql
-rebuild_markov_absorbing() RETURNS void
-```
-
-**Логика**
-- `TRUNCATE markov_absorbing`.
-- Вставка переходов из `markov_probabilities` для всех **неаварийных** исходных состояний (условие: `NOT (correlation < 0 AND os_trend = -1)`).
-- Для каждого аварийного состояния вставляется строка `(state_id, state_id, 1.0)`.
-
----
+**Назначение:** строит поглощающую матрицу `markov_absorbing`:
+- Для всех неаварийных состояний копируются переходы из `markov_probabilities`.
+- Для аварийных состояний (`correlation < 0 AND os_trend = -1`) создаётся только петля с вероятностью 1.0.
+**Возвращает:** `VOID`.
 
 ### `archive_markov_probabilities(p_train_date DATE DEFAULT current_date)`
-
-**Назначение** – сохранение текущей матрицы вероятностей в архивную таблицу.
-
-**Сигнатура**
-```sql
-archive_markov_probabilities(p_train_date DATE DEFAULT current_date) RETURNS void
-```
-
-**Логика**
-- Удаляет старые записи за указанную дату.
-- Вставляет снимок из `markov_probabilities`.
-- Обновляет `markov_config.last_snapshot_date`.
-
----
+**Назначение:** сохраняет текущую матрицу `markov_probabilities` в архивную таблицу `markov_probabilities_archive` с указанной датой обучения. Обновляет `last_snapshot_date` в `markov_config`.
+**Возвращает:** `VOID`.
 
 ### `mchain_snapshot_prev_week()`
-
-**Назначение** – создание еженедельного снимка для сравнения стабильности модели.
-
-**Сигнатура**
-```sql
-mchain_snapshot_prev_week() RETURNS void
-```
-
-**Логика**
-- Копирует `markov_probabilities` → `markov_probabilities_prev_week`.
-- Вызывает `archive_markov_probabilities(current_date)`.
-- Обновляет `last_snapshot_date`.
-
-**Вызов по cron** – пятница, 19:05.
+**Назначение:** создаёт еженедельный снимок:
+- Копирует текущую `markov_probabilities` в таблицу `markov_probabilities_prev_week`.
+- Архивирует матрицу вызовом `archive_markov_probabilities(current_date)`.
+- Обновляет `last_snapshot_date` в конфиге.
+**Используется в cron:** `5 19 * * 5` (пятница, 19:05).
 
 ---
 
-## 5. Прогнозирование риска аварии
+## Функции адаптивного забывания
+
+### `mchain_apply_forgetting(alpha_override REAL DEFAULT NULL)`
+**Назначение:** применяет забывание к накопленным частотам. Вызывается автоматически из `mchain_train_step` по интервалу или вручную.
+**Алгоритм:**
+- Проверяет `adaptive_forgetting_enabled` и достаточность данных (`mchain_check_sufficiency`).
+- Вычисляет эффективный коэффициент `alpha`:
+  - Если `alpha_override IS NOT NULL` — используется он.
+  - Иначе если `use_adaptive_alpha = true`:
+    - При `last_incident_time IS NULL` → `min_alpha`.
+    - Иначе `days_since = (now() - last_incident_time)/86400`;
+      `alpha = base_alpha * exp(-days_since / incident_half_life_days)`;
+      `alpha = GREATEST(alpha, min_alpha)`.
+  - Иначе — фиксированное `alpha` из `markov_config`.
+- Выполняет: `UPDATE markov_frequencies SET frequency = frequency * (1 - alpha)`, затем удаляет записи с `frequency < 1e-6`.
+- Пересчитывает вероятности (`update_markov_probabilities`).
+- Обновляет `last_forget_time` и логирует вызов в `apply_forgetting_log`.
+**Возвращает:** `VOID`.
+
+### `mchain_check_sufficiency(min_transitions INT DEFAULT NULL, max_prob_change REAL DEFAULT 0.05, weeks_history INT DEFAULT 2)`
+**Назначение:** проверяет, достаточно ли модель обучена для применения забывания.
+**Критерии:**
+- Общее число переходов в `transition_log` ≥ `min_transitions_for_forgetting` (из конфига, по умолчанию 5000).
+- Если данных достаточно (`≥ 2×min_transitions`), оценивается максимальное изменение вероятностей за последние `weeks_history` недель. Если изменение > `max_prob_change` — возвращается `FALSE`.
+**Возвращает:** `BOOLEAN`.
+
+### `mchain_enable_forgetting_when_sufficient()`
+**Назначение:** включает адаптивное забывание (`adaptive_forgetting_enabled = true`) **только** если `mchain_check_sufficiency()` вернула `TRUE`. Иначе возвращает сообщение об отказе.
+**Возвращает:** `TEXT` — сообщение о результате.
+
+### `mchain_force_enable_forgetting()`
+**Назначение:** принудительно включает адаптивное забывание (без проверки достаточности).
+**Возвращает:** `TEXT` — сообщение о включении.
+
+---
+
+## Функции прогнозирования риска
 
 ### `mchain_predict_risk_1min()`
-
-**Назначение** – одношаговый прогноз: вероятность попасть в аварийное состояние **на следующей минуте**.
-
-**Сигнатура**
-```sql
-mchain_predict_risk_1min() RETURNS TABLE (
-    risk REAL,
-    curr_situation TEXT,
-    curr_transitions_to_risk BIGINT,
-    curr_total_transitions_known BIGINT
-)
-```
-
-**Логика**
-- Определяет текущее состояние.
-- Ищет в `markov_probabilities` прямые переходы из этого состояния в любое аварийное.
-- Возвращает:
-  - `risk` – суммарная вероятность (0.05, если состояние неизвестно).
-  - `curr_situation` – `'unknown_state'`, `'no_risk'` или `'risk_calculated'`.
-  - `curr_transitions_to_risk` – количество аварийных целевых состояний.
-  - `curr_total_transitions_known` – общее число известных переходов из данного состояния.
-
----
+**Возвращает:** `TABLE (risk REAL, curr_situation TEXT, curr_transitions_to_risk BIGINT, curr_total_transitions_known BIGINT)`
+**Назначение:** прогноз вероятности аварии на следующей минуте (одношаговый) с диагностикой. Использует прямое суммирование вероятностей перехода в аварийные состояния.
 
 ### `mchain_predict_risk_k(k INT)`
+**Назначение:** универсальная функция прогноза риска хотя бы одного попадания в аварию за `k` шагов (минут). Использует поглощающую цепь Маркова.
+**Алгоритм:**
+- Определяет текущее состояние.
+- Если состояние неизвестно — априорная оценка `risk = 1 - (1-0.05)^k`.
+- Иначе инициализирует вектор вероятностей длиной 189 и умножает его на матрицу `markov_absorbing` `k` раз.
+- Риск = сумма вероятностей всех аварийных состояний.
+**Возвращает:** такую же таблицу, как `mchain_predict_risk_1min`.
 
-**Назначение** – универсальный прогноз риска **хотя бы одного попадания в аварию** за `k` шагов (минут) с использованием поглощающей матрицы.
-
-**Сигнатура**
-```sql
-mchain_predict_risk_k(k INT) RETURNS TABLE (
-    risk REAL,
-    curr_situation TEXT,
-    curr_transitions_to_risk INT,
-    curr_total_transitions_known INT
-)
-```
-
-**Логика**
-1. Получает текущее состояние, определяет список аварийных состояний.
-2. Если состояние неизвестно – возвращает априорный риск:  
-   `risk = 1 - (1 - 0.05)^k`.
-3. Инициализирует вектор вероятностей `v` размером 189 (единица на текущем состоянии).
-4. `k` раз умножает вектор на матрицу `markov_absorbing` (матричное умножение разреженным способом).
-5. Суммирует вероятности по аварийным состояниям – это и есть риск.
-6. Возвращает результат вместе с диагностической информацией.
-
-**Ограничения** – рекомендуется `k` от 1 до 60.
+### `mchain_predict_risk_15min()`, `mchain_predict_risk_30min()`, `mchain_predict_risk_1hour()`
+**Назначение:** обёртки над `mchain_predict_risk_k` с фиксированными `k` (15, 30, 60 соответственно).
+**Возвращают:** ту же структуру.
 
 ---
 
-### Функции-обёртки для типовых горизонтов
+## Функции очистки и обслуживания
 
-| Функция | Эквивалент |
-|---------|------------|
-| `mchain_predict_risk_15min()` | `mchain_predict_risk_k(15)` |
-| `mchain_predict_risk_30min()` | `mchain_predict_risk_k(30)` |
-| `mchain_predict_risk_1hour()` | `mchain_predict_risk_k(60)` |
+Используются в **cron** для автоматического удаления старых записей. Все имеют параметр `p_retention_days` (если не указан, берут значение из `markov_config`).
 
-Все возвращают ту же структуру строк.
+| Функция | Таблица | Retention по умолчанию | Cron пример |
+|---------|---------|----------------------|--------------|
+| `mchain_clean_transition_log(p_retention_days INT DEFAULT NULL)` | `transition_log` | 21 день | `15 1 * * *` |
+| `mchain_clean_forecast_log(p_retention_days INT DEFAULT NULL)` | `forecast_log` | 21 день | `30 1 * * *` |
+| `mchain_clean_archive(p_retention_days INT DEFAULT NULL)` | `markov_probabilities_archive` | 21 день | `0 2 * * 0` |
+| `mchain_clean_forget_log(p_retention_days INT DEFAULT 90)` | `forget_log` | 90 дней | `0 4 1 * *` |
+| `mchain_clean_apply_forgetting_log(p_retention_days INT DEFAULT NULL)` | `apply_forgetting_log` | 21 день | `0 2 * * *` |
 
----
-
-## 6. Оценка качества и достоверности прогнозов
-
-### `mchain_forecast_reliability()`
-
-**Назначение** – оценка достоверности прогнозов по шкале **0…5**.
-
-**Сигнатура**
-```sql
-mchain_forecast_reliability() RETURNS INT
-```
-
-**Критерии**
-- **0** – менее 100 переходов.
-- **1** – 100…499 переходов.
-- **2** – 500…4999 переходов.
-- **3** – ≥5000 переходов (база).
-- **+1** (до 4) – стабильность вероятностей: максимальное изменение за 14 дней < 0.05.
-- **+1** (до 5) – покрытие частых состояний (с частотой >1%) ≥90%.
-
-**Использование** – для принятия решения, насколько можно доверять прогнозам риска.
+**Возвращают:** `TEXT` — количество удалённых строк.
 
 ---
 
-### `mchain_reliability_report()`
-
-**Назначение** – расширенный текстовый отчёт о достоверности модели.
-
-**Сигнатура**
-```sql
-mchain_reliability_report() RETURNS TEXT
-```
-
-**Содержание отчёта**
-- Общий рейтинг и его интерпретация.
-- Общее число переходов vs порог `min_transitions_for_forgetting`.
-- Максимальное изменение вероятностей и статус стабильности.
-- Покрытие частых состояний в процентах.
-- Рекомендации (продолжить обучение, использовать с осторожностью, модель готова).
-
----
-
-## 7. Функции очистки и обслуживания (cron-задачи)
-
-Все функции ниже удаляют устаревшие записи из соответствующих таблиц на основе retention-периодов, заданных в `markov_config` или переданных параметром.
-
-| Функция | Таблица | Retention по умолчанию | Cron-расписание |
-|---------|---------|----------------------|-----------------|
-| `mchain_clean_transition_log(p_retention_days INT DEFAULT NULL)` | `transition_log` | 21 день | ежедневно в 01:15 |
-| `mchain_clean_forecast_log(p_retention_days INT DEFAULT NULL)` | `forecast_log` | 21 день | ежедневно в 01:30 |
-| `mchain_clean_archive(p_retention_days INT DEFAULT NULL)` | `markov_probabilities_archive` | 21 день | воскресенье, 02:00 |
-| `mchain_clean_forget_log(p_retention_days INT DEFAULT 90)` | `forget_log` | 90 дней | 1-е число месяца, 04:00 |
-| `mchain_clean_apply_forgetting_log(p_retention_days INT DEFAULT NULL)` | `apply_forgetting_log` | 21 день | ежедневно в 02:00 |
-
-**Сигнатура** – все возвращают `TEXT` с количеством удалённых строк.
-
----
-
-## 8. Функции обновления вспомогательных статистик
+## Функции обновления статистик и эталонов
 
 ### `mchain_update_baseline()`
-
-**Назначение** – обновление эталонного распределения состояний по часам дня и дням недели (таблица `state_baseline`). Используется для KL-дивергенции.
-
-**Сигнатура**
-```sql
-mchain_update_baseline() RETURNS void
-```
-
-**Логика** – для каждого дня недели (1..7) и часа (0..23) вычисляет частоту каждого состояния за последние 7 дней и сохраняет в `state_baseline` (upsert).
-
-**Cron** – ежедневно в 01:00.
-
----
+**Назначение:** обновляет эталонное распределение состояний в таблице `state_baseline` по часам и дням недели на основе переходов за последние 7 дней.
+**Возвращает:** `VOID`.  
+**Используется в cron:** `0 1 * * *`.
 
 ### `mchain_refresh_os_stats()`
-
-**Назначение** – расчёт средней операционной скорости и её стандартного отклонения по часам за последние 20 дней. Результат сохраняется в `operational_speed_stats`.
-
-**Сигнатура**
-```sql
-mchain_refresh_os_stats() RETURNS void
-```
-
-**Cron** – ежедневно в 01:30.
+**Назначение:** пересчитывает среднюю операционную скорость и стандартное отклонение по часам (таблица `operational_speed_stats`) на основе данных `cluster_stat_median` за последние 20 дней.
+**Возвращает:** `VOID`.  
+**Используется в cron:** `30 1 * * *`.
 
 ---
 
-## 9. Логирование ошибок
+## Вспомогательные функции
+
+### `get_current_os_waiting_correlation_for_markov_chain()`
+**Назначение:** возвращает текущие метрики за последний час из `cluster_stat_median`:
+- `current_correlation REAL` — корреляция скорость‑ожидания.
+- `current_os_trend SMALLINT` — знак наклона линии регрессии для скорости (−1,0,1).
+- `current_wait_trend SMALLINT` — знак наклона для ожиданий.
+**Используется внутри** `mchain_train_step` и прогнозных функций.
+
+### `get_state_id(r REAL, os_trend SMALLINT, wait_trend SMALLINT)`
+**Назначение:** отображает тройку метрик в целочисленный `state_id` (0..188). Функция **IMMUTABLE**.
+**Возвращает:** `SMALLINT`.
+
+### `fill_state_descriptions()`
+**Назначение:** заполняет справочник `state_descriptions` всеми 189 комбинациями (`correlation` от −1.0 до +1.0 шагом 0.1, `os_trend` и `wait_trend` из −1,0,1). Вызывается автоматически при первом вызове `mchain_train_step`, если таблица пуста.
+**Возвращает:** `VOID`.
+
+### `mchain_get_current_state_id()`
+**Назначение:** отладочная функция, возвращает `state_id` текущего состояния.
+**Возвращает:** `SMALLINT` или `NULL`, если метрики недоступны.
 
 ### `mchain_log_error(p_function_name TEXT, p_error_message TEXT, p_error_detail TEXT, p_error_hint TEXT, p_context JSONB)`
+**Назначение:** записывает ошибку в таблицу `mchain_error_log` и выводит предупреждение в журнал PostgreSQL. Используется во всех основных функциях для отказоустойчивости.
+**Возвращает:** `VOID`.
 
-**Назначение** – централизованная запись ошибок в таблицу `mchain_error_log` с одновременным выводом `RAISE WARNING`.
+---
 
-**Сигнатура**
+## Функции оценки достоверности
+
+### `mchain_forecast_reliability()`
+**Назначение:** вычисляет интегральный рейтинг достоверности прогнозов от **0** (недостоверен) до **5** (максимально достоверен) на основе:
+- Общего числа переходов (<100 → 0, 100–499 → 1, 500–4999 → 2, ≥5000 → 3 базы).
+- Стабильности вероятностей (изменение <2% → бонус +2, <5% → +1).
+- Покрытия частых состояний (≥90% → +1).
+**Возвращает:** `INT`.
+
+### `mchain_reliability_report()`
+**Назначение:** возвращает подробный текстовый отчёт с метриками, пороговыми значениями и рекомендациями по улучшению достоверности модели.
+**Возвращает:** `TEXT` (многострочный).
+
+---
+
+## Триггерная функция
+
+### `update_last_incident_time()`
+**Назначение:** автоматически обновляет поле `last_incident_time` в `markov_config` при каждом аварийном переходе (новой записи в `transition_log`, где `to_state` относится к аварийному состоянию). Привязана к триггеру `trigger_update_incident_time`.
+**Возвращает:** `TRIGGER`.
+
+---
+
+## Примеры вызовов
+
+### Минутное обучение (через cron или pgAgent)
 ```sql
-mchain_log_error(...) RETURNS void
+SELECT mchain_train_step();
 ```
 
-**Используется** внутри всех `mchain_*` функций в блоках `EXCEPTION`.
+### Ручное применение забывания с переопределением alpha
+```sql
+SELECT mchain_apply_forgetting(0.05);
+```
+
+### Получение прогноза риска на 15 минут
+```sql
+SELECT * FROM mchain_predict_risk_15min();
+```
+
+### Проверка достаточности и включение забывания
+```sql
+SELECT mchain_enable_forgetting_when_sufficient();
+```
+
+### Очистка transition_log старше 30 дней
+```sql
+SELECT mchain_clean_transition_log(30);
+```
+
+### Генерация отчёта о достоверности
+```sql
+SELECT mchain_reliability_report();
+```
 
 ---
 
-## 10. Полный cron-расписание (из файла `crontab.txt`)
+## Примечание о cron
 
-| Время | Команда | Назначение |
-|-------|---------|------------|
-| `5 19 * * 5` | `SELECT mchain_snapshot_prev_week();` | Еженедельный снимок матрицы (пятница) |
-| `15 1 * * *` | `SELECT mchain_clean_transition_log();` | Очистка журнала переходов |
-| `30 1 * * *` | `SELECT mchain_clean_forecast_log();` | Очистка журнала прогнозов |
-| `0 1 * * *` | `SELECT mchain_update_baseline();` | Обновление эталонного распределения |
-| `30 1 * * *` | `SELECT mchain_refresh_os_stats();` | Обновление статистики OS |
-| `0 2 * * 0` | `SELECT mchain_clean_archive();` | Очистка архива матриц (воскресенье) |
-| `0 4 1 * *` | `SELECT mchain_clean_forget_log();` | Очистка forget_log (1-е число) |
-| `0 2 * * *` | `SELECT mchain_clean_apply_forgetting_log();` | Очистка журнала забывания |
-
-**Дополнительно** – основная функция `mchain_train_step()` должна запускаться **каждую минуту** (в crontab не указана, но подразумевается отдельной строкой).
+В файле `crontab.txt` приведены рекомендуемые задания для регулярного обслуживания (см. таблицу в разделе «Функции очистки»). Убедитесь, что путь к `psql` и параметры подключения настроены правильно.
 
 ---
 
-## Заключение
+## Лицензия
 
-Представленный набор функций образует **полноценную адаптивную цепь Маркова** для прогнозирования аварий производительности PostgreSQL. Ключевые особенности:
-
-- Дискретизация пространства состояний (189 узлов).
-- Обучение в реальном времени с забыванием.
-- Адаптивный коэффициент забывания на основе времени после последнего инцидента.
-- Многошаговый прогноз риска через поглощающие состояния.
-- Встроенные метрики достоверности и отчётность.
-- Полная автоматизация через cron.
-
-Использование этих функций позволяет **упреждающе** выявлять вероятность перехода системы в аварийный режим и принимать меры до наступления инцидента.
+MIT License. Подробности в файле [LICENSE](LICENSE).

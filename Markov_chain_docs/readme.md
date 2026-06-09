@@ -19,12 +19,13 @@
   - [Граф вызовов функций](#граф-вызовов-функций)
   - [Граф взаимодействия таблиц](#граф-взаимодействия-таблиц)
 - [Кодирование состояний](#кодирование-состояний)
-- [Установка и настройка](#установка-и-настройка)
 - [Конфигурация](#конфигурация)
 - [Ключевые функции](#ключевые-функции)
   - [mchain_train_step – Минутное обучение](#mchain_train_step--минутное-обучение)
   - [Механизм обучения цепи Маркова](#механизм-обучения-цепи-маркова)
   - [Адаптивное забывание](#адаптивное-забывание)
+  - [Оценка достоверности прогнозов](#оценка-достоверности-прогнозов)
+  - [Управление забыванием](#управление-забыванием)
 - [Прогнозирование риска](#прогнозирование-риска)
 - [Обслуживание (Cron)](#обслуживание-cron)
 - [Мониторинг и диагностика](#мониторинг-и-диагностика)
@@ -49,6 +50,7 @@
 - Частоты переходов накапливаются в таблице `markov_frequencies`.
 - Периодически (по расписанию или при превышении порога) применяется **адаптивное забывание**, чтобы модель отслеживала дрейф поведения системы.
 - По текущей матрице вероятностей строятся **прогнозы риска** на 1, 15, 30 минут и 1 час с использованием поглощающей цепи Маркова.
+- **Триггер `trigger_update_incident_time`** автоматически обновляет `markov_config.last_incident_time` при каждом аварийном переходе (состояние с `correlation < 0 AND os_trend = -1`). Это обеспечивает динамическую настройку коэффициента забывания.
 
 Средняя частота реальных инцидентов (аварийных переходов) составляет **≈1 событие в день**, что учитывается при динамическом расчёте коэффициента забывания.
 
@@ -59,8 +61,9 @@
 - **Онлайн‑обучение** – одно новое наблюдение в минуту, без периодического переобучения.
 - **Адаптивное забывание** – коэффициент забывания `α` зависит от времени, прошедшего с последнего инцидента (экспоненциальное затухание с настраиваемым периодом полураспада).
 - **Поглощающая цепь** – аварийные состояния становятся поглощающими, что позволяет вычислять вероятность хотя бы одного инцидента за K шагов.
-- **Диагностика достаточности** – проверка объёма данных и стабильности вероятностей перед включением забывания.
+- **Диагностика достаточности** – проверка объёма данных и стабильности вероятностей перед включением забывания (функция `mchain_check_sufficiency`).
 - **Прогнозные функции** – готовые обёртки для горизонтов 1, 15, 30, 60 минут.
+- **Оценка достоверности прогнозов** – функции `mchain_forecast_reliability` (рейтинг 0–5) и `mchain_reliability_report` (развёрнутый отчёт).
 - **Полное журналирование** – логи ошибок, вызовов забывания, архивов матриц.
 
 ---
@@ -109,10 +112,8 @@ flowchart TD
 
     subgraph Cron / обслуживание
         BB[mchain_clean_transition_log] --> transition_log
-        CC[mchain_clean_forecast_log] --> forecast_log
-        DD[mchain_clean_archive] --> markov_probabilities_archive
-        EE[mchain_update_baseline] --> state_baseline
-        FF[mchain_refresh_os_stats] --> operational_speed_stats
+        CC[mchain_clean_apply_forgetting_log] --> apply_forgetting_log
+        DD["(опционально) другие функции очистки"]
     end
 ```
 
@@ -122,6 +123,7 @@ flowchart TD
 - Функция `get_current_os_waiting_correlation_for_markov_chain` обращается к таблице `cluster_stat_median` (внешней по отношению к представленному DDL).
 - Адаптивное забывание инициируется **только** из `mchain_train_step` при достижении `interval_minute` (по умолчанию 30 минут) и только если `adaptive_forgetting_enabled = true`.
 - Прогнозные функции (`mchain_predict_risk_*`) вызываются по требованию, они не влияют на обучение.
+- Триггер `trigger_update_incident_time` автоматически обновляет время последнего инцидента при каждом аварийном переходе.
 
 ### Граф взаимодействия таблиц
 
@@ -144,14 +146,14 @@ flowchart LR
     subgraph "Журналы и аудит"
         AFL[apply_forgetting_log]
         MEL[mchain_error_log]
-        FL[forecast_log]
+        FL["forecast_log (опционально)"]
     end
 
     subgraph "Архивы и служебные"
-        MPA[markov_probabilities_archive]
-        MPPW[markov_probabilities_prev_week]
-        SB[state_baseline]
-        OSS[operational_speed_stats]
+        MPA["markov_probabilities_archive (опционально)"]
+        MPPW["markov_probabilities_prev_week (опционально)"]
+        SB["state_baseline (опционально)"]
+        OSS["operational_speed_stats (опционально)"]
     end
 
     CSM -->|get_metrics| G[get_current_os_waiting...]
@@ -162,17 +164,12 @@ flowchart LR
     MP -->|построение| MA
     TL -->|триггер| MCFG
     MCFG -->|интервал| MF
-    MF -->|очистка <1e-6| MF
+    MF -->|cleanup <1e-6| MF
     MCFG -->|настройки| A[mchain_apply_forgetting]
     A -->|лог| AFL
     A -->|ошибки| MEL
     MC -->|текущее состояние| MA
     MA -->|прогноз| X[mchain_predict_risk_k]
-
-    MPPW -->|еженедельный снимок| MP
-    MPA -->|archive_markov_probabilities| MP
-    SB -->|mchain_update_baseline| TL
-    OSS -->|mchain_refresh_os_stats| CSM
 ```
 
 **Основные потоки:**
@@ -181,7 +178,7 @@ flowchart LR
 2. **Пересчёт вероятностей** (при забывании или вручную): `markov_frequencies` → `markov_probabilities` → `markov_absorbing`.
 3. **Адаптивное забывание**: читает `markov_config`, обновляет `markov_frequencies`, логирует в `apply_forgetting_log`.
 4. **Прогнозирование риска**: читает `markov_absorbing` и текущее состояние из `markov_chain` (или через `get_current_os_waiting...`).
-5. **Обслуживание (cron)**: очистка `transition_log`, `forecast_log`, архивов, обновление эталонных распределений.
+5. **Обслуживание (cron)**: очистка `transition_log` и `apply_forgetting_log`.
 
 ---
 
@@ -200,29 +197,6 @@ state_id = (index_correlation * 9) + ((os_trend + 1) * 3) + (wait_trend + 1)
 
 ---
 
-## Установка и настройка
-
-1. **Создание таблиц**  
-   Выполните скрипт `markov_chain_tables.sql` в вашей базе данных PostgreSQL (версия 15+).
-
-2. **Создание функций**  
-   Выполните скрипт `markov_chain_functions.sql`.
-
-3. **Настройка источника метрик**  
-   Убедитесь, что таблица `cluster_stat_median` существует и регулярно обновляется (например, каждую минуту) данными о `curr_op_speed` и `curr_waitings`. Функция `get_current_os_waiting_correlation_for_markov_chain` рассчитывает корреляцию и тренды за последний час.
-
-4. **Запуск минутного обучения**  
-   Добавьте в cron (или pgAgent) вызов `mchain_train_step()` каждую минуту:
-
-   ```cron
-   * * * * * psql -d expecto_db -U expecto_user -c "SELECT mchain_train_step();"
-   ```
-
-5. **(Опционально) Настройка прогнозирования**  
-   Вызовы прогнозных функций можно встроить в ваше приложение или в отдельные cron‑задачи.
-
----
-
 ## Конфигурация
 
 Все параметры хранятся в таблице `markov_config` (одна строка). Основные настройки:
@@ -236,6 +210,8 @@ state_id = (index_correlation * 9) + ((os_trend + 1) * 3) + (wait_trend + 1)
 | `incident_half_life_days` | 7.0 | Период полураспада веса инцидента (дни) |
 | `interval_minute` | 30 | Забывание применяется не чаще 1 раза в 30 минут |
 | `min_transitions_for_forgetting` | 5000 | Пока общее число переходов ниже порога, забывание не выполняется |
+| `transition_log_retention_days` | 21 | Срок хранения записей в `transition_log` |
+| `apply_forgetting_log_retention_days` | 21 | Срок хранения журнала забывания |
 
 Изменить параметры можно обычным `UPDATE markov_config SET ...`.
 
@@ -250,7 +226,7 @@ state_id = (index_correlation * 9) + ((os_trend + 1) * 3) + (wait_trend + 1)
 1. Получение текущих метрик (корреляция, тренды) из `get_current_os_waiting_correlation_for_markov_chain`.
 2. Определение `state_id` текущего состояния.
 3. Чтение предыдущего состояния из `markov_chain`.
-4. Логирование перехода в `transition_log` и обновление `markov_frequencies`.
+4. Логирование перехода в `transition_log` и обновление `markov_frequencies` (через `mchain_log_transition`).
 5. Обновление строки в `markov_chain` (сдвиг состояний).
 6. Если с последнего забывания прошло `interval_minute` минут – вызов `mchain_apply_forgetting()`.
 
@@ -270,7 +246,7 @@ state_id = (index_correlation * 9) + ((os_trend + 1) * 3) + (wait_trend + 1)
   FROM markov_frequencies;
   ```
 
-- На основе `markov_probabilities` строится поглощающая матрица `markov_absorbing`, где аварийные состояния (`correlation < 0 AND os_trend = -1`) имеют только петлю с вероятностью 1.0.
+- На основе `markov_probabilities` строится поглощающая матрица `markov_absorbing`, где аварийные состояния (`correlation < 0 AND os_trend = -1`) имеют только петлю с вероятностью 1.0 (функция `rebuild_markov_absorbing`).
 
 ### Адаптивное забывание
 
@@ -294,7 +270,31 @@ state_id = (index_correlation * 9) + ((os_trend + 1) * 3) + (wait_trend + 1)
    ```
 4. Логирует вызов в `apply_forgetting_log`.
 
+**Функция `mchain_check_sufficiency`** проверяет, достаточно ли накоплено данных для безопасного забывания:
+- Общее число переходов ≥ `min_transitions_for_forgetting` (по умолчанию 5000).
+- Если данных достаточно (≥ 10000), дополнительно проверяется стабильность вероятностей за последние две недели: максимальное изменение вероятностей любого перехода не должно превышать `max_prob_change` (по умолчанию 0.05).
+
 **Триггер `trigger_update_incident_time`** автоматически обновляет `markov_config.last_incident_time` при каждом аварийном переходе (попадании в состояние с `correlation < 0 AND os_trend = -1`). Это обеспечивает динамическую настройку `alpha` на основе реальной аварийности.
+
+### Оценка достоверности прогнозов
+
+- **`mchain_forecast_reliability()`** – возвращает целочисленный рейтинг от 0 до 5:
+  - 0: менее 100 переходов – модель не обучена.
+  - 1: 100–499 переходов – очень мало данных.
+  - 2: 500–4999 переходов – недостаточно данных.
+  - 3: ≥5000 переходов – минимально достаточный уровень (базовая оценка).
+  - 4, 5: добавляются бонусы за стабильность вероятностей (изменение <0.05) и покрытие частых состояний (>90%).
+- **`mchain_reliability_report()`** – возвращает развёрнутый текстовый отчёт, включающий:
+  - Общий рейтинг и его интерпретацию.
+  - Количество переходов, порог `min_transitions_for_forgetting`.
+  - Максимальное изменение вероятностей за 14 дней (если данных ≥5000).
+  - Процент покрытия частых состояний (состояния с частотой >1% должны иметь ≥50 переходов).
+  - Рекомендации по улучшению достоверности.
+
+### Управление забыванием
+
+- **`mchain_enable_forgetting_when_sufficient()`** – включает адаптивное забывание (`adaptive_forgetting_enabled = true`) только если `mchain_check_sufficiency()` возвращает `true`. Возвращает текстовый статус.
+- **`mchain_force_enable_forgetting()`** – принудительно включает забывание (без проверки достаточности). Полезно для ручного вмешательства.
 
 ---
 
@@ -327,20 +327,17 @@ state_id = (index_correlation * 9) + ((os_trend + 1) * 3) + (wait_trend + 1)
 
 ## Обслуживание (Cron)
 
-В файле `crontab.txt` приведены рекомендуемые задания для обслуживания:
+Рекомендуемые cron-задачи для поддержания базы данных:
 
 | Время | Команда | Назначение |
 |-------|---------|-------------|
-| `5 19 * * 5` | `SELECT mchain_snapshot_prev_week();` | Снимок матрицы за прошлую неделю (пятница, 19:05) |
-| `15 1 * * *` | `SELECT mchain_clean_transition_log();` | Очистка `transition_log` старше retention_days |
-| `30 1 * * *` | `SELECT mchain_clean_forecast_log();` | Очистка `forecast_log` |
-| `0 1 * * *` | `SELECT mchain_update_baseline();` | Обновление эталонного распределения состояний |
-| `30 1 * * *` | `SELECT mchain_refresh_os_stats();` | Обновление статистики операционной скорости |
-| `0 2 * * 0` | `SELECT mchain_clean_archive();` | Очистка архивных снимков матриц |
-| `0 4 1 * *` | `SELECT mchain_clean_forget_log();` | Очистка журнала забывания (1‑го числа) |
-| `0 2 * * *` | `SELECT mchain_clean_apply_forgetting_log();` | Очистка журнала вызовов забывания |
+| `15 1 * * *` | `SELECT mchain_clean_transition_log();` | Удаляет записи `transition_log` старше `transition_log_retention_days` (по умолчанию 21 день) |
+| `0 2 * * *` | `SELECT mchain_clean_apply_forgetting_log();` | Очищает `apply_forgetting_log` старше `apply_forgetting_log_retention_days` (21 день) |
 
-Все функции очистки используют параметры удержания из `markov_config` (например, `transition_log_retention_days`).
+**Примечание:** В поставку включены только эти две функции очистки. При необходимости вы можете добавить собственные cron-задачи, например:
+- Еженедельный снимок матрицы вероятностей (`INSERT INTO markov_probabilities_prev_week SELECT ... FROM markov_probabilities`).
+- Очистка `forecast_log`, если вы его ведёте.
+- Обновление эталонных статистик (`mchain_update_baseline`, `mchain_refresh_os_stats`).
 
 ---
 
@@ -348,16 +345,18 @@ state_id = (index_correlation * 9) + ((os_trend + 1) * 3) + (wait_trend + 1)
 
 ### Оценка достоверности прогнозов
 
-- `mchain_forecast_reliability()` возвращает рейтинг от 0 до 5:
-  - 0–2: модель плохо обучена (данных мало, вероятности нестабильны)
-  - 3: минимально достаточный уровень
-  - 4–5: хорошая/отличная достоверность
-
-- `mchain_reliability_report()` выдаёт развёрнутый текстовый отчёт с метриками (общее число переходов, максимальное изменение вероятностей, покрытие частых состояний) и рекомендациями.
+- `mchain_forecast_reliability()` возвращает рейтинг от 0 до 5 (подробнее см. раздел [Оценка достоверности прогнозов](#оценка-достоверности-прогнозов)).
+- `mchain_reliability_report()` выдаёт развёрнутый текстовый отчёт с метриками, порогами и рекомендациями.
 
 ### Просмотр ошибок
 
-Таблица `mchain_error_log` содержит все ошибки, возникшие при работе функций (с контекстом в JSONB).
+Таблица `mchain_error_log` содержит все ошибки, возникшие при работе функций (с контекстом в JSONB). Пример запроса:
+```sql
+SELECT ts, function_name, error_message, context
+FROM mchain_error_log
+ORDER BY ts DESC
+LIMIT 20;
+```
 
 ### Отслеживание забывания
 
@@ -365,7 +364,7 @@ state_id = (index_correlation * 9) + ((os_trend + 1) * 3) + (wait_trend + 1)
 
 ### Ручное управление забыванием
 
-- `mchain_enable_forgetting_when_sufficient()` – включает адаптивное забывание, только если модель достаточно обучена.
+- `mchain_enable_forgetting_when_sufficient()` – включает адаптивное забывание только после проверки достаточности данных.
 - `mchain_force_enable_forgetting()` – принудительное включение (без проверки).
 
 ---

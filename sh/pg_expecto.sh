@@ -16,8 +16,8 @@
 ########################################################################################################
 # pg_expecto.sh
 # Корневой скрипт 
-# version 10.1.4
-# updated 09/06/2026
+# version 10.1.5
+# updated 10/06/2026
 ########################################################################################################
 
  
@@ -250,6 +250,12 @@ then
 else
   echo 'ALARM: НЕДОСТАТОЧНО ДАННЫХ ДЛЯ ПРОГНОЗА(ОБУЧЕНИЕ ЦЕПИ НЕ ЗАКОНЧЕНО).' >> $MARKOV_CHAIN_LOG
 fi
+
+mchain_health_check=`psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select mchain_health_check()'`
+exit_code $? $LOG_FILE $ERR_FILE
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : '$mchain_health_check
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : '$mchain_health_check >> $LOG_FILE  
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - ЗАКОНЧЕН '
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - ЗАКОНЧЕН '>> $LOG_FILE

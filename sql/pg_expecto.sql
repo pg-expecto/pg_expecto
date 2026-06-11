@@ -12679,7 +12679,7 @@ CREATE UNLOGGED TABLE IF NOT EXISTS markov_config (
     -- Основные параметры обучения и забывания
     last_forget_time  TIMESTAMPTZ NOT NULL DEFAULT now(),   -- Время последнего вызова планового забывания
     alpha             REAL       NOT NULL DEFAULT 0.1,      -- Скорость забывания (если use_adaptive_alpha = false)
-    interval_minute   INT        NOT NULL DEFAULT 30,       -- Интервал между плановыми забываниями (минуты)
+    interval_minute   INT        NOT NULL DEFAULT 180,       -- Интервал между плановыми забываниями (минуты)
 
     -- Глубина хранения журналов (используется функциями очистки)
     transition_log_retention_days SMALLINT DEFAULT 21,          -- Срок хранения переходов

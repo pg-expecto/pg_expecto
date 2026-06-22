@@ -1,8 +1,8 @@
 #!/bin/sh
 #####################################################################################
 # load_test.sh
-# version 10.1.2
-# 05.06.2026
+# version 12.2
+# 22.06.2026
 #####################################################################################
 # Нагрузочное тестирование
 # 
@@ -68,20 +68,17 @@ if [ "$period_hours" != "0" ] && [ "$average_load" != "0" ]
 then
  vacuum_incident=`$current_path'/'get_conf_param.sh $current_path vacuum_incident 2>$ERR_FILE`
  exit_code $? $LOG_FILE $ERR_FILE
-
  if [ "$vacuum_incident" == "1" ]
  then 
    echo 'INFO : ВКЛЮЧЕНА ДОПОЛНИТЕЛЬНАЯ НАГРУЗКА VACUUM/FREEZE ДЛЯ ИММИТАЦИИ ИНЦИДЕНТА' >> $LOG_FILE
-   /postgres/pg_expecto/sh/load_test/run_vacuum.sh >> /postgres/pg_expecto/sh/load_test/vacuum.log 2>&1
- fi
-
- let total_intervals=6+period_hours*6
-
+   /postgres/pg_expecto/sh/load_test/run_incident.sh >> /postgres/pg_expecto/sh/load_test/run_incident.log 2>&1  
+  fi
+  
+  let total_intervals=6+period_hours*6
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ИТЕРАЦИЯ :'$current_pass' : ПУАССОНОВСКАЯ НАГРУЗКА: total_intervals='$total_intervals' period_hours='$period_hours' pgbench_clients='$pgbench_clients' average_load='$average_load >> $LOG_FILE
 else
   finish_load=`$current_path'/'get_conf_param.sh $current_path finish_load 2>$ERR_FILE`
   exit_code $? $LOG_FILE $ERR_FILE
-
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ИТЕРАЦИЯ : '$current_pass' ЭКСПОНЕНЦИАЛЬНАЯ НАГРУЗКА: pgbench_clients='$pgbench_clients ' finish_load='$finish_load >> $LOG_FILE
 fi  
 

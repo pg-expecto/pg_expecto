@@ -16,8 +16,8 @@
 ########################################################################################################
 # pg_expecto.sh
 # Корневой скрипт 
-# version 12.3
-# updated 25/06/2026
+# version 12.4
+# updated 26/06/2026
 ########################################################################################################
 
  
@@ -216,56 +216,61 @@ fi
 
 ########################################################################################################
 #
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - НАЧАТ '
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - НАЧАТ '>> $LOG_FILE
-
-MARKOV_CHAIN_LOG=$current_path'/markov_chain.log'
-psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select mchain_reliability_report()'  > $MARKOV_CHAIN_LOG 2>$ERR_FILE
+is_markov_chain_enabled=`psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select is_markov_chain_enabled()' 2>$ERR_FILE`
 exit_code $? $LOG_FILE $ERR_FILE
 
-psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select mchain_reliability_report()'  >> $LOG_FILE 2>$ERR_FILE
-exit_code $? $LOG_FILE $ERR_FILE
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ПОСЛЕДНИЕ 3 ОШИБКИ '
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ПОСЛЕДНИЕ 3 ОШИБКИ '>> $LOG_FILE
-
-psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select * from mchain_error_log order by ts desc LIMIT 3 '  >> $LOG_FILE 2>$ERR_FILE
-exit_code $? $LOG_FILE $ERR_FILE
-psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select * from mchain_error_log order by ts desc LIMIT 3 '  >> $MARKOV_CHAIN_LOG 2>$ERR_FILE
-exit_code $? $LOG_FILE $ERR_FILE
-
-mchain_forecast_reliability=`psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select mchain_forecast_reliability()'`
-
-if [[ $mchain_forecast_reliability -ge 3 ]]
+if [[ "$is_markov_chain_enabled" == "t" ]]
 then 
-  echo 'INFO : ДОСТАТОЧНО ДАННЫХ ДЛЯ ПРОГНОЗА(ОБУЧЕНИЕ ЦЕПИ ЗАКОНЧЕНО).' >> $MARKOV_CHAIN_LOG
-  echo ' ' >> $MARKOV_CHAIN_LOG
-###########################################################################################
-# ДЛЯ ПРАКТИЧЕСКИХ ЦЕЛЕЙ И ДАЛЬНЕЙШИХ ИССЛЕДОВАНИЙ ИСПОЛЬЗУЕТСЯ ТОЛЬКО ПРОГНОЗ НА 15 МИНУТ 
-  echo ' ' >> $MARKOV_CHAIN_LOG
-  mchain_predict_risk_current_horizon=`psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select * from mchain_predict_risk_current_horizon()'`
-  exit_code $? $LOG_FILE $ERR_FILE
 
-  forecast_horizon_minutes=`psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select forecast_horizon_minutes from markov_config'`
-  exit_code $? $LOG_FILE $ERR_FILE
-  
-  echo 'ВЕРОЯТНОСТЬ ИНЦИДЕНТА В ТЕЧЕНИИ '$forecast_horizon_minutes' МИНУТ = '$mchain_predict_risk_current_horizon >> $MARKOV_CHAIN_LOG 2>$ERR_FILE
-  
-  echo 'ВЕРОЯТНОСТЬ ИНЦИДЕНТА В ТЕЧЕНИИ '$forecast_horizon_minutes' МИНУТ = '$mchain_predict_risk_current_horizon >> $LOG_FILE  2>$ERR_FILE
-  mchain_health_check=`psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select status , message from mchain_health_check()'`
-  exit_code $? $LOG_FILE $ERR_FILE
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - НАЧАТ '
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - НАЧАТ '>> $LOG_FILE
 
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : '$mchain_health_check >> $LOG_FILE  
+	MARKOV_CHAIN_LOG=$current_path'/markov_chain.log'
+	psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select mchain_reliability_report()'  > $MARKOV_CHAIN_LOG 2>$ERR_FILE
+	exit_code $? $LOG_FILE $ERR_FILE
 
-  psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select unnest(description) from mchain_health_check()' >> $LOG_FILE    
-else
-  echo 'ALARM: НЕДОСТАТОЧНО ДАННЫХ ДЛЯ ПРОГНОЗА(ОБУЧЕНИЕ ЦЕПИ НЕ ЗАКОНЧЕНО).' >> $MARKOV_CHAIN_LOG
+	psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select mchain_reliability_report()'  >> $LOG_FILE 2>$ERR_FILE
+	exit_code $? $LOG_FILE $ERR_FILE
+
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ПОСЛЕДНИЕ 3 ОШИБКИ '
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ПОСЛЕДНИЕ 3 ОШИБКИ '>> $LOG_FILE
+
+	psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select * from mchain_error_log order by ts desc LIMIT 3 '  >> $LOG_FILE 2>$ERR_FILE
+	exit_code $? $LOG_FILE $ERR_FILE
+	psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select * from mchain_error_log order by ts desc LIMIT 3 '  >> $MARKOV_CHAIN_LOG 2>$ERR_FILE
+	exit_code $? $LOG_FILE $ERR_FILE
+
+	mchain_forecast_reliability=`psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select mchain_forecast_reliability()'`
+
+	if [[ $mchain_forecast_reliability -ge 3 ]]
+	then 
+	  echo 'INFO : ДОСТАТОЧНО ДАННЫХ ДЛЯ ПРОГНОЗА(ОБУЧЕНИЕ ЦЕПИ ЗАКОНЧЕНО).' >> $MARKOV_CHAIN_LOG
+	  echo ' ' >> $MARKOV_CHAIN_LOG
+	###########################################################################################
+	# ДЛЯ ПРАКТИЧЕСКИХ ЦЕЛЕЙ И ДАЛЬНЕЙШИХ ИССЛЕДОВАНИЙ ИСПОЛЬЗУЕТСЯ ТОЛЬКО ПРОГНОЗ НА 15 МИНУТ 
+	  echo ' ' >> $MARKOV_CHAIN_LOG
+	  mchain_predict_risk_current_horizon=`psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select * from mchain_predict_risk_current_horizon()'`
+	  exit_code $? $LOG_FILE $ERR_FILE
+
+	  forecast_horizon_minutes=`psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select forecast_horizon_minutes from markov_config'`
+	  exit_code $? $LOG_FILE $ERR_FILE
+	  
+	  echo 'ВЕРОЯТНОСТЬ ИНЦИДЕНТА В ТЕЧЕНИИ '$forecast_horizon_minutes' МИНУТ = '$mchain_predict_risk_current_horizon >> $MARKOV_CHAIN_LOG 2>$ERR_FILE
+	  
+	  echo 'ВЕРОЯТНОСТЬ ИНЦИДЕНТА В ТЕЧЕНИИ '$forecast_horizon_minutes' МИНУТ = '$mchain_predict_risk_current_horizon >> $LOG_FILE  2>$ERR_FILE
+	  mchain_health_check=`psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select status , message from mchain_health_check()'`
+	  exit_code $? $LOG_FILE $ERR_FILE
+
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : '$mchain_health_check >> $LOG_FILE  
+
+	  psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select unnest(description) from mchain_health_check()' >> $LOG_FILE    
+	else
+	  echo 'ALARM: НЕДОСТАТОЧНО ДАННЫХ ДЛЯ ПРОГНОЗА(ОБУЧЕНИЕ ЦЕПИ НЕ ЗАКОНЧЕНО).' >> $MARKOV_CHAIN_LOG
+	fi
+
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - ЗАКОНЧЕН '
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - ЗАКОНЧЕН '>> $LOG_FILE
 fi
-
-
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - ЗАКОНЧЕН '
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - ЗАКОНЧЕН '>> $LOG_FILE
 #
 ########################################################################################################
 

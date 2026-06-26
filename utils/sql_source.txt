@@ -24,4 +24,4 @@
 /tmp/report_wait_event_type_vmstat.sql
 /tmp/stats_proсessing_functions.sql
 /tmp/stats_proсessing_tables.sql
-/tmp/background_processes_logs_tables.sql
+/tmp/performance_metrics_for_markov_chain.sql

@@ -15,8 +15,8 @@
 #
 #####################################################################################
 # load_test.sh
-# version 12.2
-# 22.06.2026
+# version 12.3
+# 08.09.2026
 #####################################################################################
 # Нагрузочное тестирование
 # 
@@ -74,9 +74,14 @@ then
   
   period_hours=`$current_path'/'get_conf_param.sh $current_path period_hours 2>$ERR_FILE`
   exit_code $? $LOG_FILE $ERR_FILE
-
-  average_load=`$current_path'/'get_conf_param.sh $current_path average_load 2>$ERR_FILE`
-  exit_code $? $LOG_FILE $ERR_FILE
+  
+  # Если задано Пуассоновское распределение
+  if [[ "$period_hours" != "0" ]]
+  then 
+    average_load=`$current_path'/'get_conf_param.sh $current_path average_load 2>$ERR_FILE`
+    exit_code $? $LOG_FILE $ERR_FILE
+  fi 
+  # Если задано Пуассоновское распределение
 
 if [ "$period_hours" != "0" ] && [ "$average_load" != "0" ]
 then

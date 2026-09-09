@@ -15,7 +15,7 @@
 #
 #####################################################################################
 # load_test_start.sh
-# version 10.1
+# version 10.2
 # 03.06.2026
 #####################################################################################
 # Старт нагрузочного тестирования
@@ -229,12 +229,13 @@ then
 			current_weight=`$current_path'/'get_conf_param.sh $current_path $current_scenario 2>$ERR_FILE`
 			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$i' ВЕС = '$current_weight
 			echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :  OK : СЦЕНАРИЙ-'$i' ВЕС = '$current_weight >> $LOG_FILE	
-		
+
 			psql -d $expecto_db -U $expecto_user -c "select load_test_set_weight_for_scenario($i , $current_weight )" >> $LOG_FILE 2>>$ERR_FILE
 			exit_code $? $LOG_FILE $ERR_FILE    
 			
 			let "i++"
 			flag=`cat $current_path'/param.conf' | grep 'scenario'$i | wc -l`		
+			
 		  done 	  
 		#  ТЕСТОВЫЕ СЦЕНАРИИ
 		######################################################################################################### 
@@ -326,26 +327,30 @@ fi
 period_hours=`$current_path'/'get_conf_param.sh $current_path period_hours 2>$ERR_FILE`
 exit_code $? $LOG_FILE $ERR_FILE
 
-average_load=`$current_path'/'get_conf_param.sh $current_path average_load 2>$ERR_FILE`
-exit_code $? $LOG_FILE $ERR_FILE
+# Если используется Пуассоновкое распределение нагрузки
+if [[ "$period_hours" != "0" ]]
+then 
+  average_load=`$current_path'/'get_conf_param.sh $current_path average_load 2>$ERR_FILE`
+  exit_code $? $LOG_FILE $ERR_FILE
 
-if [ "$period_hours" != "0" ] && [ "$average_load" != "0" ]
-then
-  psql -d $expecto_db -U $expecto_user -c "select load_test_poisson_set_period_hours( $period_hours )" >> $LOG_FILE 2>>$ERR_FILE
-  exit_code $? $LOG_FILE $ERR_FILE    
+	if [ "$period_hours" != "0" ] && [ "$average_load" != "0" ]
+	then
+	  psql -d $expecto_db -U $expecto_user -c "select load_test_poisson_set_period_hours( $period_hours )" >> $LOG_FILE 2>>$ERR_FILE
+	  exit_code $? $LOG_FILE $ERR_FILE    
 
-  psql -d $expecto_db -U $expecto_user -c "select load_test_poisson_set_average_load( $average_load )" >> $LOG_FILE 2>>$ERR_FILE
-  exit_code $? $LOG_FILE $ERR_FILE    
-  
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ПУАССОНОВСКОЕ РАСПРЕДЕЛЕНИЯ НАГРУЗКИ'
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ПУАССОНОВСКОЕ РАСПРЕДЕЛЕНИЯ НАГРУЗКИ' >> $LOG_FILE	
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :   period_hours = '$period_hours
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :   period_hours = '$period_hours >> $LOG_FILE	
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :   average_load = '$average_load
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :   average_load = '$average_load >> $LOG_FILE  
-else
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ЭКСПОНЕНЦИАЛЬНОЕ РАСПРЕДЕЛЕНИЯ НАГРУЗКИ'
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ЭКСПОНЕНЦИАЛЬНОЕ РАСПРЕДЕЛЕНИЯ НАГРУЗКИ' >> $LOG_FILE	   
+	  psql -d $expecto_db -U $expecto_user -c "select load_test_poisson_set_average_load( $average_load )" >> $LOG_FILE 2>>$ERR_FILE
+	  exit_code $? $LOG_FILE $ERR_FILE    
+	  
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ПУАССОНОВСКОЕ РАСПРЕДЕЛЕНИЯ НАГРУЗКИ'
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ПУАССОНОВСКОЕ РАСПРЕДЕЛЕНИЯ НАГРУЗКИ' >> $LOG_FILE	
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :   period_hours = '$period_hours
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :   period_hours = '$period_hours >> $LOG_FILE	
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :   average_load = '$average_load
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' :   average_load = '$average_load >> $LOG_FILE  
+	else
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ЭКСПОНЕНЦИАЛЬНОЕ РАСПРЕДЕЛЕНИЯ НАГРУЗКИ'
+	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : ЭКСПОНЕНЦИАЛЬНОЕ РАСПРЕДЕЛЕНИЯ НАГРУЗКИ' >> $LOG_FILE	   
+	fi
 fi
 
 

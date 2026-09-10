@@ -15,8 +15,8 @@
 #
 #####################################################################################
 # load_test.sh
-# version 12.3
-# 08.09.2026
+# version 12.4
+# 10.09.2026
 #####################################################################################
 # Нагрузочное тестирование
 # 
@@ -43,8 +43,9 @@ fi
 
 #script=$(readlink -f $0)
 #current_path=`dirname $script`
-current_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#current_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #echo "Скрипт находится в: $current_path"
+current_path='/postgres/pg_expecto/sh/load_test'
 
 expecto_db='expecto_db'
 pgbench_db='pgbench_db'

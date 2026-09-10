@@ -15,8 +15,8 @@
 #
 #####################################################################################
 # load_test_start.sh
-# version 10.2
-# 03.06.2026
+# version 10.3
+# 10.09.2026
 #####################################################################################
 # Старт нагрузочного тестирования
 #####################################################################################
@@ -40,7 +40,8 @@ fi
 }
 
 script=$(readlink -f $0)
-current_path=`dirname $script`
+#current_path=`dirname $script`
+current_path='/postgres/pg_expecto/sh/load_test'
 
 LOG_FILE=$current_path'/load_test.log'
 ERR_FILE=$current_path'/load_test.err'

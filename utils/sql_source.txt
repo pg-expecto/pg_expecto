@@ -1,4 +1,6 @@
-﻿/tmp/core_cluster_functions.sql
+/tmp/background_processes_logs_functions.sql
+/tmp/background_processes_logs_tables.sql
+/tmp/core_cluster_functions.sql
 /tmp/core_cluster_tables.sql
 /tmp/core_functions.sql
 /tmp/core_os_functions.sql
@@ -8,6 +10,7 @@
 /tmp/core_tables.sql
 /tmp/load_test_functions.sql
 /tmp/load_test_tables.sql
+/tmp/performance_metrics_for_markov_chain.sql
 /tmp/repors_queryid_stat.sql
 /tmp/report_iostat.sql
 /tmp/report_load_test_loading.sql
@@ -24,4 +27,5 @@
 /tmp/report_wait_event_type_vmstat.sql
 /tmp/stats_proсessing_functions.sql
 /tmp/stats_proсessing_tables.sql
-/tmp/performance_metrics_for_markov_chain.sql
+
+

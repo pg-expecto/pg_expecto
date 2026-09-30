@@ -43,6 +43,9 @@ fi
 script=$(readlink -f $0)
 current_path=`dirname $script`
 
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : START'
+rm -rf /tmp/pg_expecto_reports #КОСТЫЛЬ
+
 LOG_FILE=$current_path'/pg_expecto_install.log'
 ERR_FILE=$current_path'/pg_expecto_install.err'
 
@@ -306,3 +309,30 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : */1 * * * * '$current
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO : */1 * * * * '$current_path'/sh/load_test/load_test.sh' >>$LOG_FILE
 
 exit 0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -11,6 +11,7 @@
 -- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
+--
 
 --------------------------------------------------------------------------------
 -- core_cluster_functions.sql
@@ -576,11 +577,11 @@ BEGIN
     --------------------------------------------------------------------------------------------------------
 	--	ОБУЧЕНИЕ ЦЕПИ МАРКОВА
 	SELECT is_markov_chain_enabled
-	INTO is_markov_chain_enables_flag
+	INTO is_markov_chain_enabled_flag
 	FROM configuration
 	LIMIT 1 ;
 	
-	IF is_markov_chain_enables_flag
+	IF is_markov_chain_enabled_flag
 	THEN 
 		PERFORM mchain_train_step();
 	END IF;

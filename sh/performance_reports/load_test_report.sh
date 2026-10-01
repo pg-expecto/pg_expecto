@@ -17,8 +17,8 @@
 ########################################################################################################
 # load_test_report.sh
 # ОТЧЕТ ПО НАГРУЗОЧНОМУ ТЕСТИРОВАНИЮ
-# version 9.1
-# updated 19/05/2026
+# version 9.2
+# updated 01/10/2026
 ########################################################################################################
 
 #Обработать код возврата 
@@ -74,6 +74,28 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : start_timestamp = '$sta
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : finish_timestamp = '$finish_timestamp
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : finish_timestamp = '$finish_timestamp >> $LOG_FILE
+
+
+START_TIME="$start_timestamp"
+END_TIME="$finish_timestamp"
+
+# Проверка формата времени
+if ! [[ "$START_TIME" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}$ ]]; then
+    echo "Ошибка: начальное время должно быть в формате YYYY-MM-DD HH:MM" >&2
+    exit 1
+fi
+if ! [[ "$END_TIME" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}$ ]]; then
+    echo "Ошибка: конечное время должно быть в формате YYYY-MM-DD HH:MM" >&2
+    exit 1
+fi
+
+START_DATE="${START_TIME:0:10}"
+END_DATE="${END_TIME:0:10}"
+if [ "$START_DATE" != "$END_DATE" ]; then
+    echo "Ошибка: начальное и конечное время должны быть в один день" >&2
+    exit 1
+fi
+DATE_STR="$START_DATE"
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ГРАФИК ИЗМЕНЕНИЯ НАГРУЗКИ В ХОДЕ ТЕСТИРОВАНИЯ'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  ГРАФИК ИЗМЕНЕНИЯ НАГРУЗКИ В ХОДЕ ТЕСТИРОВАНИЯ' >> $LOG_FILE

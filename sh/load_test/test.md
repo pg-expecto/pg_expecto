@@ -3,7 +3,7 @@
 Скрипт предназначен для автоматического управления нагрузочным тестированием.  
 Он проверяет количество инцидентов в БД за текущие сутки и в зависимости от целевого значения запускает или останавливает нагрузочный тест.
 
-Скрипт рассчитан на запуск по `cron` каждую минуту.
+Скрипт рассчитан на запуск по `cron` каждый час.
 
 ---
 
@@ -56,13 +56,13 @@
 ## Пример запуска через cron
 
 ```cron
-* * * * * /postgres/pg_expecto/sh/prod_test.sh <target_incidents> >> /postgres/pg_expecto/sh/prod_test.sh.log 2>&1
+0 * * * * /postgres/pg_expecto/sh/prod_test.sh <target_incidents> >> /postgres/pg_expecto/sh/prod_test.sh.log 2>&1
 ```
 
 Пример с конкретным значением:
 
 ```cron
-* * * * * /postgres/pg_expecto/sh/prod_test.sh 1000 >> /postgres/pg_expecto/sh/prod_test.sh.log 2>&1
+0 * * * * /postgres/pg_expecto/sh/prod_test.sh 1000 >> /postgres/pg_expecto/sh/prod_test.sh.log 2>&1
 ```
 
 ---

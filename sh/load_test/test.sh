@@ -16,11 +16,11 @@
 # test.sh
 #
 # Скрипт управления нагрузочным тестированием.
-# Запускается по cron каждую минуту.
+# Запускается по cron каждый час 
 #
 # Входной параметр: количество инцидентов в сутки (целое число > 0).
 #
-# * * * * * /postgres/pg_expecto/sh/prod_test.sh <target_incidents> >> /postgres/pg_expecto/sh/prod_test.sh.log 2>&1
+# 0 * * * * /postgres/pg_expecto/sh/load_test/test.sh 6 >> /postgres/pg_expecto/sh/load_test/test.log 2>&1
 
 # Пути к вспомогательным скриптам
 STOP_SCRIPT="/postgres/pg_expecto/sh/load_test/load_test_stop.sh"

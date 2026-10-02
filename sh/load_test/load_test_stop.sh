@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-#
 #####################################################################################
 # load_test_stop.sh
 # version 1.0
@@ -40,10 +39,8 @@ fi
 script=$(readlink -f $0)
 current_path=`dirname $script`
 
-performance_monitoring_db='performance_monitoring_db'
-performance_monitoring_user='performance_monitoring_user'
-
 pgbench_db='pgbench_db'
+expecto_db='expecto_db'
 expecto_user='expecto_user'
 
 LOG_FILE=$current_path'/tester_stop.log'
@@ -62,7 +59,7 @@ rm $current_path'/PGBENCH_WORKING'
 rm $current_path'/LOAD_TEST_IN_PROGRESS'
 
 
-psql -d $performance_monitoring_db -U $performance_monitoring_user -c 'select stop_test()' >> $LOG_FILE 2>$ERR_FILE
+psql -d $expecto_db -U $expecto_user -c 'select load_test_stop_collect_data()' >> $LOG_FILE 2>$ERR_FILE
 exit_code $? $LOG_FILE $ERR_FILE  
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : ЗАВЕРШЕНИЕ PGBENCH'

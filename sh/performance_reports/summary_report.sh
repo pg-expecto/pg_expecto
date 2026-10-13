@@ -16,8 +16,14 @@
 ########################################################################################################
 # summary_report.sh
 # Сводный отчет  производительности/ожиданиям СУБД и метрикам ОС 
-# version 8.1.2
-# updated 04/05/2026
+# version 9.2
+# updated 13/10/2026
+# Добавлен ключ nolog
+# Не анализировать логи за несколько дней
+# Стандартный отчет за один день
+# ./performance_report.sh '2026-09-13 08:19' '2026-09-13 18:19'
+# Если нужен отчет за несколько дней - лог файл не анализировать
+# ./performance_report.sh '2026-09-13 08:19' '2026-09-13 18:19' nolog
 ########################################################################################################
 
 #Обработать код возврата 
@@ -58,22 +64,23 @@ then
   exit 0
 fi 
 
-if [ $# -gt 3 ]
+if [ $# -gt 4 ]
 then
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ERROR :  summary_report :  MAX 3 PARAMETERS CAN BE SET '
-  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ERROR :  summary_report :  MAX 3 PARAMETERS CAN BE SET ' >> $LOG_FILE
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ERROR :  summary_report :  MAX 4 PARAMETERS CAN BE SET '
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ERROR :  summary_report :  MAX 4 PARAMETERS CAN BE SET ' >> $LOG_FILE
   exit 0
 fi 
 
 start_timestamp=$1 
 finish_timestamp=$2
 test_mode=$3
+is_no_log=$4
 
 if [ "$test_mode" == "" ]
 then
 	test_mode='DEFAULT'
-else
-	test_mode='INCIDENT'
+#else
+#	test_mode='INCIDENT'
 fi 
 
 
@@ -113,6 +120,9 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : devic
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : test_mode = '$test_mode
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : test_mode = '$test_mode >> $LOG_FILE
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : is_no_log = '$is_no_log
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report : is_no_log = '$is_no_log >> $LOG_FILE
 
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK'
@@ -487,79 +497,82 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТ
 
 ####################################################################################################################################
 # LOG PROCESSING
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО ЛОГ ФАЙЛУ СУБД - НАЧАТ'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО ЛОГ ФАЙЛУ СУБД - НАЧАТ' >> $LOG_FILE
+# Если однодневный отчет
+if [[ "$is_no_log" != "nolog" ]]
+then 
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО ЛОГ ФАЙЛУ СУБД - НАЧАТ'
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО ЛОГ ФАЙЛУ СУБД - НАЧАТ' >> $LOG_FILE
 
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  extract_pg_log'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  extract_pg_log' >> $LOG_FILE
-./extract_pg_log.sh "$start_timestamp" "$finish_timestamp"
-exit_code $? $LOG_FILE $ERR_FILE
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  extract_pg_log'
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  extract_pg_log' >> $LOG_FILE
+	./extract_pg_log.sh "$start_timestamp" "$finish_timestamp"
+	exit_code $? $LOG_FILE $ERR_FILE
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  extract_errors'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  extract_errors' >> $LOG_FILE
-./extract_errors.sh 
-exit_code $? $LOG_FILE $ERR_FILE	
-if [ "$test_mode" == "DEFAULT" ]
-then
-  REPORT_FILE=$current_path'/x.error_report.txt'
-else
-  REPORT_FILE=$current_path'/x.1.test.error_report.txt'
-fi  
-cp $current_path'/error_report.md' $REPORT_FILE
-chmod 777 $REPORT_FILE
-mv $REPORT_FILE $REPORT_DIR
-
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  autovacuum_log_processing'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  autovacuum_log_processing' >> $LOG_FILE
-./autovacuum_log_processing.sh 
-exit_code $? $LOG_FILE $ERR_FILE
-if [ "$test_mode" == "DEFAULT" ]
-then
-  REPORT_FILE=$current_path'/x.autovacuum_report.txt'
-else
-  REPORT_FILE=$current_path'/x.1.test.autovacuum_report.txt'
-fi  
-cp $current_path'/autovacuum_report.md' $REPORT_FILE
-chmod 777 $REPORT_FILE
-mv $REPORT_FILE $REPORT_DIR
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  extract_errors'
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  extract_errors' >> $LOG_FILE
+	./extract_errors.sh 
+	exit_code $? $LOG_FILE $ERR_FILE	
+	if [ "$test_mode" == "DEFAULT" ]
+	then
+	  REPORT_FILE=$current_path'/x.error_report.txt'
+	else
+	  REPORT_FILE=$current_path'/x.1.test.error_report.txt'
+	fi  
+	cp $current_path'/error_report.md' $REPORT_FILE
+	chmod 777 $REPORT_FILE
+	mv $REPORT_FILE $REPORT_DIR
 
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  checkpoint_log_processing'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  checkpoint_log_processing' >> $LOG_FILE
-./checkpoint_log_processing.sh 
-exit_code $? $LOG_FILE $ERR_FILE
-exit_code $? $LOG_FILE $ERR_FILE
-if [ "$test_mode" == "DEFAULT" ]
-then
-  REPORT_FILE=$current_path'/x.checkpoint_report.txt'
-else
-  REPORT_FILE=$current_path'/x.1.test.checkpoint_report.txt'
-fi  
-cp $current_path'/checkpoint_report.md' $REPORT_FILE
-chmod 777 $REPORT_FILE
-mv $REPORT_FILE $REPORT_DIR
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  autovacuum_log_processing'
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  autovacuum_log_processing' >> $LOG_FILE
+	./autovacuum_log_processing.sh 
+	exit_code $? $LOG_FILE $ERR_FILE
+	if [ "$test_mode" == "DEFAULT" ]
+	then
+	  REPORT_FILE=$current_path'/x.autovacuum_report.txt'
+	else
+	  REPORT_FILE=$current_path'/x.1.test.autovacuum_report.txt'
+	fi  
+	cp $current_path'/autovacuum_report.md' $REPORT_FILE
+	chmod 777 $REPORT_FILE
+	mv $REPORT_FILE $REPORT_DIR
 
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  temp_files_report'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  temp_files_report' >> $LOG_FILE
-./temp_files_report.sh 
-exit_code $? $LOG_FILE $ERR_FILE
-if [ "$test_mode" == "DEFAULT" ]
-then
-  REPORT_FILE=$current_path'/x.temp_files_report.txt'
-else
-  REPORT_FILE=$current_path'/x.1.test.temp_files_report.txt'
-fi  
-cp $current_path'/temp_files_report.md' $REPORT_FILE
-chmod 777 $REPORT_FILE
-mv $REPORT_FILE $REPORT_DIR
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  checkpoint_log_processing'
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  checkpoint_log_processing' >> $LOG_FILE
+	./checkpoint_log_processing.sh 
+	exit_code $? $LOG_FILE $ERR_FILE
+	exit_code $? $LOG_FILE $ERR_FILE
+	if [ "$test_mode" == "DEFAULT" ]
+	then
+	  REPORT_FILE=$current_path'/x.checkpoint_report.txt'
+	else
+	  REPORT_FILE=$current_path'/x.1.test.checkpoint_report.txt'
+	fi  
+	cp $current_path'/checkpoint_report.md' $REPORT_FILE
+	chmod 777 $REPORT_FILE
+	mv $REPORT_FILE $REPORT_DIR
 
 
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО ЛОГ ФАЙЛУ СУБД - ЗАКОНЧЕН'
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО ЛОГ ФАЙЛУ СУБД - ЗАКОНЧЕН' >> $LOG_FILE
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  temp_files_report'
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  temp_files_report' >> $LOG_FILE
+	./temp_files_report.sh 
+	exit_code $? $LOG_FILE $ERR_FILE
+	if [ "$test_mode" == "DEFAULT" ]
+	then
+	  REPORT_FILE=$current_path'/x.temp_files_report.txt'
+	else
+	  REPORT_FILE=$current_path'/x.1.test.temp_files_report.txt'
+	fi  
+	cp $current_path'/temp_files_report.md' $REPORT_FILE
+	chmod 777 $REPORT_FILE
+	mv $REPORT_FILE $REPORT_DIR
 
+
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО ЛОГ ФАЙЛУ СУБД - ЗАКОНЧЕН'
+	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  summary_report :  ОТЧЕТ ПО ЛОГ ФАЙЛУ СУБД - ЗАКОНЧЕН' >> $LOG_FILE
+fi
 
 # LOG PROCESSING
 ####################################################################################################################################

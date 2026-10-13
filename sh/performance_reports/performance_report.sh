@@ -17,8 +17,14 @@
 ########################################################################################################
 # performance_report.sh
 # ОТЧЕТ ПО ПРОИЗВОДИТЕЛЬНОСТИ СУБД И ИНФРАСТРУКТУРЫ
-# version 9.1
-# updated 19/05/2026
+# version 9.2
+# updated 13/10/2026
+# Добавлен ключ nolog
+# Не анализировать логи за несколько дней
+# Стандартный отчет за один день
+# ./performance_report.sh '2026-09-13 08:19' '2026-09-13 18:19'
+# Если нужен отчет за несколько дней - лог файл не анализировать
+# ./performance_report.sh '2026-09-13 08:19' '2026-09-13 18:19' nolog
 ########################################################################################################
 
 #Обработать код возврата 
@@ -58,7 +64,7 @@ rm /tmp/pg_expecto_reports/*
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : СТАРТ ' > $LOG_FILE
 
-if [ $# -ne 2 ]
+if [ $# -lt 2 ]
 then
   echo './performance_report.sh start_time finish_time'
   echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : ERROR :  summary_report :  2 PARAMETERS MUST BE SET '
@@ -66,9 +72,18 @@ then
   exit 0
 fi 
 
+
+
 start_timestamp=$1 
 finish_timestamp=$2
+is_no_log=$3
 
+
+if [[ "$is_no_log" == "nolog" ]]
+then 
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO :  МНОГОДНЕВНЫЙ ОТЧЕТ - ЛОГ НЕ АНАЛИЗИРУЕТСЯ '
+  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : INFO :  МНОГОДНЕВНЫЙ ОТЧЕТ - ЛОГ НЕ АНАЛИЗИРУЕТСЯ ' >> $LOG_FILE  
+fi
 
 devices_list=`$current_path'/'get_reports_param.sh $current_path devices_list 2>$ERR_FILE`
 exit_code $? $LOG_FILE $ERR_FILE
@@ -84,13 +99,24 @@ echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : start_timestamp = '$sta
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : finish_timestamp = '$finish_timestamp
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : finish_timestamp = '$finish_timestamp >> $LOG_FILE
 
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : test_mode = '$test_mode
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : test_mode = '$test_mode >> $LOG_FILE
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : is_no_log = '$is_no_log
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : is_no_log = '$is_no_log >> $LOG_FILE
 
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  СВОДНЫЙ ОТЧЕТ ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ СУБД И МЕТРИК ОС - НАЧАТ'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  СВОДНЫЙ ОТЧЕТ ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ СУБД И МЕТРИК ОС - НАЧАТ' >> $LOG_FILE
 
-$current_path'/'summary_report.sh "$start_timestamp" "$finish_timestamp" 
-exit_code $? $LOG_FILE $ERR_FILE
+if [[ "$is_no_log" == "nolog" ]]
+then 
+  $current_path'/'summary_report.sh "$start_timestamp" "$finish_timestamp" 'DEFAULT' 'nolog'
+  exit_code $? $LOG_FILE $ERR_FILE
+else
+  $current_path'/'summary_report.sh "$start_timestamp" "$finish_timestamp" 
+  exit_code $? $LOG_FILE $ERR_FILE
+fi 
 
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  СВОДНЫЙ ОТЧЕТ ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ СУБД И МЕТРИК ОС - ЗАКОНЧЕН'
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK :  СВОДНЫЙ ОТЧЕТ ПРОИЗВОДИТЕЛЬНОСТИ/ОЖИДАНИЙ СУБД И МЕТРИК ОС - ЗАКОНЧЕН' >> $LOG_FILE

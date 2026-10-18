@@ -16,8 +16,8 @@
 ########################################################################################################
 # pg_expecto.sh
 # Корневой скрипт 
-# version 12.4 (markov_chain 14.6)
-# updated 13.07.2026
+# version 12.6 (markov_chain 16.10)
+# updated 18.10.2026
 ########################################################################################################
 
  
@@ -274,51 +274,28 @@ then
 		finish_timepoint=`echo $incident_timepoint |  awk -F "|" '{print $2}' `
 		echo 'INCIDENT : НАЧАЛО ИНЦИДЕНТА : '$start_timepoint' ОКОНЧАНИЕ ИНЦИДЕНТА : '$finish_timepoint >> $MARKOV_CHAIN_LOG 
 		echo 'INCIDENT : НАЧАЛО ИНЦИДЕНТА : '$start_timepoint' ОКОНЧАНИЕ ИНЦИДЕНТА : '$finish_timepoint >> $LOG_FILE 	
-	  elif [[ "$profile_comparison_log_status" == "CRITICAL" ]]
-	  then 
-	    echo 'CRITICAL :  JS-ДИВЕРГЕНЦИЯ = '$profile_comparison_log_js_divergence >> $MARKOV_CHAIN_LOG 			  
-		echo 'CRITICAL :  JS-ДИВЕРГЕНЦИЯ = '$profile_comparison_log_js_divergence >> $LOG_FILE 		
-		echo 'INFO :  ЭТАЛОННОЕ ОКНО = '$baseline_start' - '$baseline_finish >> $MARKOV_CHAIN_LOG 		
+	  else 
+	  	echo 'INFO :  ЭТАЛОННОЕ ОКНО = '$baseline_start' - '$baseline_finish >> $MARKOV_CHAIN_LOG 		
 		echo 'INFO :  ЭТАЛОННОЕ ОКНО = '$baseline_start' - '$baseline_finish >> $LOG_FILE 		
 		echo 'INFO :  ТЕКУЩЕЕ ОКНО = '$current_start' - '$current_finish >> $MARKOV_CHAIN_LOG 		
 		echo 'INFO :  ТЕКУЩЕЕ ОКНО = '$current_start' - '$current_finish >> $LOG_FILE 		
-		
-		echo 'INFO : ВЕРОЯТНОСТЬ ИНЦИДЕНТА В ТЕЧЕНИИ '$forecast_horizon_minutes' МИНУТ = '$mchain_predict_risk_current_horizon >> $MARKOV_CHAIN_LOG 2>$ERR_FILE
-		echo 'INFO : ВЕРОЯТНОСТЬ ИНЦИДЕНТА В ТЕЧЕНИИ '$forecast_horizon_minutes' МИНУТ = '$mchain_predict_risk_current_horizon >> $LOG_FILE 2>$ERR_FILE
-	  elif [[ "$profile_comparison_log_status" == "WARNING" ]]
-	  then 
-	    echo 'WARNING :  JS-ДИВЕРГЕНЦИЯ = '$profile_comparison_log_js_divergence >> $MARKOV_CHAIN_LOG 			  	  
-		echo 'WARNING :  JS-ДИВЕРГЕНЦИЯ = '$profile_comparison_log_js_divergence >> $LOG_FILE 			  	  
-		echo 'INFO :  ЭТАЛОННОЕ ОКНО = '$baseline_start' - '$baseline_finish >> $MARKOV_CHAIN_LOG 		
-		echo 'INFO :  ЭТАЛОННОЕ ОКНО = '$baseline_start' - '$baseline_finish >> $LOG_FILE 		
-		echo 'INFO :  ТЕКУЩЕЕ ОКНО = '$current_start' - '$current_finish >> $MARKOV_CHAIN_LOG 		
-		echo 'INFO :  ТЕКУЩЕЕ ОКНО = '$current_start' - '$current_finish >> $LOG_FILE 		
-		
-		echo 'INFO : ВЕРОЯТНОСТЬ ИНЦИДЕНТА В ТЕЧЕНИИ '$forecast_horizon_minutes' МИНУТ = '$mchain_predict_risk_current_horizon >> $MARKOV_CHAIN_LOG 2>$ERR_FILE
-		echo 'INFO : ВЕРОЯТНОСТЬ ИНЦИДЕНТА В ТЕЧЕНИИ '$forecast_horizon_minutes' МИНУТ = '$mchain_predict_risk_current_horizon >> $LOG_FILE 2>$ERR_FILE
-	  else	  
-	    echo 'INFO :  JS-ДИВЕРГЕНЦИЯ = '$profile_comparison_log_js_divergence >> $MARKOV_CHAIN_LOG 		
-		echo 'INFO :  JS-ДИВЕРГЕНЦИЯ = '$profile_comparison_log_js_divergence >> $LOG_FILE 		
-		echo 'INFO :  ЭТАЛОННОЕ ОКНО = '$baseline_start' - '$baseline_finish >> $MARKOV_CHAIN_LOG 		
-		echo 'INFO :  ЭТАЛОННОЕ ОКНО = '$baseline_start' - '$baseline_finish >> $LOG_FILE 		
-		echo 'INFO :  ТЕКУЩЕЕ ОКНО = '$current_start' - '$current_finish >> $MARKOV_CHAIN_LOG 		
-		echo 'INFO :  ТЕКУЩЕЕ ОКНО = '$current_start' - '$current_finish >> $LOG_FILE 		
-		
-		echo 'INFO : ВЕРОЯТНОСТЬ ИНЦИДЕНТА В ТЕЧЕНИИ '$forecast_horizon_minutes' МИНУТ = '$mchain_predict_risk_current_horizon >> $MARKOV_CHAIN_LOG 2>$ERR_FILE
-		echo 'INFO : ВЕРОЯТНОСТЬ ИНЦИДЕНТА В ТЕЧЕНИИ '$forecast_horizon_minutes' МИНУТ = '$mchain_predict_risk_current_horizon >> $LOG_FILE 2>$ERR_FILE
 	  fi 
-	  
-
-	  mchain_health_check=`psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select status , message from mchain_health_check()'`
-	  exit_code $? $LOG_FILE $ERR_FILE
-
-	  echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : '$mchain_health_check >> $MARKOV_CHAIN_LOG  
-
-	  psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select unnest(description) from mchain_health_check()' >> $MARKOV_CHAIN_LOG    
 	else
 	  echo 'ALARM: НЕДОСТАТОЧНО ДАННЫХ ДЛЯ ПРОГНОЗА(ОБУЧЕНИЕ ЦЕПИ НЕ ЗАКОНЧЕНО).' >> $MARKOV_CHAIN_LOG
 	  echo 'ALARM: НЕДОСТАТОЧНО ДАННЫХ ДЛЯ ПРОГНОЗА(ОБУЧЕНИЕ ЦЕПИ НЕ ЗАКОНЧЕНО).' >> $LOG_FILE
 	fi
+	
+	##############################################################
+	# ИНТЕГРАЛЬНЫЙ СТАТУС СОСТОЯНИЯ СУБД
+	echo 'INFO : ИНТЕГРАЛЬНЫЙ СТАТУС СОСТОЯНИЯ СУБД' >> $LOG_FILE
+	indicator_value=`psql -d $expecto_db -U $expecto_user  -Aqtc "SELECT get_current_preincident_status()"`
+	echo $indicator_value > /tmp/performance_indicator.txt
+	
+	psql -d $expecto_db -U $expecto_user -c "SELECT now() AS ts, get_current_preincident_status() AS status, CASE get_current_preincident_status() WHEN 0   THEN 'NORMAL' WHEN 50  THEN 'WARNING' WHEN 100 THEN 'ALARM' ELSE 'UNKNOWN' END AS status_label, mchain_predict_risk_current_horizon() AS risk, (SELECT signal_active  FROM sicpp_current_state WHERE id = 1) AS sicpp_active,(SELECT signal_strength FROM sicpp_current_state WHERE id = 1) AS sicpp_strength"  >> /tmp/get_current_preincident_status.txt
+	cat /tmp/get_current_preincident_status.txt | head -3 >> $LOG_FILE	
+	# ИНТЕГРАЛЬНЫЙ СТАТУС СОСТОЯНИЯ СУБД
+	##############################################################
+	
 
 	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - ЗАКОНЧЕН '
 	echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S") ' : OK : АНАЛИЗ ЦЕПИ МАРКОВА - ЗАКОНЧЕН '>> $LOG_FILE

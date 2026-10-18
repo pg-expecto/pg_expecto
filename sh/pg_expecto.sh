@@ -291,7 +291,7 @@ then
 	indicator_value=`psql -d $expecto_db -U $expecto_user  -Aqtc "SELECT get_current_preincident_status()"`
 	echo $indicator_value > /tmp/performance_indicator.txt
 	
-	psql -d $expecto_db -U $expecto_user -c "SELECT now() AS ts, get_current_preincident_status() AS status, CASE get_current_preincident_status() WHEN 0   THEN 'NORMAL' WHEN 50  THEN 'WARNING' WHEN 100 THEN 'ALARM' ELSE 'UNKNOWN' END AS status_label, mchain_predict_risk_current_horizon() AS risk, (SELECT signal_active  FROM sicpp_current_state WHERE id = 1) AS sicpp_active,(SELECT signal_strength FROM sicpp_current_state WHERE id = 1) AS sicpp_strength"  >> /tmp/get_current_preincident_status.txt
+	psql -d $expecto_db -U $expecto_user -c "SELECT now() AS ts, get_current_preincident_status() AS status, CASE get_current_preincident_status() WHEN 0   THEN 'NORMAL' WHEN 50  THEN 'WARNING' WHEN 100 THEN 'ALARM' ELSE 'UNKNOWN' END AS status_label, mchain_predict_risk_current_horizon() AS risk, (SELECT signal_active  FROM sicpp_current_state WHERE id = 1) AS sicpp_active,(SELECT signal_strength FROM sicpp_current_state WHERE id = 1) AS sicpp_strength"  > /tmp/get_current_preincident_status.txt
 	cat /tmp/get_current_preincident_status.txt | head -3 >> $LOG_FILE	
 	# ИНТЕГРАЛЬНЫЙ СТАТУС СОСТОЯНИЯ СУБД
 	##############################################################

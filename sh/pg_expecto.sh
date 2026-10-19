@@ -238,34 +238,29 @@ then
 	exit_code $? $LOG_FILE $ERR_FILE
 
 	mchain_forecast_reliability=`psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select mchain_forecast_reliability()'`
-	
-	
-	
 
 	if [[ $mchain_forecast_reliability -ge 3 ]]
 	then 
 	  echo 'INFO : ДОСТАТОЧНО ДАННЫХ ДЛЯ ПРОГНОЗА(ОБУЧЕНИЕ ЦЕПИ ЗАКОНЧЕНО).' >> $MARKOV_CHAIN_LOG
  	  echo 'INFO : ДОСТАТОЧНО ДАННЫХ ДЛЯ ПРОГНОЗА(ОБУЧЕНИЕ ЦЕПИ ЗАКОНЧЕНО).' >> $LOG_FILE
-
 	  echo ' ' >> $MARKOV_CHAIN_LOG
-	  mchain_predict_risk_current_horizon=`psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select * from mchain_predict_risk_current_horizon()'`
-	  exit_code $? $LOG_FILE $ERR_FILE
+	else
+	  echo 'ALARM: НЕДОСТАТОЧНО ДАННЫХ ДЛЯ ПРОГНОЗА(ОБУЧЕНИЕ ЦЕПИ НЕ ЗАКОНЧЕНО).' >> $MARKOV_CHAIN_LOG
+	  echo 'ALARM: НЕДОСТАТОЧНО ДАННЫХ ДЛЯ ПРОГНОЗА(ОБУЧЕНИЕ ЦЕПИ НЕ ЗАКОНЧЕНО).' >> $LOG_FILE
+	fi
+	
+	 profile_comparison_log=`psql -d $expecto_db -U $expecto_user  -Aqtc "select date_trunc('minute',baseline_window_start ) AS baseline_window_start , date_trunc('minute',baseline_window_end ) AS baseline_window_end , date_trunc('minute',current_window_start ) AS current_window_start , date_trunc('minute',current_window_end ) AS current_window_end , substring(status FROM 0 FOR 11) AS status , js_divergence from profile_comparison_log order by current_window_end desc limit 1 "`
+	 
+	 profile_comparison_log_status=`echo $profile_comparison_log |  awk -F "|" '{print $5}' `
+	 profile_comparison_log_js_divergence=`echo $profile_comparison_log |  awk -F "|" '{print $6}' `
+	 baseline_start=`echo $profile_comparison_log |  awk -F "|" '{print $1}' `
+	 baseline_finish=`echo $profile_comparison_log |  awk -F "|" '{print $2}' `
+	 current_start=`echo $profile_comparison_log |  awk -F "|" '{print $3}' `
+	 current_finish=`echo $profile_comparison_log |  awk -F "|" '{print $4}' `
 
-	  forecast_horizon_minutes=`psql -d $expecto_db -U $expecto_user  -v ON_ERROR_STOP=on --echo-errors -Aqtc 'select forecast_horizon_minutes from markov_config'`
-	  exit_code $? $LOG_FILE $ERR_FILE
-	  
-	  profile_comparison_log=`psql -d $expecto_db -U $expecto_user  -Aqtc "select date_trunc('minute',baseline_window_start ) AS baseline_window_start , date_trunc('minute',baseline_window_end ) AS baseline_window_end , date_trunc('minute',current_window_start ) AS current_window_start , date_trunc('minute',current_window_end ) AS current_window_end , substring(status FROM 0 FOR 11) AS status , js_divergence from profile_comparison_log order by current_window_end desc limit 1 "`
-	  
-	  profile_comparison_log_status=`echo $profile_comparison_log |  awk -F "|" '{print $5}' `
-	  profile_comparison_log_js_divergence=`echo $profile_comparison_log |  awk -F "|" '{print $6}' `
-	  baseline_start=`echo $profile_comparison_log |  awk -F "|" '{print $1}' `
-	  baseline_finish=`echo $profile_comparison_log |  awk -F "|" '{print $2}' `
-	  current_start=`echo $profile_comparison_log |  awk -F "|" '{print $3}' `
-	  current_finish=`echo $profile_comparison_log |  awk -F "|" '{print $4}' `
-
 
 	  
-	  if [[ "$profile_comparison_log_status" == "INCIDENT" ]]
+	 if [[ "$profile_comparison_log_status" == "INCIDENT" ]]
 	  then 
 		echo 'INCIDENT : ПРОФИЛЬ ПРОИЗВОДИТЕЛЬНОСТИ НЕ РАСЧИТЫВАЕТСЯ : ИНЦИДЕНТ ИЛИ ВОССТАНОВЛЕНИЕ ПОСЛЕ ИНЦИДЕНТА' >> $MARKOV_CHAIN_LOG 
 		echo 'INCIDENT : ПРОФИЛЬ ПРОИЗВОДИТЕЛЬНОСТИ НЕ РАСЧИТЫВАЕТСЯ : ИНЦИДЕНТ ИЛИ ВОССТАНОВЛЕНИЕ ПОСЛЕ ИНЦИДЕНТА' >> $LOG_FILE 
@@ -274,16 +269,12 @@ then
 		finish_timepoint=`echo $incident_timepoint |  awk -F "|" '{print $2}' `
 		echo 'INCIDENT : НАЧАЛО ИНЦИДЕНТА : '$start_timepoint' ОКОНЧАНИЕ ИНЦИДЕНТА : '$finish_timepoint >> $MARKOV_CHAIN_LOG 
 		echo 'INCIDENT : НАЧАЛО ИНЦИДЕНТА : '$start_timepoint' ОКОНЧАНИЕ ИНЦИДЕНТА : '$finish_timepoint >> $LOG_FILE 	
-	  else 
+	 else 
 	  	echo 'INFO :  ЭТАЛОННОЕ ОКНО = '$baseline_start' - '$baseline_finish >> $MARKOV_CHAIN_LOG 		
 		echo 'INFO :  ЭТАЛОННОЕ ОКНО = '$baseline_start' - '$baseline_finish >> $LOG_FILE 		
 		echo 'INFO :  ТЕКУЩЕЕ ОКНО = '$current_start' - '$current_finish >> $MARKOV_CHAIN_LOG 		
 		echo 'INFO :  ТЕКУЩЕЕ ОКНО = '$current_start' - '$current_finish >> $LOG_FILE 		
-	  fi 
-	else
-	  echo 'ALARM: НЕДОСТАТОЧНО ДАННЫХ ДЛЯ ПРОГНОЗА(ОБУЧЕНИЕ ЦЕПИ НЕ ЗАКОНЧЕНО).' >> $MARKOV_CHAIN_LOG
-	  echo 'ALARM: НЕДОСТАТОЧНО ДАННЫХ ДЛЯ ПРОГНОЗА(ОБУЧЕНИЕ ЦЕПИ НЕ ЗАКОНЧЕНО).' >> $LOG_FILE
-	fi
+	 fi 
 	
 	##############################################################
 	# ИНТЕГРАЛЬНЫЙ СТАТУС СОСТОЯНИЯ СУБД

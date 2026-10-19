@@ -2933,7 +2933,7 @@ COMMENT ON COLUMN statement_stat_waitings_median.curr_value_long IS 'Сколь�
 DROP TABLE IF EXISTS configuration ; 
 CREATE UNLOGGED TABLE configuration
 (  
-  day_for_store integer DEFAULT 7 , 	--Глубина хранения   
+  day_for_store integer DEFAULT 30 , 	--Глубина хранения   
   is_markov_chain_enabled BOOLEAN DEFAULT FALSE --Сбор данных для цепи Маркова
 );
 COMMENT ON TABLE configuration IS 'Конфигурационные параметры pg_expecto';

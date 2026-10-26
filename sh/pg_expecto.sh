@@ -16,8 +16,8 @@
 ########################################################################################################
 # pg_expecto.sh
 # Корневой скрипт 
-# version 12.7 (markov_chain 17.1)
-# updated 20.10.2026
+# version 12.7.1 (markov_chain 17.1)
+# updated 22.10.2026
 ########################################################################################################
 
  
@@ -275,25 +275,28 @@ then
 		echo 'INFO :  ТЕКУЩЕЕ ОКНО = '$current_start' - '$current_finish >> $MARKOV_CHAIN_LOG 		
 		echo 'INFO :  ТЕКУЩЕЕ ОКНО = '$current_start' - '$current_finish >> $LOG_FILE 		
 	 fi 
-	
-	##############################################################
-	# ИНТЕГРАЛЬНЫЙ СТАТУС СОСТОЯНИЯ СУБД
-	echo 'INFO : ИНТЕГРАЛЬНЫЙ СТАТУС СОСТОЯНИЯ СУБД' >> $LOG_FILE
-	indicator_value=`psql -d $expecto_db -U $expecto_user  -Aqtc "SELECT get_current_preincident_status()"`
-	echo $indicator_value > /tmp/performance_indicator.txt
-	
-	psql -d $expecto_db -U $expecto_user -c "SELECT now() AS ts, get_current_preincident_status() AS status, CASE get_current_preincident_status() WHEN 0   THEN 'NORMAL' WHEN 50  THEN 'WARNING' WHEN 100 THEN 'ALARM' ELSE 'UNKNOWN' END AS status_label, mchain_predict_risk_current_horizon() AS risk, (SELECT signal_active  FROM sicpp_current_state WHERE id = 1) AS sicpp_active,(SELECT signal_strength FROM sicpp_current_state WHERE id = 1) AS sicpp_strength"  > /tmp/get_current_preincident_status.txt
-	cat /tmp/get_current_preincident_status.txt | head -3 >> $LOG_FILE	
-	# ИНТЕГРАЛЬНЫЙ СТАТУС СОСТОЯНИЯ СУБД
-	##############################################################
-	
-	#################################################################
-	# Текущее значение операционного индикатора ALERT v3.5.0 (C-only)
-	echo 'INFO : Текущее значение операционного индикатора ALERT v3.5.0 (C-only) '  >> $LOG_FILE 
-	psql -d $expecto_db -U $expecto_user -f $current_path'/v3.5.0_C.value.sql' >> $LOG_FILE 
-	# Текущее значение операционного индикатора ALERT v3.5.0 (C-only)
-	#################################################################
-	
+
+##################################################################
+# DISABLED 22/10/2026	
+#	##############################################################
+#	# ИНТЕГРАЛЬНЫЙ СТАТУС СОСТОЯНИЯ СУБД
+#	echo 'INFO : ИНТЕГРАЛЬНЫЙ СТАТУС СОСТОЯНИЯ СУБД' >> $LOG_FILE
+#	indicator_value=`psql -d $expecto_db -U $expecto_user  -Aqtc "SELECT get_current_preincident_status()"`
+#	echo $indicator_value > /tmp/performance_indicator.txt
+#	
+#	psql -d $expecto_db -U $expecto_user -c "SELECT now() AS ts, get_current_preincident_status() AS status, CASE get_current_preincident_status() WHEN 0   THEN 'NORMAL' WHEN 50  THEN 'WARNING' WHEN 100 THEN 'ALARM' ELSE 'UNKNOWN' END AS status_label, mchain_predict_risk_current_horizon() AS risk, (SELECT signal_active  FROM sicpp_current_state WHERE id = 1) AS sicpp_active,(SELECT signal_strength FROM sicpp_current_state WHERE id = 1) AS sicpp_strength"  > /tmp/get_current_preincident_status.txt
+#	cat /tmp/get_current_preincident_status.txt | head -3 >> $LOG_FILE	
+#	# ИНТЕГРАЛЬНЫЙ СТАТУС СОСТОЯНИЯ СУБД
+#	##############################################################
+#	
+#	#################################################################
+#	# Текущее значение операционного индикатора ALERT v3.5.0 (C-only)
+#	echo 'INFO : Текущее значение операционного индикатора ALERT v3.5.0 (C-only) '  >> $LOG_FILE 
+#	psql -d $expecto_db -U $expecto_user -f $current_path'/v3.5.0_C.value.sql' >> $LOG_FILE 
+#	# Текущее значение операционного индикатора ALERT v3.5.0 (C-only)
+#	#################################################################
+# DISABLED 22/10/2026	
+##################################################################	
 	
 	
 	

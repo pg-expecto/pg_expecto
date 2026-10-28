@@ -16,8 +16,8 @@
 ########################################################################################################
 # pg_expecto.sh
 # Корневой скрипт 
-# version 12.7.1 (markov_chain 17.1)
-# updated 22.10.2026
+# version 12.7.2 (markov_chain 22.2)
+# updated 28.10.2026
 ########################################################################################################
 
  
@@ -275,6 +275,13 @@ then
 		echo 'INFO :  ТЕКУЩЕЕ ОКНО = '$current_start' - '$current_finish >> $MARKOV_CHAIN_LOG 		
 		echo 'INFO :  ТЕКУЩЕЕ ОКНО = '$current_start' - '$current_finish >> $LOG_FILE 		
 	 fi 
+	 
+  	echo 'INFO :  ОПЕРАЦИОННЫЕ СИГНАЛЫ ' >> $MARKOV_CHAIN_LOG 		
+	echo 'INFO :  ОПЕРАЦИОННЫЕ СИГНАЛЫ ' >> $LOG_FILE 		
+	psql -d expecto_db -U expecto_user -Aqtc " SELECT unnest(get_current_signals_status())" >> $MARKOV_CHAIN_LOG 		
+	psql -d expecto_db -U expecto_user -Aqtc " SELECT unnest(get_current_signals_status())" >> $LOG_FILE 		
+	
+	 
 
 ##################################################################
 # DISABLED 22/10/2026	

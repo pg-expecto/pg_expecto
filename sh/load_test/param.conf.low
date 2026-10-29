@@ -1,0 +1,36 @@
+﻿# param.conf.low
+# НАСТРОЙКИ НАГРУЗОЧНОГО ТЕСТИРОВАНИЯ
+# РЕЖИМ LOW
+# Начальная нагрузка 
+start_load = 5
+# Максимальная нагрузка
+finish_load = 5
+
+# Тестовая БД
+testdb = default
+# testdb = demo
+
+# Тип синтетической нагрузки 
+load_mode = oltp
+
+
+# БЕСКОНЕЧНЫЙ ТЕСТ. 
+period_hours = -1 
+average_load = 5
+# Имитация инцидента - vacuum
+vacuum_incident = 0
+
+# Веса сценариев по умолчанию
+scenario1 = 0.7
+scenario2 = 0.2
+scenario3 = 0.1
+
+# Инициализировать тестовую БД
+init_test_db = on
+
+
+#~10GB
+scale = 685
+
+
+

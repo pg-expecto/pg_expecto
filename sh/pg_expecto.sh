@@ -16,8 +16,8 @@
 ########################################################################################################
 # pg_expecto.sh
 # Корневой скрипт 
-# version 12.7.2 (markov_chain 22.2)
-# updated 28.10.2026
+# version 12.7.3 (markov_chain 24.2)
+# updated 29.10.2026
 ########################################################################################################
 
  
@@ -260,8 +260,9 @@ then
 
 
 	  
-	 if [[ "$profile_comparison_log_status" == "INCIDENT" ]]
-	  then 
+	if 	[[ "$profile_comparison_log_status" == "INCIDENT" ]] || \
+		[[ "$profile_comparison_log_status" == "RECOVERY" ]]
+	then
 		echo 'INCIDENT : ПРОФИЛЬ ПРОИЗВОДИТЕЛЬНОСТИ НЕ РАСЧИТЫВАЕТСЯ : ИНЦИДЕНТ ИЛИ ВОССТАНОВЛЕНИЕ ПОСЛЕ ИНЦИДЕНТА' >> $MARKOV_CHAIN_LOG 
 		echo 'INCIDENT : ПРОФИЛЬ ПРОИЗВОДИТЕЛЬНОСТИ НЕ РАСЧИТЫВАЕТСЯ : ИНЦИДЕНТ ИЛИ ВОССТАНОВЛЕНИЕ ПОСЛЕ ИНЦИДЕНТА' >> $LOG_FILE 
 		incident_timepoint=`psql -d $expecto_db -U $expecto_user  -Aqtc "select start_timepoint , finish_timepoint from performance_incident where start_timepoint = (select max(start_timepoint) from performance_incident )"`

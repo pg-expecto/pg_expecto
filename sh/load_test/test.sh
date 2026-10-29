@@ -134,6 +134,75 @@ fi
 # ----------------------------------------------------------------------
 echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"ПРОДУКТИВНЫЙ ПЕРИОД "
 
+# ----------------------------------------------------------------------
+# 1. Подсчёт записей за сегодня
+# ----------------------------------------------------------------------
+COUNT=$(psql -d "$DB_NAME" -U "$DB_USER" -t -A -c \
+    "SELECT COUNT(*)
+     FROM performance_incident
+     WHERE start_timepoint >= date_trunc('day', now())
+       AND start_timepoint < date_trunc('day', now()) + interval '1 day';" 2>/dev/null)
+
+if ! [[ "$COUNT" =~ ^[0-9]+$ ]]; then
+    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Ошибка: не удалось получить количество записей из БД" >&2
+    exit 1
+fi
+
+echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Текущее количество инцидентов за сегодня: $COUNT, целевое: $TARGET_INCIDENTS"
+if [ "$COUNT" -ge "$TARGET_INCIDENTS" ]; 
+then
+    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Целевое количество инцидентов - достигнуто"
+	
+    if [ -f "$FLAG_FILE" ];
+    then
+        echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Нагрузочный тест - запущен"
+        test_mode=$(grep -c "low" "$PARAM_CONF")
+
+        if [[ "$test_mode" == "1" ]]
+        then
+            echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"РЕЖИМ LOW"
+            echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Выход"
+            exit 0
+        else
+            echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Нагрузочный тест - запущен в режиме HIGH"
+            echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Перезапуск теста в режиме LOW"
+
+            if [ -x "$STOP_SCRIPT" ];
+            then
+                "$STOP_SCRIPT"
+            else
+                echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Ошибка: скрипт остановки '$STOP_SCRIPT' не найден или не исполняем" >&2
+                exit 1
+            fi
+
+            if [ -x "$START_SCRIPT" ];
+            then
+                echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"ПАРАМЕТРЫ НАГРУЗОЧНОГО ТЕСТИРОВАНИЯ: РЕЖИМ LOW"
+                cp /postgres/pg_expecto/sh/load_test/param.conf.low "$PARAM_CONF"
+                "$START_SCRIPT"
+            else
+                echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Ошибка: скрипт запуска '$START_SCRIPT' не найден или не исполняем" >&2
+                exit 1
+            fi
+            echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Выход"
+            exit 0
+        fi
+    else
+        echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Нагрузочный тест не запущен, запускаем ."
+        if [ -x "$START_SCRIPT" ];
+        then
+            echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"ПАРАМЕТРЫ НАГРУЗОЧНОГО ТЕСТИРОВАНИЯ: РЕЖИМ LOW"
+            cp /postgres/pg_expecto/sh/load_test/param.conf.low "$PARAM_CONF"
+            "$START_SCRIPT"
+        else
+            echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Ошибка: скрипт запуска '$START_SCRIPT' не найден или не исполняем" >&2
+            exit 1
+        fi
+        echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Выход"
+        exit 0
+    fi	
+fi
+
 test_mode=$(grep -c "high" "$PARAM_CONF")
 if [[ "$test_mode" == "0" ]]
 then
@@ -161,21 +230,6 @@ then
     exit 0
 fi
 
-# ----------------------------------------------------------------------
-# 1. Подсчёт записей за сегодня
-# ----------------------------------------------------------------------
-COUNT=$(psql -d "$DB_NAME" -U "$DB_USER" -t -A -c \
-    "SELECT COUNT(*)
-     FROM performance_incident
-     WHERE start_timepoint >= date_trunc('day', now())
-       AND start_timepoint < date_trunc('day', now()) + interval '1 day';" 2>/dev/null)
-
-if ! [[ "$COUNT" =~ ^[0-9]+$ ]]; then
-    echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Ошибка: не удалось получить количество записей из БД" >&2
-    exit 1
-fi
-
-echo 'TIMESTAMP : '$(date "+%d-%m-%Y %H:%M:%S")':'"Текущее количество инцидентов за сегодня: $COUNT, целевое: $TARGET_INCIDENTS"
 
 # ----------------------------------------------------------------------
 # 2. Если достигнуто целевое количество — остановить тест (только если он запущен)

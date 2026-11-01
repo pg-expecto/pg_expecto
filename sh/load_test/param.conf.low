@@ -2,9 +2,9 @@
 # НАСТРОЙКИ НАГРУЗОЧНОГО ТЕСТИРОВАНИЯ
 # РЕЖИМ LOW
 # Начальная нагрузка 
-start_load = 5
+start_load = 2
 # Максимальная нагрузка
-finish_load = 5
+finish_load = 2
 
 # Тестовая БД
 testdb = default
@@ -16,7 +16,7 @@ load_mode = oltp
 
 # БЕСКОНЕЧНЫЙ ТЕСТ. 
 period_hours = -1 
-average_load = 5
+average_load = 2
 # Имитация инцидента - vacuum
 vacuum_incident = 0
 

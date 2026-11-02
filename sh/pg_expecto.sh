@@ -16,8 +16,8 @@
 ########################################################################################################
 # pg_expecto.sh
 # Корневой скрипт 
-# version 12.7.3 (markov_chain 24.2)
-# updated 29.10.2026
+# version 12.7.3 (markov_chain 24.2.2)
+# updated 02.11.2026
 ########################################################################################################
 
  
@@ -280,7 +280,9 @@ then
   	echo 'INFO :  ОПЕРАЦИОННЫЕ СИГНАЛЫ ' >> $MARKOV_CHAIN_LOG 		
 	echo 'INFO :  ОПЕРАЦИОННЫЕ СИГНАЛЫ ' >> $LOG_FILE 		
 	psql -d expecto_db -U expecto_user -Aqtc " SELECT unnest(get_current_signals_status())" >> $MARKOV_CHAIN_LOG 		
-	psql -d expecto_db -U expecto_user -Aqtc " SELECT unnest(get_current_signals_status())" >> $LOG_FILE 		
+	psql -d expecto_db -U expecto_user -Aqtc " SELECT unnest(get_current_signals_status_short())" >> $LOG_FILE 		
+	
+	
 	
 	 
 

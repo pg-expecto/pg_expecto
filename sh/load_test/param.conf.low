@@ -13,7 +13,7 @@ testdb = default
 # Тип синтетической нагрузки
 load_mode = oltp
 
-# БЕСКОНЕЧНЫЙ ТЕСТ.
+# ОДИН ПРОХОД = 1 ЧАС.
 period_hours = 1
 average_load = 1
 # Имитация инцидента - vacuum

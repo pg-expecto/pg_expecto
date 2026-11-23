@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # get_conf_param.sh 
 # Copyright 2026 Ринат (pg_expecto)
 # 

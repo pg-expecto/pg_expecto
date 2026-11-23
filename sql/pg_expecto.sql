@@ -12,7 +12,9 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
-
+-------------------------------------------------------------------------------
+-- pg_expecto.sql
+-- version 12.2
 --------------------------------------------------------------------------------
 -- background_processes_logs_functions.sql
 -- Updated 23.04.2026
@@ -1089,6 +1091,7 @@ BEGIN
 	--  st — stolen (украдено гипервизором)
 	current_cpu_st = vmstat_array[17]::numeric ; 
 	
+/* Disabled for vmstat from procps-ng 4.0.4	
 	
 	--dirty pages size (KB)
 	current_dirty_kb  = vmstat_array[20]::numeric ; 		
@@ -1098,7 +1101,7 @@ BEGIN
 	current_dirty_bg_percent = vmstat_array[22]::numeric ; 	
 	--free + cached memory
 	current_available_mem_mb  = vmstat_array[23]::numeric ; 	
-	
+*/	
 
 --Сохранить текущие значения
 	INSERT INTO os_stat_vmstat
